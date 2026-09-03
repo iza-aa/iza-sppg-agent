@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Membangun asisten Telegram operasional multi-bot untuk vendor Makanan Bergizi Gratis (MBG) terintegrasi dengan Google Sheets, Google Drive, Supabase, `agy CLI`, dan Gemini Vision, dengan pemisahan Nota Pesanan SPPG (Pendapatan/Plafon) dan Invoice Supplier (Pengeluaran), otomatisasi Apps Script (`kode.gs`), dan ekspor laporan resmi PDF bertema Badan Gizi Nasional (BGN).
+**Goal:** Membangun asisten Telegram operasional multi-bot untuk vendor Makanan Bergizi Gratis (MBG) terintegrasi dengan Google Sheets (Arsitektur 5-Tab Hybrid), Google Drive Media Vault (WebP 80%), Supabase, `agy CLI`, dan Gemini Vision, dengan pemisahan Nota Pesanan SPPG (Pendapatan/Plafon) dan Invoice Supplier (Pengeluaran), otomatisasi Apps Script (`kode.gs`), dan ekspor laporan resmi PDF bertema Badan Gizi Nasional (BGN).
 
-**Architecture:** Hybrid Master Supervisor & Micro-Workers dengan isolasi proses (3 bot Telegram berjalan di child-process terpisah agar jika satu bot error, bot lainnya tidak terganggu). Menggunakan shared core services untuk AI extraction, kompresi foto WebP, sinkronisasi Google Sheets 3-tab, dan Supabase PostgreSQL.
+**Architecture:** Hybrid Master Supervisor & Micro-Workers dengan isolasi proses (3 bot Telegram berjalan di child-process terpisah agar jika satu bot error, bot lainnya tidak terganggu). Menggunakan shared core services untuk AI extraction, kompresi foto WebP, sinkronisasi Google Sheets 5-tab, dan Supabase PostgreSQL.
 
 **Tech Stack:** Node.js, TypeScript, Grammy (Telegram Bot), `@google/generative-ai`, `googleapis`, `sharp`, `pdfkit`, `@supabase/supabase-js`, `zod`, `vitest`.
 
@@ -16,6 +16,7 @@
 - Secret Protection: Semua API Keys, Token Telegram, dan Service Account disimpan di `.env` (tidak di-commit).
 - Fault Tolerance: Error pada satu worker bot tidak boleh mematikan bot unit lain.
 - Deterministic Math: Semua penjumlahan nilai uang dan kuantitas dihitung ulang dengan CPU Math Check di backend.
+- Longevity: Google Drive storage terkompresi WebP (~100KB/foto), Google Sheets 5-Tab anti-lag, and Supabase heartbeat ping.
 
 ---
 
@@ -34,12 +35,12 @@
 **Interfaces:**
 - Produces: `sppgConfigs: SPPGUnitConfig[]`, `env: AppEnv`
 
-- [ ] **Step 1: Create package.json and project configuration files**
-- [ ] **Step 2: Create .gitignore and .env.example with placeholders for 3 bots, Supabase, Gemini, and Google credentials**
-- [ ] **Step 3: Implement src/config/sppg.config.ts supporting multi-bot config mapping**
-- [ ] **Step 4: Write test verifying environment and SPPG config loader**
-- [ ] **Step 5: Run test to verify it passes**
-- [ ] **Step 6: Commit Task 1**
+- [ ] **Step 1: Create package.json with dependencies (grammy, googleapis, sharp, pdfkit, supabase, zod, vitest)**
+- [ ] **Step 2: Create tsconfig.json (ESM NodeNext) and vitest.config.ts**
+- [ ] **Step 3: Create .gitignore and .env.example (3 bot tokens, Supabase, Gemini, Google service account)**
+- [ ] **Step 4: Implement src/config/env.ts and src/config/sppg.config.ts supporting multi-bot config mapping**
+- [ ] **Step 5: Write unit test in tests/config.test.ts verifying environment and SPPG config loader**
+- [ ] **Step 6: Run tests and commit Task 1**
 
 ---
 
@@ -58,13 +59,12 @@
 - Consumes: `gemini-client.ts` multi-key pool, `agy-connector.ts` subprocess
 - Produces: `parseSppgOrder(imageBuffer, mimeType): Promise<ExtractedSppgOrder>`, `parseSupplierReceipt(imageBuffer, mimeType): Promise<ExtractedSupplierReceipt>`
 
-- [ ] **Step 1: Implement multi-key pool and model fallback in gemini-client.ts**
-- [ ] **Step 2: Implement agy CLI subprocess connector with dynamic model routing and 3-tier regex JSON fallback in agy-connector.ts**
-- [ ] **Step 3: Define Zod schemas for Nota Pesanan SPPG (Pendapatan) and Kwitansi Supplier (Pengeluaran)**
-- [ ] **Step 4: Implement deterministic CPU sum check and unit normalizer (ekor, jerigen, kg, liter, dll.)**
-- [ ] **Step 5: Write unit tests with mock OCR outputs (verifying calculation of 22 items totalling Rp 29.581.000)**
-- [ ] **Step 6: Run tests to verify they pass**
-- [ ] **Step 7: Commit Task 2**
+- [ ] **Step 1: Implement multi-key pool and nested model fallback loop in gemini-client.ts**
+- [ ] **Step 2: Implement agy CLI connector with dynamic path discovery, dynamic model routing (High/Low), and 3-tier regex JSON fallback in agy-connector.ts**
+- [ ] **Step 3: Define Zod schemas for Nota Pesanan SPPG (Pendapatan/Plafon) and Kwitansi Supplier (Pengeluaran Riil)**
+- [ ] **Step 4: Implement deterministic CPU sum check and Indonesian unit extraction (`ekor`, `jerigen`, `kg`, `liter`, `ikat`, `keranjang`)**
+- [ ] **Step 5: Write unit tests in tests/ai-parsers.test.ts verifying calculations (22 items totaling Rp 29.581.000 from SPPG Patila order)**
+- [ ] **Step 6: Run tests and commit Task 2**
 
 ---
 
@@ -79,15 +79,15 @@
 - Consumes: `imageBuffer: Buffer`, `sppgId: string`, `date: string`, `supplierName: string`
 - Produces: `uploadReceiptToDrive(buffer, metadata): Promise<{ webViewLink: string, fileId: string }>`
 
-- [ ] **Step 1: Implement image-optimizer.ts with low VPS RAM consumption (WebP 80%, max 1200px)**
-- [ ] **Step 2: Implement drive.service.ts with dynamic hierarchy `/MBG/[SPPG_ID]/[Tahun-Bulan]/Supplier/`**
-- [ ] **Step 3: Add in-place upsert logic and public reader permissions**
-- [ ] **Step 4: Write unit tests verifying compression and mock upload**
+- [ ] **Step 1: Implement image-optimizer.ts with low VPS RAM consumption (`sharp.concurrency(1)`, WebP 80%, max 1200px)**
+- [ ] **Step 2: Implement drive.service.ts with dynamic hierarchy `/MBG/[SPPG_ID]/[Tahun]/[Bulan]/Supplier/`**
+- [ ] **Step 3: Add in-place upsert logic, public reader permissions, and direct view URL generation**
+- [ ] **Step 4: Write unit tests verifying compression ratio (<150KB) and mock upload**
 - [ ] **Step 5: Run tests and commit Task 3**
 
 ---
 
-### Task 4: Google Sheets Engine & Google Apps Script (`kode.gs`)
+### Task 4: Google Sheets 5-Tab Hybrid Engine & Google Apps Script (`kode.gs`)
 
 **Files:**
 - Create: `src/core/google/sheets.service.ts`
@@ -98,10 +98,10 @@
 - Consumes: `ExtractedSppgOrder`, `ExtractedSupplierReceipt`, `driveLink`
 - Produces: `recordSppgOrder()`, `recordSupplierExpense()`, `getMarginSummary()`
 
-- [ ] **Step 1: Implement sheets.service.ts supporting 3 tabs (`PENDAPATAN_SPPG`, `PENGELUARAN_SUPPLIER`, `REKAP_MARGIN_HARIAN`)**
+- [ ] **Step 1: Implement sheets.service.ts supporting 5 tabs (`01_RINGKASAN_EKSEKUTIF`, `02_PENDAPATAN_SPPG`, `03_PENGELUARAN_SUPPLIER`, `04_REKAP_MARGIN_HARIAN`, `05_MASTER_DATA`)**
 - [ ] **Step 2: Implement exact row index lookup (`values.get A:A`) to eliminate row jumping**
-- [ ] **Step 3: Apply Badan Gizi Nasional styling batch update (Navy `#0F2042` Header, Rupiah Currency formatting)**
-- [ ] **Step 4: Write google-apps-script/kode.gs for custom menu `[⚡ Menu SPPG]`, auto-formulas, and cell styling**
+- [ ] **Step 3: Apply Badan Gizi Nasional styling batch update (Sticky KPI cards, Navy `#0F2042` Header, Currency `Rp #,##0`, formula `=HYPERLINK()`)**
+- [ ] **Step 4: Write google-apps-script/kode.gs for custom menu `[⚡ MENU KELOLA SPPG]`, auto-formulas, lock previous months, and auto-archive**
 - [ ] **Step 5: Write unit tests with mock Google Sheets API calls**
 - [ ] **Step 6: Run tests and commit Task 4**
 
@@ -126,7 +126,7 @@
 
 ---
 
-### Task 6: Supabase State Machine, Repositories, and Whitelist
+### Task 6: Supabase State Machine, Repositories, Whitelist & Heartbeat
 
 **Files:**
 - Create: `supabase/migrations/20260904_initial_sppg_schema.sql`
@@ -134,18 +134,20 @@
 - Create: `src/core/db/repositories/user.repository.ts`
 - Create: `src/core/db/repositories/pending-action.repository.ts`
 - Create: `src/core/db/repositories/sppg.repository.ts`
+- Create: `src/core/db/heartbeat.ts`
 - Test: `tests/repositories.test.ts`
 
 **Interfaces:**
 - Consumes: Supabase credentials
-- Produces: Whitelist checks, pending action draft storage, and confirmation state machine
+- Produces: Whitelist checks, pending action draft storage, confirmation state machine, and heartbeat ping
 
 - [ ] **Step 1: Write SQL migration file with `users`, `pending_agent_actions`, `sppg_orders`, `sppg_order_items`, `supplier_expenses`**
 - [ ] **Step 2: Implement UserRepository with single-use invite token logic (`/invite`) and whitelist verification**
 - [ ] **Step 3: Implement PendingActionRepository for interactive confirmation state machine (10-minute expiry)**
 - [ ] **Step 4: Implement SppgRepository for local querying and caching**
-- [ ] **Step 5: Write unit tests verifying repository methods and mock DB operations**
-- [ ] **Step 6: Run tests and commit Task 6**
+- [ ] **Step 5: Implement heartbeat ping to prevent Supabase free tier auto-pause during holidays**
+- [ ] **Step 6: Write unit tests verifying repository methods and mock DB operations**
+- [ ] **Step 7: Run tests and commit Task 6**
 
 ---
 

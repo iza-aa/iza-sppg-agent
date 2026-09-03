@@ -1,7 +1,7 @@
 # Design Specification: IZA SPPG MBG Assistant 🍽️📊
 
 **Tanggal**: 04 September 2026  
-**Status**: Draft for Approval  
+**Status**: Approved by User  
 **Target Repository**: `https://github.com/iza-aa/iza-sppg-agent`  
 **Brand Identity**: Badan Gizi Nasional (BGN) Republik Indonesia  
 **Primary Color Palette**: 
@@ -10,7 +10,8 @@
 - Soft Sky Blue: `#90C7DE`
 - Slate White: `#F8FAFC`
 - Alert Green (Surplus): `#2E7D32`
-- Alert Red (Defisit): `#C62828`
+- Alert Yellow (Sesuai Pagu): `#F59E0B`
+- Alert Red (Defisit / Over-budget): `#C62828`
 
 ---
 
@@ -22,15 +23,15 @@ Sistem ini dirancang khusus untuk memfasilitasi vendor operasional penyedia maka
 1. **Nota Pesanan Bahan Makanan SPPG** = **PENDAPATAN (Plafon Anggaran / Hak Tagih)**
    - Diterbitkan oleh Satuan Pelayanan Pemenuhan Gizi (SPPG) lokal (contoh: *SPPG Patila, Luwu Utara*).
    - Memuat nomor pesanan, tanggal tiba, serta daftar rincian bahan (hingga 20+ item), volume (ekor, kg, jerigen, liter), pagu harga, dan total alokasi dana (misal: Rp 29.581.000).
-   - Dicatat ke tab `PENDAPATAN_SPPG`.
+   - Dicatat ke tab `02_PENDAPATAN_SPPG`.
 2. **Invoice / Kwitansi Supplier Pasar** = **PENGELUARAN (Realisasi Belanja Riil)**
    - Diterbitkan oleh suplier pasar/peternak/toko (contoh: *Ayam Pasar, Hj Muliadi, Mas Pandu, Best Fruit*).
-   - Memuat belanja aktual yang dibayarkan vendor. Foto fisik diarsipkan ke Google Drive.
-   - Dicatat ke tab `PENGELUARAN_SUPPLIER`.
+   - Memuat belanja aktual yang dibayarkan vendor. Foto fisik diarsipkan ke Google Drive dalam format terkompresi WebP (80% kualitas, max 1200px lebar).
+   - Dicatat ke tab `03_PENGELUARAN_SUPPLIER` dengan formula tautan rapi `=HYPERLINK(url, "📸 Lihat Nota")`.
 3. **Rekapitulasi Margin Keuntungan Bersih**:
    - `Laba Kotor (Margin Rp) = Total Plafon SPPG - Total Belanja Supplier`
    - `% Efisiensi / Margin = (Margin Rp / Total Plafon SPPG) * 100%`
-   - Dapat dipantau langsung dari Telegram, Google Sheets, maupun diekspor ke PDF resmi.
+   - Dapat dipantau langsung dari Telegram, Google Sheets, maupun diekspor ke dokumen PDF resmi SPJ.
 
 ---
 
@@ -55,7 +56,7 @@ flowchart TD
     subgraph CoreServices ["Shared Core Services (DRY)"]
         AI["AI Engine (agy CLI + Gemini 2.5/3.7 Vision Fallback)"]
         GD["Google Drive Vault (Compressed WebP Storage)"]
-        GS["Google Sheets Engine (Per-SPPG Sheet + Master Dashboard)"]
+        GS["Google Sheets Engine (5-Tab Hybrid Architecture)"]
         PDF["PDF Official BGN Report Generator"]
         DB["Supabase PostgreSQL (Pending Actions & State)"]
     end
@@ -72,91 +73,126 @@ flowchart TD
 
 ---
 
-## 3. Desain Google Spreadsheet & Google Apps Script (`kode.gs`)
+## 3. Desain Google Spreadsheet Jangka Panjang (Hybrid 5-Tab Architecture)
 
-Setiap unit SPPG memiliki 1 Google Spreadsheet khusus, ditambah 1 Master Dashboard terpusat untuk Ayah.
+Setiap unit SPPG memiliki 1 Google Spreadsheet khusus dengan arsitektur 5 tab terstruktur, ditambah 1 Master Dashboard terpusat untuk Ayah.
 
-### 3.1 Struktur Tab Spreadsheet Per SPPG
+```
+[SPREADSHEET SPPG PATILA]
+ ├── 1. 📊 01_RINGKASAN_EKSEKUTIF    (Sticky KPI Cards, grafik alokasi, status margin)
+ ├── 2. 🟢 02_PENDAPATAN_SPPG        (Data seluruh Nota Pesanan dari BGN)
+ ├── 3. 🔴 03_PENGELUARAN_SUPPLIER   (Data seluruh nota belanja riil + link foto Drive)
+ ├── 4. ⚖️ 04_REKAP_MARGIN_HARIAN    (Komparasi otomatis: Pagu vs Belanja per tanggal/SPPG)
+ └── 5. ⚙️ 05_MASTER_DATA            (Daftar resmi supplier, bahan baku, satuan baku)
+```
 
-#### Tab 1: `PENDAPATAN_SPPG`
+### 3.1 Rincian Struktur Tab
+
+#### Tab 1: `01_RINGKASAN_EKSEKUTIF`
 *Warna Tab: Deep Navy (`#0F2042`)*
+- **Baris 1–4 (Freeze Rows / Sticky KPI Cards)**:
+  - Card 1: `TOTAL PAGU PENDAPATAN SPPG` (Format: `Rp #,##0`, Background: Deep Navy `#0F2042`, Text: Gold `#D4A017`)
+  - Card 2: `TOTAL REALISASI BELANJA PASAR` (Format: `Rp #,##0`, Background: Slate `#1E293B`, Text: White `#FFFFFF`)
+  - Card 3: `TOTAL MARGIN BERSIH (LABA KOTOR)` (Format: `Rp #,##0` & `%`, Background: Forest Green `#14532D`, Text: White `#FFFFFF`)
+- **Area Bawah**:
+  - Grafik lingkaran (*Pie Chart*): Porsi pengeluaran per supplier (Ayam Pasar vs Hj Muliadi vs Mas Pandu).
+  - Tabel 10 transaksi terakhir dengan indikator status efisiensi.
+
+#### Tab 2: `02_PENDAPATAN_SPPG`
+*Warna Tab: Soft Sky Blue (`#90C7DE`)*
 - Kolom:
-  - `A: ID Transaksi` (UUID / SPPG-ORD-YYYYMMDD-XXX)
+  - `A: ID Transaksi` (Format: `SPPG-ORD-YYYYMMDD-XXX`)
   - `B: Tanggal Pesanan` (YYYY-MM-DD)
   - `C: Tanggal Tiba Bahan` (YYYY-MM-DD)
   - `D: No SPPG` (contoh: `05/02/09/26`)
-  - `E: Uraian Bahan Makanan` (contoh: Ayam, Tempe, Minyak Sawit)
+  - `E: Uraian Bahan Makanan` (Ayam, Tempe, Minyak Sawit, Wortel, dll.)
   - `F: Kuantitas` (angka numerik)
-  - `G: Satuan` (Ekor, KG, Jerigen, Liter, Keranjang, dll.)
-  - `H: Harga Pagu SPPG (Rp)`
-  - `I: Total Pagu (Rp)` (`=F*H`)
-  - `J: Target Supplier` (Hj Muliadi, Ayam Pasar, dll.)
+  - `G: Satuan` (Ekor, KG, Jerigen, Liter, Keranjang, Ikat, Bungkus)
+  - `H: Harga Pagu SPPG (Rp)` (Format Currency `Rp #,##0`)
+  - `I: Total Pagu (Rp)` (Nilai dihitung pasti)
+  - `J: Target Supplier` (Dropdown referensi ke `05_MASTER_DATA`)
   - `K: Status Realisasi` (`LENGKAP` / `SEBAGIAN` / `PENDING`)
   - `L: Catatan Tambahan`
 
-#### Tab 2: `PENGELUARAN_SUPPLIER`
+#### Tab 3: `03_PENGELUARAN_SUPPLIER`
 *Warna Tab: Crimson Red (`#C62828`)*
 - Kolom:
-  - `A: ID Transaksi` (UUID / SUPP-EXP-YYYYMMDD-XXX)
+  - `A: ID Transaksi` (Format: `SUPP-EXP-YYYYMMDD-XXX`)
   - `B: Tanggal Transaksi` (YYYY-MM-DD)
-  - `C: No SPPG Ref` (Terkait ke pesanan SPPG mana)
-  - `D: Nama Supplier` (Hj Muliadi, Ayam Pasar, Mas Pandu, dll.)
-  - `E: Uraian Barang`
+  - `C: No SPPG Ref` (Terkait ke nomor pesanan SPPG mana)
+  - `D: Nama Supplier` (Dropdown referensi ke `05_MASTER_DATA`)
+  - `E: Uraian Barang Belanja`
   - `F: Kuantitas Riil`
   - `G: Satuan`
   - `H: Harga Beli Riil (Rp)`
   - `I: Total Bayar (Rp)`
-  - `J: Link Bukti Nota GDrive` (URL langsung ke file foto di Google Drive)
-  - `K: Penginput / PIC`
-  - `L: Keterangan`
+  - `J: Link Bukti Nota GDrive` (Formula: `=HYPERLINK(url, "📸 Lihat Nota")`)
+  - `K: Penginput / PIC` (ID / Nama Telegram)
+  - `L: Keterangan / Catatan Audit`
 
-#### Tab 3: `REKAP_MARGIN_HARIAN`
+#### Tab 4: `04_REKAP_MARGIN_HARIAN`
 *Warna Tab: Emblem Gold (`#D4A017`)*
-- Menghubungkan Tab 1 dan Tab 2 berdasarkan `Tanggal Tiba` / `No SPPG`:
-  - `Plafon Pendapatan SPPG (Rp)`
-  - `Realisasi Belanja Supplier (Rp)`
-  - `Margin / Laba Bersih (Rp)` (`=Plafon - Realisasi`)
-  - `% Margin` (`=Margin / Plafon`)
-  - Status Evaluasi: `HEMAT (HIJAU)` / `SESUAI PAGU (KUNING)` / `OVER-BUDGET (MERAH)`
+- Menghubungkan Tab 2 dan Tab 3 berdasarkan `Tanggal Tiba` dan `No SPPG`:
+  - `Kolom A: Tanggal / Periode`
+  - `Kolom B: No SPPG`
+  - `Kolom C: Total Plafon SPPG (Rp)`
+  - `Kolom D: Total Belanja Supplier (Rp)`
+  - `Kolom E: Margin Bersih (Rp)` (`=C - D`)
+  - `Kolom F: % Margin Efisiensi` (`=E / C`)
+  - `Kolom G: Status Badge`:
+    - 🟢 **HEMAT / SURPLUS** (Margin >= 15%)
+    - 🟡 **SESUAI PAGU** (Margin 5% – 14.9%)
+    - 🔴 **OVER-BUDGET** (Margin < 5% atau Negatif)
+
+#### Tab 5: `05_MASTER_DATA`
+*Warna Tab: Slate Gray (`#64748B`)*
+- Kolom A: **Daftar Resmi Supplier** (`Hj Muliadi`, `Ayam Pasar`, `Mas Pandu`, `Best Fruit`)
+- Kolom B: **Daftar Satuan Baku** (`Ekor`, `KG`, `Jerigen`, `Keranjang`, `Liter`, `Ikat`, `Bungkus`, `Pcs`)
+- Kolom C: **Daftar Kategori Bahan** (`Protein Hewani`, `Protein Nabati`, `Sayuran Segar`, `Buah Segar`, `Bahan Pokok`, `Bumbu Dapur`, `Susu & Pelengkap`, `Kemasan/Gas/Operasional`)
 
 ---
 
-### 3.2 Google Apps Script (`kode.gs`)
-File `kode.gs` akan ditanamkan ke dalam Spreadsheet untuk:
-1. **Otomatisasi Formatting**: Menerapkan styling warna resmi Badan Gizi Nasional (Navy Header, Zebra Table, Border Emas, Format Mata Uang `Rp #,##0`).
-2. **Formula Auto-Fill**: Menghitung otomatis kolom `Total`, `Margin`, dan status audit.
-3. **Custom Menu di Google Sheets**:
-   - `[⚡ Menu SPPG]` ➔ `Format Ulang Tabel`
-   - `[⚡ Menu SPPG]` ➔ `Hitung Ulang Margin Harian`
-   - `[⚡ Menu SPPG]` ➔ `Kirim Rekap ke Telegram Ayah`
+### 3.2 Google Apps Script (`google-apps-script/kode.gs`)
+File `kode.gs` ditanamkan langsung di dalam spreadsheet untuk memberikan menu khusus `[⚡ MENU KELOLA SPPG]` dengan fungsi:
+1. **`formatBgnDesign()`**: Memulihkan seluruh format visual, header Navy `#0F2042`, zebra rows, border emas tipis, dan format Rupiah `Rp #,##0`.
+2. **`lockPreviousMonths()`**: Mengunci baris data bulan lalu yang telah selesai SPJ agar tidak sengaja terhapus/terubah oleh staf.
+3. **`sendDailySummaryToTelegram()`**: Mengirimkan rangkuman omset dan margin hari ini langsung ke Telegram Ayah.
+4. **`archiveYearlyData()`**: Membekukan data tahun anggaran lama ke spreadsheet arsip saat pergantian tahun.
 
 ---
 
-## 4. Desain Ekspor Laporan Resmi PDF
+## 4. Prinsip Ketahanan Jangka Panjang (Longevity & Anti-Fragility)
 
-Bot Telegram dapat mengekspor rekap dalam bentuk dokumen **PDF Resmi SPJ / Laporan Vendor**:
+1. **Google Drive Anti-Quota (WebP 80% Max 1200px)**:
+   - Foto nota diperkecil dari 6MB menjadi ~80 KB – 150 KB menggunakan `sharp`.
+   - Kuota gratis 15 GB mampu menampung lebih dari 100.000 nota (tahan bertahun-tahun).
+   - Struktur folder otomatis bertingkat: `/MBG/[SPPG_ID]/[Tahun]/[Bulan]/Supplier/`.
+2. **Human-in-the-Loop & CPU Math Check**:
+   - AI tidak pernah langsung menulis ke Sheets tanpa konfirmasi Ayah.
+   - Backend memverifikasi rumus matematis: `Σ (qty * price) == total_amount` untuk mendeteksi halusinasi angka pada nota buram.
+3. **Persistent State & Obsolete Keyboard Cleanup**:
+   - Draf transaksi disimpan di Supabase (`pending_agent_actions`) dengan TTL 10 menit (tahan restart server).
+   - Tombol draf lama otomatis dibersihkan (`clearPreviousKeyboard`) untuk mencegah dobel input.
+4. **Supabase Heartbeat Ping**:
+   - Cron job mingguan ringan (`SELECT 1`) menjaga proyek Supabase free-tier tidak pernah auto-pause selama libur semester sekolah.
+
+---
+
+## 5. Desain Ekspor Dokumen Resmi PDF SPJ
+
+Format PDF dihasilkan langsung oleh library `pdfkit` dengan estetika resmi Badan Gizi Nasional:
 - **Kop Dokumen**:
-  - Logo Badan Gizi Nasional di pojok kiri atas.
-  - Teks Kop Resmi:  
-    **SATUAN PELAYANAN PEMENUHAN GIZI (SPPG) [NAMA UNIT]**  
-    *Badan Gizi Nasional Republik Indonesia*  
-    Laporan Rekapitulasi Pembelanjaan & Realisasi Bahan Makanan
-- **Blok Informasi**: No SPPG, Periode/Tanggal, Total Porsi/Anggaran.
-- **Tabel Ringkasan Keuangan**:
-  - Total Plafon Anggaran SPPG: `Rp XX.XXX.XXX`
-  - Total Realisasi Supplier: `Rp XX.XXX.XXX`
-  - Margin Efisiensi Vendor: `Rp XX.XXX.XXX (XX%)`
-- **Tabel Rincian Pembelian per Supplier**:
-  - Pengelompokan belanja per suplier (Ayam Pasar, Hj Muliadi, dll.).
-- **Tanda Tangan Pengesahan**:
-  - Kolom Tanda Tangan Kepala SPPG.
-  - Kolom Tanda Tangan Rekanan / Vendor MBG.
-
-Dokumen digenerate langsung oleh backend menggunakan library `pdfkit` dan dikirimkan sebagai file `.pdf` ke chat Telegram Ayah dalam hitungan detik.
+  - Logo BGN dan teks resmi Satuan Pelayanan Pemenuhan Gizi (SPPG).
+- **Summary Strip**:
+  - 3 kotak KPI (Plafon SPPG, Belanja Supplier, Sisa Margin Rp dan %).
+- **Tabel Belanja**:
+  - Rincian pembelian per suplier dengan format rapi dan penomoran otomatis.
+- **Kolom Pengesahan**:
+  - Tanda tangan Kepala SPPG dan Rekanan Vendor MBG.
 
 ---
 
-## 5. Alur Interaksi Telegram Bot (UX Flow)
+## 6. Alur Interaksi Telegram Bot (UX Flow)
 
 ```
 [Skenario 1: Ayah Kirim Foto Nota Pesanan SPPG]
@@ -200,26 +236,3 @@ Bot  ➔ "📊 Laporan SPPG Patila (03 Sept 2026):
         
         [📄 Download Laporan PDF Resmi] [🌐 Buka Google Sheets]"
 ```
-
----
-
-## 6. Rencana Tahapan Eksekusi
-
-1. **Fase 1: Inisialisasi Repository & Fondasi Standar**
-   - Inisialisasi git pada direktori kerja, hubungkan ke `https://github.com/iza-aa/iza-sppg-agent`.
-   - Setup `package.json`, `tsconfig.json`, `vitest` config, linter, dan struktur folder.
-2. **Fase 2: Core Database & AI Parser**
-   - Setup Supabase migration (tabel `sppg_orders`, `sppg_order_items`, `supplier_expenses`, `pending_actions`, `users`).
-   - Ekstraktor dokumen multimodal (`sppg-order.parser.ts` dan `supplier-receipt.parser.ts`) bertenaga `agy CLI` dengan fallback ke Gemini Vision.
-3. **Fase 3: Google Drive & Google Sheets Integration + `kode.gs`**
-   - Google Drive uploader dengan kompresi WebP.
-   - Google Sheets adapter untuk multi-SPPG dan Master Dashboard.
-   - Pembuatan script `kode.gs` dan dokumentasi pemasangannya.
-4. **Fase 4: Micro-Worker Supervisor & Grammy Bot Handler**
-   - Implementasi `src/supervisor.ts` dan `src/worker.ts`.
-   - Setup 3 token bot untuk pengujian terisolasi.
-   - Fitur generator PDF resmi Badan Gizi Nasional via `pdfkit`.
-5. **Fase 5: Dokumentasi Lengkap & Testing Lokal (Mac)**
-   - Penyusunan `SETUP.md` komprehensif (panduan dari nol: BotFather, Supabase, Google Service Account, `kode.gs`, hingga jalankan di Mac).
-   - Pengujian end-to-end lokal di Mac menggunakan data nyata foto SPPG Patila.
-   - Commit dan push ke repository GitHub.
