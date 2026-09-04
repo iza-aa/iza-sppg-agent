@@ -4,7 +4,7 @@ import path from "path";
 import { env } from "../../config/env.js";
 import { SppgOrder } from "../ai/schemas/sppg-order.schema.js";
 import { SupplierReceipt } from "../ai/schemas/supplier-receipt.schema.js";
-import { generateInit5TabBatchRequests } from "./sheets-recipes.js";
+import { createInit5TabsBatchRequests } from "./sheets-recipes.js";
 import { logger } from "../utils/logger.js";
 
 export class GoogleSheetsService {
@@ -49,7 +49,7 @@ export class GoogleSheetsService {
 
       if (missingTabs.length > 0) {
         logger.info({ spreadsheetId, missingTabs }, "Initializing 5-Tab BGN structure on spreadsheet...");
-        const batchRequests = generateInit5TabBatchRequests();
+        const batchRequests = createInit5TabsBatchRequests();
 
         await client.spreadsheets.batchUpdate({
           spreadsheetId,
