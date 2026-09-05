@@ -9,6 +9,7 @@ import { logger } from "../utils/logger.js";
 
 export class GoogleSheetsService {
   private sheets: sheets_v4.Sheets | null = null;
+  private initializedSpreadsheets = new Set<string>();
 
   private async getClient(): Promise<sheets_v4.Sheets> {
     if (this.sheets) return this.sheets;
@@ -31,6 +32,10 @@ export class GoogleSheetsService {
    * Initializes the 5-Tab BGN structure on an operational spreadsheet if not already present
    */
   async ensure5TabStructure(spreadsheetId: string): Promise<void> {
+    if (this.initializedSpreadsheets.has(spreadsheetId)) {
+      return;
+    }
+
     const client = await this.getClient();
 
     try {
@@ -73,6 +78,7 @@ export class GoogleSheetsService {
 
         logger.info({ spreadsheetId }, "Successfully initialized 5-Tab BGN structure");
       }
+      this.initializedSpreadsheets.add(spreadsheetId);
     } catch (err: any) {
       logger.warn({ err: err?.message || err, spreadsheetId }, "Note during 5-tab verification");
     }
@@ -184,6 +190,7 @@ export class GoogleSheetsService {
     marginBersih: number;
     marginPercentage: number;
   }> {
+    await this.ensure5TabStructure(spreadsheetId);
     const client = await this.getClient();
 
     try {
