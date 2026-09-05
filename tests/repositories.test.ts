@@ -40,4 +40,56 @@ describe("Database Repositories & State Machine", () => {
     const updated = await pendingRepo.getById(draftId);
     expect(updated?.status).toBe("SAVED");
   });
+
+  it("should recognize primary Super Admin 7546537134 unconditionally", async () => {
+    const isSuper = await userRepo.isSuperAdmin(7546537134);
+    const isAllowed = await userRepo.isAllowed(7546537134);
+    const user = await userRepo.getUser(7546537134);
+
+    expect(isSuper).toBe(true);
+    expect(isAllowed).toBe(true);
+    expect(user?.role).toBe("super_admin");
+    expect(user?.username).toBe("heizaa4");
+  });
+
+  it("should create single-use invite token and allow invitee to claim it", async () => {
+    const code = `INV-TEST-${Date.now()}`;
+    const invite = await userRepo.createInvite({
+      code,
+      name: "Ayah",
+      role: "admin",
+      sppg_assigned_id: "sppg_patila",
+      created_by: 7546537134,
+      ttlMinutes: 60,
+    });
+
+    expect(invite.code).toBe(code);
+    expect(invite.name).toBe("Ayah");
+
+    // Before claim, new user 888888 is not allowed
+    const beforeClaim = await userRepo.isAllowed(888888);
+    // (Could be false if whitelist is active)
+
+    // Claim invite
+    const claimRes = await userRepo.claimInvite(code, {
+      id: 888888,
+      username: "ayah_mbg",
+      first_name: "Ayah",
+    });
+
+    expect(claimRes).not.toBeNull();
+    expect(claimRes?.user.id).toBe(888888);
+    expect(claimRes?.user.role).toBe("admin");
+
+    // After claim, user is allowed
+    const afterClaim = await userRepo.isAllowed(888888);
+    expect(afterClaim).toBe(true);
+
+    // Second claim must fail (single-use)
+    const secondClaim = await userRepo.claimInvite(code, {
+      id: 999999,
+      first_name: "Imposter",
+    });
+    expect(secondClaim).toBeNull();
+  });
 });

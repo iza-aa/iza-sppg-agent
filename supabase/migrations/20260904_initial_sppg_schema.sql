@@ -80,3 +80,22 @@ CREATE TABLE IF NOT EXISTS sppg_heartbeat (
   last_ping TIMESTAMPTZ DEFAULT NOW()
 );
 INSERT INTO sppg_heartbeat (id, last_ping) VALUES (1, NOW()) ON CONFLICT (id) DO UPDATE SET last_ping = NOW();
+
+-- 7. Tabel Undangan Token (Sistem Invite Terverifikasi)
+CREATE TABLE IF NOT EXISTS sppg_invites (
+  code TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('super_admin', 'admin', 'member')),
+  sppg_assigned_id TEXT DEFAULT 'sppg_patila',
+  created_by BIGINT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  claimed_by BIGINT,
+  claimed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sppg_invites_code ON sppg_invites(code);
+
+-- Pre-seed Super Admin Utama (@heizaa4 - ID: 7546537134)
+INSERT INTO sppg_users (id, username, first_name, role, status)
+VALUES (7546537134, 'heizaa4', 'Heizaaa', 'super_admin', 'active')
+ON CONFLICT (id) DO UPDATE SET role = 'super_admin', status = 'active';

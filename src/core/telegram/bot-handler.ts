@@ -1,4 +1,5 @@
 import { Bot, Context, InputFile } from "grammy";
+import crypto from "node:crypto";
 import { SPPGUnitConfig } from "../../config/sppg.config.js";
 import { getSupabaseClient } from "../db/supabase.js";
 import { UserRepository } from "../db/repositories/user.repository.js";
@@ -58,27 +59,132 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     }
   }
 
-  // Global Auth Guard
-  bot.use(async (ctx, next) => {
-    if (!ctx.from) return next();
+  // ============================================================================
+  // PUBLIC COMMANDS (Accessible to everyone)
+  // ============================================================================
 
+  // 1. /myid - Displays Telegram identity, user ID, and connection status
+  bot.command("myid", async (ctx) => {
+    if (!ctx.from) return;
+    const tgId = ctx.from.id;
+    const tgName = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(" ");
+    const tgUsername = ctx.from.username ? `@${ctx.from.username}` : "(tanpa username)";
+    const user = await userRepo.getUser(tgId);
+    const isSuper = await userRepo.isSuperAdmin(tgId);
+    const isAllowed = await userRepo.isAllowed(tgId);
+
+    let statusDesc = "❌ <b>Belum Terdaftar (Tidak Ada Akses)</b>";
+    if (isSuper) {
+      statusDesc = "👑 <b>Super Admin / Pemilik Sistem</b>";
+    } else if (isAllowed && user) {
+      statusDesc = `✅ <b>Terhubung sebagai ${escapeHtml(user.role.toUpperCase())}</b> (${escapeHtml(user.sppg_assigned_id || unitConfig.id)})`;
+    }
+
+    const lines = [
+      `🆔 <b>INFORMASI IDENTITAS TELEGRAM ANDA:</b>`,
+      `------------------------------------------`,
+      `• <b>Telegram ID:</b> <code>${tgId}</code>`,
+      `• <b>Nama Akun:</b> ${escapeHtml(tgName)}`,
+      `• <b>Username:</b> ${escapeHtml(tgUsername)}`,
+      `• <b>Status Akses:</b> ${statusDesc}`,
+      `------------------------------------------`,
+      isSuper
+        ? `💡 <i>Sebagai Super Admin, Anda dapat mengundang staf/Ayah dengan perintah:</i>\n<code>/invite [Nama] [admin/member]</code>`
+        : isAllowed
+        ? `<i>Akun Anda telah diverifikasi untuk mengelola unit ${escapeHtml(unitConfig.name)}.</i>`
+        : `👉 <i>Hubungi Super Admin (@heizaa4) untuk mendapatkan link undangan resmi.</i>`,
+    ];
+
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+  });
+
+  // 2. /start - Handles both standard greeting and secure invite claim (?start=INV-XXXXXX)
+  bot.command("start", async (ctx) => {
+    if (!ctx.from) return;
+    const payload = ctx.match?.trim();
+
+    // CASE A: User is claiming an invite code (?start=INV-XXXXXX)
+    if (payload && payload.startsWith("INV-")) {
+      const invite = await userRepo.getInvite(payload);
+
+      if (!invite) {
+        await ctx.reply(
+          `⚠️ <b>Link undangan tidak valid atau sudah pernah digunakan.</b>\n\nSilakan minta Super Admin (@heizaa4) untuk membuat link undangan baru via <code>/invite</code>.`,
+          { parse_mode: "HTML" }
+        );
+        return;
+      }
+
+      if (new Date(invite.expires_at).getTime() < Date.now()) {
+        await ctx.reply(
+          `⚠️ <b>Link undangan telah kedaluwarsa.</b>\n\nSilakan minta Super Admin untuk membuat link undangan baru via <code>/invite</code>.`,
+          { parse_mode: "HTML" }
+        );
+        return;
+      }
+
+      // If Super Admin accidentally clicks their own invite for someone else
+      const isSuper = await userRepo.isSuperAdmin(ctx.from.id);
+      if (isSuper && ctx.from.id === invite.created_by) {
+        await ctx.reply(
+          `⚠️ <b>Ini adalah Link Undangan khusus untuk ${escapeHtml(invite.name)}!</b>\n\n` +
+          `Akun Telegram Anda sudah berstatus Super Admin.\n` +
+          `👉 <b>Jangan klik link ini di akun Anda sendiri</b>, melainkan teruskan/kirim link ini ke Telegram <b>${escapeHtml(invite.name)}</b> agar akun beliau yang terverifikasi.`,
+          { parse_mode: "HTML" }
+        );
+        return;
+      }
+
+      // Claim invite
+      const result = await userRepo.claimInvite(payload, {
+        id: ctx.from.id,
+        username: ctx.from.username,
+        first_name: ctx.from.first_name,
+        last_name: ctx.from.last_name,
+      });
+
+      if (!result) {
+        await ctx.reply(`⚠️ Gagal memproses klaim undangan. Silakan coba lagi.`, { parse_mode: "HTML" });
+        return;
+      }
+
+      const roleDesc =
+        result.user.role === "super_admin"
+          ? "Super Admin / Owner"
+          : result.user.role === "admin"
+          ? "Admin (Operator SPPG)"
+          : "Staf Operasional";
+
+      const claimSuccessText = [
+        `🎉 <b>VERIFIKASI BERHASIL! SELAMAT DATANG!</b>`,
+        `------------------------------------------`,
+        `Halo <b>${escapeHtml(result.user.first_name || invite.name)}</b>, akun Telegram Anda telah resmi terhubung sebagai:`,
+        `🏢 Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
+        `🎖️ Peran: <b>${roleDesc}</b>`,
+        `------------------------------------------`,
+        `💡 <b>Mulai Sekarang Anda Dapat:</b>`,
+        `1. 📸 Kirim foto <b>Nota Pesanan SPPG</b> untuk mencatat Plafon/Pagu.`,
+        `2. 🧾 Kirim foto <b>Bon/Struk Belanja Pasar</b> untuk mencatat Pengeluaran Riil.`,
+        `3. 📊 Ketik /rekap untuk melihat margin laba hari ini.`,
+        `4. 📄 Ketik /pdf untuk cetak laporan resmi SPJ BGN.`,
+      ].join("\n");
+
+      await ctx.reply(claimSuccessText, { parse_mode: "HTML" });
+      return;
+    }
+
+    // CASE B: Standard Start
     const isAllowed = await userRepo.isAllowed(ctx.from.id);
     if (!isAllowed) {
       await ctx.reply(
-        `⛔ <b>Akses Ditolak</b>\nID Telegram Anda (<code>${ctx.from.id}</code>) belum terdaftar di whitelist bot MBG.\nHubungi administrator untuk otorisasi.`,
+        `⛔ <b>Akses Ditolak (Privat & Terbatas)</b>\n\n` +
+        `Akun Telegram Anda (ID: <code>${ctx.from.id}</code>) belum terdaftar di sistem asisten MBG.\n\n` +
+        `👉 <i>Ketik /myid untuk melihat identitas Anda, atau hubungi Super Admin (@heizaa4) untuk mendapatkan link undangan resmi.</i>`,
         { parse_mode: "HTML" }
       );
       return;
     }
 
-    return next();
-  });
-
-  // ============================================================================
-  // COMMAND HANDLERS
-  // ============================================================================
-
-  bot.command("start", async (ctx) => {
     const welcomeText = [
       `👋 <b>Halo, Selamat Datang di Asisten Operasional MBG!</b>`,
       `🏢 Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
@@ -93,6 +199,93 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     ].join("\n");
 
     await ctx.reply(welcomeText, { parse_mode: "HTML" });
+  });
+
+  // ============================================================================
+  // GLOBAL AUTH GUARD (Blocks unauthenticated users from all operational features)
+  // ============================================================================
+  bot.use(async (ctx, next) => {
+    if (!ctx.from) return next();
+
+    const isAllowed = await userRepo.isAllowed(ctx.from.id);
+    if (!isAllowed) {
+      await ctx.reply(
+        `⛔ <b>Akses Ditolak (Privat & Terbatas)</b>\n\n` +
+        `Akun Telegram Anda (ID: <code>${ctx.from.id}</code>) belum terdaftar di sistem asisten MBG.\n\n` +
+        `👉 <i>Ketik /myid untuk melihat identitas Anda, atau hubungi Super Admin (@heizaa4) untuk mendapatkan link undangan resmi.</i>`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    return next();
+  });
+
+  // ============================================================================
+  // AUTHENTICATED COMMANDS
+  // ============================================================================
+
+  // 3. /invite - Super Admin / Admin creates single-use invite link
+  bot.command("invite", async (ctx) => {
+    if (!ctx.from) return;
+    const isAdmin = await userRepo.isAdminOrSuperAdmin(ctx.from.id);
+    if (!isAdmin) {
+      await ctx.reply("⛔ <b>Akses Ditolak</b>: Perintah <code>/invite</code> hanya dapat dijalankan oleh Admin atau Super Admin.", {
+        parse_mode: "HTML",
+      });
+      return;
+    }
+
+    const args = ctx.match?.trim().split(/\s+/) || [];
+    if (args.length === 0 || !args[0]) {
+      const usage = [
+        `🎟️ <b>CARA MEMBUAT LINK UNDANGAN RESMI:</b>`,
+        `Ketik: <code>/invite [Nama] [Peran (opsional: admin/member)]</code>`,
+        ``,
+        `<b>Contoh:</b>`,
+        `• <code>/invite Ayah admin</code> (untuk Ayah sebagai Admin Operator)`,
+        `• <code>/invite Budi member</code> (untuk staf dapur)`,
+        ``,
+        `<i>Sistem akan membuat link khusus yang hanya bisa digunakan 1x oleh orang tersebut.</i>`,
+      ].join("\n");
+
+      await ctx.reply(usage, { parse_mode: "HTML" });
+      return;
+    }
+
+    const targetName = args[0];
+    const roleArg = (args[1] || "admin").toLowerCase();
+    const targetRole: "super_admin" | "admin" | "member" =
+      roleArg === "super_admin" ? "super_admin" : roleArg === "member" ? "member" : "admin";
+
+    const inviteCode = "INV-" + crypto.randomBytes(3).toString("hex").toUpperCase();
+    await userRepo.createInvite({
+      code: inviteCode,
+      name: targetName,
+      role: targetRole,
+      sppg_assigned_id: unitConfig.id,
+      created_by: ctx.from.id,
+      ttlMinutes: 1440, // 24 jam
+    });
+
+    const botUsername = ctx.me.username || "mbg_assistant_bot";
+    const inviteLink = `https://t.me/${botUsername}?start=${inviteCode}`;
+
+    const replyText = [
+      `🎟️ <b>LINK UNDANGAN BERHASIL DIBUAT!</b>`,
+      `------------------------------------------`,
+      `• <b>Penerima:</b> <b>${escapeHtml(targetName)}</b>`,
+      `• <b>Peran:</b> <code>${targetRole.toUpperCase()}</code>`,
+      `• <b>Unit SPPG:</b> ${escapeHtml(unitConfig.name)}`,
+      `• <b>Masa Berlaku:</b> 24 Jam (Sekali Pakai)`,
+      `------------------------------------------`,
+      `👉 <b>Kirimkan link ini langsung ke Telegram penerima:</b>`,
+      `${inviteLink}`,
+      ``,
+      `<i>Begitu penerima mengklik tombol START dari link di atas, akun Telegram mereka akan langsung aktif di sistem MBG.</i>`,
+    ].join("\n");
+
+    await ctx.reply(replyText, { parse_mode: "HTML" });
   });
 
   bot.command("sheets", async (ctx) => {
