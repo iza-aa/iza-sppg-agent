@@ -78,8 +78,9 @@ export async function parseSupplierReceiptFromImage(
     const prompt = "Ekstrak seluruh informasi nota belanja supplier ini secara detail dan akurat.";
     const result = await model.generateContent([prompt, imagePart]);
     const rawText = result.response.text();
+    const cleanJson = rawText.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/```\s*$/, "").trim();
 
-    const parsed = JSON.parse(rawText);
+    const parsed = JSON.parse(cleanJson);
 
     // Deterministic CPU Sum Check
     if (Array.isArray(parsed.items) && parsed.items.length > 0) {

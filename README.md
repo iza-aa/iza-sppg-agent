@@ -86,17 +86,22 @@ flowchart TD
 
 | Perintah | Deskripsi |
 |---|---|
-| `/start` | Menampilkan panduan penggunaan dan unit SPPG yang aktif. |
-| `/rekap` | Menampilkan ringkasan keuangan hari ini (Pagu, Belanja, Margin Laba, Status). |
-| `/pdf` | Mengunduh dokumen resmi Laporan SPJ Badan Gizi Nasional berformat PDF. |
-| `/sheets` | Menampilkan tautan cepat membuka lembar kerja Google Sheets online. |
-| `/invite <id> <nama>` | Menambahkan ID Telegram operator baru ke daftar akses whitelist (khusus Admin). |
+| `/start` | Menampilkan panduan penggunaan, unit SPPG aktif, atau memproses link undangan. |
+| `/rekap` | Menampilkan ringkasan keuangan hari ini (Pagu, Belanja, Margin Laba, Status) beserta tombol cetak PDF. |
+| `/pdf` | Mengunduh dokumen resmi Laporan SPJ Badan Gizi Nasional berformat PDF siap cetak & tanda tangan. |
+| `/sheets` | Menampilkan tautan cepat membuka lembar kerja Google Sheets online unit terkait. |
+| `/myid` | Memeriksa Telegram User ID, username, serta status hak akses akun Anda. |
+| `/invite [Nama] [admin/member]` | Membuat link undangan instan 1x pakai (24 jam) untuk mendaftarkan operator/Ayah (khusus Admin). |
 
 ---
 
 ## 🚀 Panduan Setup & Deploy
 
-Untuk petunjuk lengkap pengaturan database Supabase, izin Google Drive Service Account, pemasangan Google Apps Script, dan langkah deploy ke **Koyeb Cloud (24/7)**, silakan baca:
+Sistem ini mendukung dua opsi deployment produksi 24/7:
+1. **Linux Cloud VPS (Ubuntu 24.04/26.04) via PM2**: Sangat hemat RAM (~140 MB), zero-downtime cluster, auto-restart.
+2. **Cloud Container (Docker / Render.com)**: Menggunakan Multi-Stage Alpine Dockerfile dengan `dumb-init`.
+
+Untuk petunjuk lengkap pengaturan database Supabase, izin Google Drive Service Account, pemasangan Google Apps Script, dan langkah deploy, silakan baca:
 
 👉 **[SETUP.md — Panduan Setup & Deployment](SETUP.md)**
 

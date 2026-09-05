@@ -20,7 +20,7 @@ export async function pingSupabaseHeartbeat(): Promise<boolean> {
 
   // Fallback query if table not yet created
   try {
-    const { data } = await supabase.from("users").select("count").limit(1);
+    const { data } = await supabase.from("sppg_users").select("count").limit(1);
     logger.debug({ data }, "Supabase fallback heartbeat query executed");
     return true;
   } catch {

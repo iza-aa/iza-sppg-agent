@@ -12,9 +12,9 @@ Dokumen ini berisi panduan lengkap langkah-demi-langkah untuk menyiapkan, mengon
 | **Penyimpanan Data Riil** | Google Sheets API v4 | Lembar kerja 5-Tab Hybrid (Plafon vs Riil) |
 | **Media Vault (Foto)** | Google Drive API v3 | Arsip foto WebP 80% hemat penyimpanan |
 | **State Machine & Whitelist**| Supabase PostgreSQL | Pencegah duplikasi data & otorisasi user |
-| **AI Multimodal Parser** | Google Gemini 2.5 / 2.0 Flash | Ekstraksi 20+ bahan nota SPPG & bon suplier |
+| **AI Multimodal Parser** | Google Gemini 2.5 / 2.0 Flash + agy CLI | Ekstraksi 20+ bahan nota SPPG & bon suplier |
 | **Laporan Resmi SPJ** | PDFKit | Cetak PDF resmi berstandar Badan Gizi Nasional |
-| **24/7 Hosting** | Koyeb Cloud | Container Linux 24/7 tanpa timeout serverless |
+| **24/7 Production Hosting** | Linux Cloud VPS (PM2) / Render (Docker) | Menjalankan Supervisor & Multi-Bot 24/7 |
 
 ---
 
@@ -24,17 +24,17 @@ Dokumen ini berisi panduan lengkap langkah-demi-langkah untuk menyiapkan, mengon
 2. Pilih proyek Anda, lalu klik menu **SQL Editor** di bilah sisi kiri.
 3. Buka file [supabase/migrations/20260904_initial_sppg_schema.sql](supabase/migrations/20260904_initial_sppg_schema.sql) di repositori ini, salin seluruh kodenya, dan tempelkan ke SQL Editor Supabase.
 4. Klik **Run** (Jalankan).
-   - Seluruh tabel (`sppg_users`, `pending_agent_actions`, `sppg_orders`, `sppg_order_items`, `sppg_supplier_expenses`, `sppg_heartbeat`), indeks, dan trigger keamanan akan dibuat secara otomatis.
+   - Seluruh tabel (`sppg_users`, `sppg_pending_actions`, `sppg_orders`, `sppg_order_items`, `sppg_supplier_expenses`, `sppg_heartbeat`, `sppg_invites`), indeks, dan trigger keamanan akan dibuat secara otomatis.
 5. **Daftarkan Telegram ID Pengguna (Whitelist):**
    Jalankan query SQL berikut untuk mendaftarkan akun Telegram Anda dan Ayah:
    ```sql
    INSERT INTO sppg_users (id, first_name, role, status)
    VALUES
-     (123456789, 'Ayah', 'admin', 'active'),
-     (987654321, 'Iza', 'super_admin', 'active')
+     (7546537134, 'Heizaaa', 'super_admin', 'active'),
+     (7591684041, 'Ayah', 'admin', 'active')
    ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, status = EXCLUDED.status;
    ```
-   *(Ganti `123456789` dengan Telegram User ID Anda & Ayah. ID dapat dicek di Telegram via bot `@userinfobot`).*
+   *(Atau gunakan perintah instan `/invite Ayah admin` dari Telegram Super Admin untuk membuat link undangan otomatis tanpa buka SQL).*
 
 ---
 
@@ -72,44 +72,41 @@ Agar spreadsheet memiliki menu kustom BGN, fitur auto-lock bulan lalu, dan styli
 
 ---
 
-## Langkah 4: Deployment 24/7 di Koyeb Cloud
+## Langkah 4: Deployment Produksi 24/7
 
-Sistem ini didesain untuk berjalan sebagai *background worker* 24/7 tanpa batas waktu eksekusi (*timeout*) dan tanpa *cold start*.
+### Opsi A: Deployment di Linux Cloud VPS (PM2) — [Teruji & Aktif]
 
-1. Buat akun atau login di [https://app.koyeb.com](https://app.koyeb.com).
-2. Klik **Create App** -> pilih **GitHub**.
-3. Pilih repositori: `iza-aa/iza-sppg-agent` (Branch: `main`).
-4. **Builder Configuration:**
-   - Builder: **Dockerfile** (otomatis terdeteksi dari repositori).
-5. **Service Type:**
-   - Pilih **Worker** (karena bot menggunakan *Telegram Long Polling*, tidak memerlukan port HTTP publik yang rentan spam).
-6. **Environment Variables:**
-   Masukkan variabel-variabel berikut di halaman Koyeb:
+Menjalankan `mbg-assistant` di server Ubuntu bersama `wa-agent` dengan konsumsi RAM ultra-ringan (~140 MB).
 
-   | Variabel | Nilai / Contoh |
-   |---|---|
-   | `NODE_ENV` | `production` |
-   | `LOG_LEVEL` | `info` |
-   | `TELEGRAM_BOT_TOKEN_PATILA` | `8941228271:AAE3tjTjgIm00V9cPLezev_8rkpMiKAMqL4` |
-   | `TELEGRAM_BOT_TOKEN_UNIT2` | `8832930054:AAEAQncT1G8vR9VKVZOIe3Wrb-ck3IYj418` |
-   | `TELEGRAM_BOT_TOKEN_UNIT3` | `8973187995:AAGnFfyk97tiuHfdGtFxeFNwRXeiQOo--2c` |
-   | `GOOGLE_DRIVE_FOLDER_ID` | `1T6iFdrOj7_y8XJiQ941KTmDkOfhwfHeR` |
-   | `GOOGLE_SHEET_ID_MASTER` | `1Bjxue57nLpH-nrwXxH2uh-CZoPWTK_JKZ5YMWgwZSbM` |
-   | `GOOGLE_SHEET_ID_PATILA` | `1kOOZVfc2m6aYylhDJNi1lRh2_UWLgU540FJ7fwROLPA` |
-   | `GOOGLE_SHEET_ID_UNIT2` | `1uh5ULDa6ZcFU5fKPm9yfu_lUqP1y6yNJswr1NhkC4IY` |
-   | `GOOGLE_SHEET_ID_UNIT3` | `1-YbHkTZQeeZ5KCRKq4GXES9ApqRUNlXhe0zgi_LnEII` |
-   | `GEMINI_API_KEYS` | Salin kunci Gemini API Anda (pisahkan koma jika lebih dari 1) |
-   | `SUPABASE_URL` | URL project Supabase Anda (`https://xxx.supabase.co`) |
-   | `SUPABASE_SERVICE_ROLE_KEY` | Kunci `service_role` Supabase |
-   | `GOOGLE_SERVICE_ACCOUNT_BASE64` | String base64 dari `service-account.json` *(lihat cara di bawah)* |
-
-7. **Cara Menghasilkan `GOOGLE_SERVICE_ACCOUNT_BASE64`:**
-   Jalankan perintah ini di terminal komputer Anda:
+1. **Kompilasi TypeScript di Lokal (Mac):**
    ```bash
-   base64 -i service-account.json
+   npm run build
    ```
-   Salin teks output panjang tersebut dan tempelkan ke variabel `GOOGLE_SERVICE_ACCOUNT_BASE64` di Koyeb. Aplikasi akan secara otomatis me-materialisasi file `service-account.json` saat kontainer booting!
-8. Klik tombol **Deploy**. Koyeb akan mengompilasi Docker image dan menjalankan Supervisor.
+2. **Sinkronisasi Kode ke Server VPS:**
+   ```bash
+   scp -i ~/Downloads/iza-key.pem -r dist package.json package-lock.json .env service-account.json heizaaa@103.150.191.121:~/mbg-assistant/
+   ```
+3. **Jalankan via PM2 di VPS:**
+   ```bash
+   ssh -i ~/Downloads/iza-key.pem heizaaa@103.150.191.121
+   cd ~/mbg-assistant
+   npm install --omit=dev
+   pm2 start dist/supervisor.js --name mbg-assistant
+   pm2 save
+   ```
+4. **Verifikasi Status & Health Endpoint:**
+   ```bash
+   pm2 status
+   curl http://localhost:8080/health
+   ```
+
+### Opsi B: Deployment di Container / Render.com (Docker)
+
+1. Buat **Web Service** baru di dashboard Render.com.
+2. Hubungkan repositori GitHub `iza-aa/iza-sppg-agent`.
+3. Pilih Environment: **Docker** (Render otomatis membaca [Dockerfile](Dockerfile)).
+4. Konfigurasikan Environment Variables sesuai daftar di `.env.example`.
+5. Port HTTP: `8080` (Otomatis melayani `/health` dan `/ping` untuk health-check probe).
 
 ---
 
@@ -120,7 +117,7 @@ Jika Anda ingin menjalankan bot di komputer lokal (Mac/Linux):
 # 1. Pastikan dependensi terpasang
 npm install
 
-# 2. Jalankan seluruh unit testing
+# 2. Jalankan seluruh unit testing (8 test suites)
 npm test
 
 # 3. Jalankan bot dalam mode pengembangan (Supervisor mengawasi semua unit)
@@ -134,5 +131,5 @@ npm run worker sppg_patila
 
 ## 🔒 Keamanan & Praktik Terbaik
 - **Zero Secrets in Git**: File `.env` dan `service-account.json` wajib berada di `.gitignore`. Jangan pernah mengunggah kredensial ke GitHub.
-- **Fault-Isolation**: Setiap bot SPPG berjalan pada proses worker terpisah. Jika ada kendala jaringan pada Bot 2, Bot Patila tetap melayani Ayah tanpa gangguan.
-- **Keep-Warm Scheduler**: Supervisor menjalankan ping otomatis setiap 12 jam ke tabel `sppg_heartbeat` di Supabase agar proyek Supabase gratis tidak dinonaktifkan (*auto-pause*).
+- **Fault-Isolation**: Setiap bot SPPG memiliki error boundary terisolasi. Jika satu bot mengalami gangguan jaringan, bot lainnya tetap melayani Ayah tanpa interupsi.
+- **Keep-Warm Scheduler**: Supervisor menjalankan ping otomatis setiap 12 jam ke tabel `sppg_heartbeat` di Supabase agar database tetap aktif 24/7.

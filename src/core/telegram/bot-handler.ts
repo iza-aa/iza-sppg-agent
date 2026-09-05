@@ -48,9 +48,9 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
 
   // Helper typing action keep-alive
   async function withTyping<T>(ctx: Context, action: () => Promise<T>): Promise<T> {
-    await ctx.replyWithChatAction("typing").catch(() => {});
+    await ctx.replyWithChatAction("typing").catch(() => { });
     const interval = setInterval(() => {
-      ctx.replyWithChatAction("typing").catch(() => {});
+      ctx.replyWithChatAction("typing").catch(() => { });
     }, 4000);
     try {
       return await action();
@@ -91,8 +91,8 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
       isSuper
         ? `💡 <i>Sebagai Super Admin, Anda dapat mengundang staf/Ayah dengan perintah:</i>\n<code>/invite [Nama] [admin/member]</code>`
         : isAllowed
-        ? `<i>Akun Anda telah diverifikasi untuk mengelola unit ${escapeHtml(unitConfig.name)}.</i>`
-        : `👉 <i>Hubungi Super Admin (@heizaa4) untuk mendapatkan link undangan resmi.</i>`,
+          ? `<i>Akun Anda telah diverifikasi untuk mengelola unit ${escapeHtml(unitConfig.name)}.</i>`
+          : `👉 <i>Hubungi Super Admin (@heizaa4) untuk mendapatkan link undangan resmi.</i>`,
     ];
 
     await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
@@ -152,8 +152,8 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
         result.user.role === "super_admin"
           ? "Super Admin / Owner"
           : result.user.role === "admin"
-          ? "Admin (Operator SPPG)"
-          : "Staf Operasional";
+            ? "Admin (Operator SPPG)"
+            : "Staf Operasional";
 
       const claimSuccessText = [
         `🎉 <b>VERIFIKASI BERHASIL! SELAMAT DATANG!</b>`,
@@ -189,7 +189,7 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
       `👋 <b>Halo, Selamat Datang di Asisten Operasional MBG!</b>`,
       `🏢 Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
       `Badan Gizi Nasional (BGN) Republik Indonesia`,
-      `------------------------------------------`,
+      `--------------------------------------`,
       `💡 <b>Cara Penggunaan:</b>`,
       `1. 📸 <b>Kirim Foto Nota Pesanan SPPG</b> untuk mencatat Plafon Pendapatan (20+ bahan).`,
       `2. 🧾 <b>Kirim Foto Bon/Struk Belanja Pasar</b> untuk mencatat Pengeluaran Riil suplier.`,
@@ -344,25 +344,23 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
   });
 
   // ============================================================================
-  // PHOTO UPLOAD HANDLER
+  // PHOTO & DOCUMENT UPLOAD HANDLER
   // ============================================================================
 
-  bot.on("message:photo", async (ctx) => {
+  async function handleIncomingImage(ctx: Context, fileId: string) {
+    if (!ctx.from || !ctx.chat) return;
     const userId = ctx.from.id;
+    const chatId = ctx.chat.id;
     const state = getState(userId);
 
     await withTyping(ctx, async () => {
-      // 1. Get highest quality photo file
-      const photos = ctx.message.photo;
-      const fileInfo = photos[photos.length - 1];
-
-      const file = await ctx.api.getFile(fileInfo.file_id);
+      const file = await ctx.api.getFile(fileId);
       const fileUrl = `https://api.telegram.org/file/bot${unitConfig.token}/${file.file_path}`;
 
       const response = await fetch(fileUrl);
       const imageBuffer = Buffer.from(await response.arrayBuffer());
 
-      logger.info({ userId, fileSize: imageBuffer.length }, "Processing incoming photo document...");
+      logger.info({ userId, fileSize: imageBuffer.length }, "Processing incoming image document...");
 
       // 2. Classify document using OCR/AI logic
       let sppgOrderResult = null;
@@ -380,7 +378,16 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
       }
 
       if (actionType !== "SPPG_ORDER") {
-        supplierReceiptResult = await parseSupplierReceiptFromImage(imageBuffer);
+        try {
+          supplierReceiptResult = await parseSupplierReceiptFromImage(imageBuffer);
+        } catch (supplierErr) {
+          logger.warn({ supplierErr }, "Failed parsing image with both SPPG Order and Supplier Receipt parsers");
+          await ctx.reply(
+            "❌ <b>Gagal Mengenali Dokumen</b>\n\nAI tidak dapat mendeteksi foto sebagai Nota SPPG maupun Struk Belanja Supplier.\n\n💡 <b>Tips:</b>\n• Pastikan pencahayaan cukup dan foto tidak buram.\n• Posisikan kamera tegak lurus di atas nota.\n• Pastikan rincian bahan makanan dan total nominal terbaca jelas.",
+            { parse_mode: "HTML" }
+          );
+          return;
+        }
       }
 
       // 3. Upload to Google Drive Vault
@@ -410,7 +417,7 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
         id: draftId,
         sppg_id: unitConfig.id,
         telegram_user_id: userId,
-        telegram_chat_id: ctx.chat.id,
+        telegram_chat_id: chatId,
         action_type: actionType,
         payload,
         media_url: driveLink,
@@ -431,6 +438,24 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
 
       state.activeDraftMsgId = sentMsg.message_id;
     });
+  }
+
+  bot.on("message:photo", async (ctx) => {
+    const photos = ctx.message.photo;
+    const fileInfo = photos[photos.length - 1];
+    await handleIncomingImage(ctx, fileInfo.file_id);
+  });
+
+  bot.on("message:document", async (ctx) => {
+    const doc = ctx.message.document;
+    if (doc.mime_type && doc.mime_type.startsWith("image/")) {
+      await handleIncomingImage(ctx, doc.file_id);
+    } else {
+      await ctx.reply(
+        "ℹ️ Format file dokumen belum didukung. Silakan kirimkan file foto/gambar (JPG, PNG, WebP) nota pesanan atau struk belanja.",
+        { parse_mode: "HTML" }
+      );
+    }
   });
 
   // ============================================================================
@@ -487,8 +512,16 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
 
       await safeEditMessageText(ctx, successCard, { parse_mode: "HTML" });
     } catch (saveErr: any) {
-      logger.error({ saveErr }, "Failed saving to Google Sheets");
-      await ctx.reply(`❌ Gagal menyimpan ke Spreadsheet: ${saveErr?.message || saveErr}`);
+      logger.error({ saveErr }, "Failed saving to Google Sheets, restoring draft status to PENDING");
+      await pendingRepo.updateStatus(draftId, "PENDING");
+      await safeEditMessageText(
+        ctx,
+        `❌ Gagal menyimpan ke Spreadsheet: ${saveErr?.message || saveErr}\n\nSilakan coba tekan tombol <b>Simpan</b> kembali.`,
+        {
+          parse_mode: "HTML",
+          reply_markup: buildDraftConfirmationKeyboard(draftId, draft.action_type),
+        }
+      );
     }
   });
 
@@ -509,7 +542,7 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
 
     const state = getState(ctx.from.id);
     if (state.promptMsgId && ctx.chat) {
-      await ctx.api.deleteMessage(ctx.chat.id, state.promptMsgId).catch(() => {});
+      await ctx.api.deleteMessage(ctx.chat.id, state.promptMsgId).catch(() => { });
       state.promptMsgId = undefined;
     }
     state.editingField = null;
@@ -603,7 +636,9 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
   // ============================================================================
 
   bot.on("message:text", async (ctx) => {
+    if (!ctx.from || !ctx.chat) return;
     const userId = ctx.from.id;
+    const chatId = ctx.chat.id;
     const state = getState(userId);
 
     if (!state.editingField || !state.activeDraftId) {
@@ -636,9 +671,9 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     state.editingField = null;
 
     // Auto-cleanup user input & prompt message
-    await ctx.deleteMessage().catch(() => {});
+    await ctx.deleteMessage().catch(() => { });
     if (state.promptMsgId) {
-      await ctx.api.deleteMessage(ctx.chat.id, state.promptMsgId).catch(() => {});
+      await ctx.api.deleteMessage(chatId, state.promptMsgId).catch(() => { });
       state.promptMsgId = undefined;
     }
 
@@ -649,7 +684,7 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
           ? renderSppgOrderDraftCard(draft.payload, draft.id, "PENDING")
           : renderSupplierExpenseDraftCard(draft.payload, draft.id, "PENDING", draft.media_url);
 
-      await ctx.api.editMessageText(ctx.chat.id, state.activeDraftMsgId, updatedCard, {
+      await ctx.api.editMessageText(chatId, state.activeDraftMsgId, updatedCard, {
         parse_mode: "HTML",
         reply_markup: buildDraftConfirmationKeyboard(draft.id, draft.action_type),
       });
