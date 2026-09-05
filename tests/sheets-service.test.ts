@@ -50,4 +50,25 @@ describe("Google Sheets 5-Tab Engine", () => {
     expect(formula).toContain("📸 Lihat Nota");
     expect(mockReceipt.total_amount).toBe(1750000);
   });
+
+  it("should verify Master Dashboard constants and unit name resolution", async () => {
+    const { MASTER_SHEET_NAMES, MASTER_SHEET_IDS, createMasterDashboardStructureBatchRequests } = await import(
+      "../src/core/google/sheets-recipes.js"
+    );
+
+    expect(MASTER_SHEET_NAMES.KONSOLIDASI_NASIONAL).toBe("01_KONSOLIDASI_NASIONAL");
+    expect(MASTER_SHEET_NAMES.SEMUA_TRANSAKSI_GLOBAL).toBe("02_SEMUA_TRANSAKSI_GLOBAL");
+    expect(MASTER_SHEET_NAMES.DIREKTORI_SPPG).toBe("03_DIREKTORI_SPPG");
+
+    const mockSheetMap = new Map<string, number>([
+      ["01_RINGKASAN_EKSEKUTIF", 0],
+      ["02_PENDAPATAN_SPPG", 1002],
+    ]);
+    const requests = createMasterDashboardStructureBatchRequests(mockSheetMap, 0);
+
+    expect(requests.length).toBeGreaterThanOrEqual(3);
+    expect(googleSheetsService.getUnitNameFromSpreadsheetId("1Bjxue57nLpH-nrwXxH2uh-CZoPWTK_JKZ5YMWgwZSbM")).toBe(
+      "SPPG Patila"
+    );
+  });
 });

@@ -10,6 +10,10 @@ import {
   createDataValidationBatchRequests,
   createNumberFormattingBatchRequests,
   createConditionalFormattingBatchRequests,
+  createMasterDashboardStructureBatchRequests,
+  createMasterDashboardStylingBatchRequests,
+  MASTER_SHEET_NAMES,
+  MASTER_SHEET_IDS,
 } from "./sheets-recipes.js";
 import { logger } from "../utils/logger.js";
 
@@ -39,6 +43,12 @@ export class GoogleSheetsService {
    */
   async ensure5TabStructure(spreadsheetId: string): Promise<void> {
     if (this.initializedSpreadsheets.has(spreadsheetId)) {
+      return;
+    }
+
+    if (env.GOOGLE_SHEET_ID_MASTER && spreadsheetId === env.GOOGLE_SHEET_ID_MASTER) {
+      await this.ensureMasterDashboardStructure(spreadsheetId);
+      this.initializedSpreadsheets.add(spreadsheetId);
       return;
     }
 
@@ -594,6 +604,345 @@ export class GoogleSheetsService {
   }
 
   /**
+   * Configures dedicated Executive Multi-Unit Aggregator structure for Master Dashboard
+   */
+  async ensureMasterDashboardStructure(spreadsheetId: string, force = false): Promise<void> {
+    const client = await this.getClient();
+
+    try {
+      if (!force) {
+        const check = await client.spreadsheets.values
+          .get({
+            spreadsheetId,
+            range: `'${MASTER_SHEET_NAMES.KONSOLIDASI_NASIONAL}'!A1`,
+          })
+          .catch(() => ({ data: { values: null } }));
+
+        if (check.data.values?.[0]?.[0]?.includes("KONSOLIDASI MULTI-UNIT")) {
+          return;
+        }
+      }
+
+      logger.info({ spreadsheetId }, "Configuring Executive Master Dashboard BGN (Konsolidasi Multi-Unit)...");
+
+      const meta = await client.spreadsheets.get({ spreadsheetId });
+      const existingSheets = meta.data.sheets || [];
+      const sheetMap = new Map<string, number>();
+      existingSheets.forEach((s) => {
+        if (s.properties?.title && typeof s.properties?.sheetId === "number") {
+          sheetMap.set(s.properties.title, s.properties.sheetId);
+        }
+      });
+
+      const firstSheetId = typeof existingSheets[0]?.properties?.sheetId === "number" ? existingSheets[0].properties.sheetId : 0;
+      const structRequests = createMasterDashboardStructureBatchRequests(sheetMap, firstSheetId);
+
+      if (structRequests.length > 0) {
+        await client.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: { requests: structRequests },
+        });
+      }
+
+      const updatedMeta = await client.spreadsheets.get({ spreadsheetId });
+      const konsolidasiSheetId =
+        updatedMeta.data.sheets?.find((s) => s.properties?.title === MASTER_SHEET_NAMES.KONSOLIDASI_NASIONAL)
+          ?.properties?.sheetId ?? 0;
+      const trxSheetId =
+        updatedMeta.data.sheets?.find((s) => s.properties?.title === MASTER_SHEET_NAMES.SEMUA_TRANSAKSI_GLOBAL)
+          ?.properties?.sheetId ?? MASTER_SHEET_IDS.SEMUA_TRANSAKSI_GLOBAL;
+      const dirSheetId =
+        updatedMeta.data.sheets?.find((s) => s.properties?.title === MASTER_SHEET_NAMES.DIREKTORI_SPPG)
+          ?.properties?.sheetId ?? MASTER_SHEET_IDS.DIREKTORI_SPPG;
+
+      const startDateExpr = `IF(C2="SEMUA TAHUN"; DATE(2020;1;1); IF(E2="SEMUA BULAN"; DATE(VALUE(C2);1;1); DATE(VALUE(C2);VALUE(LEFT(E2;2));1)))`;
+      const endDateExpr = `IF(C2="SEMUA TAHUN"; DATE(2035;12;31); IF(E2="SEMUA BULAN"; DATE(VALUE(C2);12;31); DATE(VALUE(C2);VALUE(LEFT(E2;2))+1;0)))`;
+
+      const valuesTab1 = [
+        ["EXECUTIVE MASTER DASHBOARD - BADAN GIZI NASIONAL (KONSOLIDASI MULTI-UNIT)", "", "", "", "", "", "", "", "", ""],
+        ["FILTER", "TAHUN ANGGARAN:", "SEMUA TAHUN", "BULAN TRANSAKSI:", "SEMUA BULAN", "STATUS MONITORING:", "SEMUA UNIT", "UPDATE SISTEM:", '=TEXT(NOW(); "yyyy-mm-dd hh:mm")', ""],
+        [
+          "NO",
+          "TOTAL PLAFON NASIONAL",
+          "TOTAL REALISASI BELANJA",
+          "SURPLUS / DEFISIT BERSIH",
+          "% EFISIENSI NASIONAL",
+          "STATUS KEUANGAN BGN",
+          "TOTAL TRANSAKSI",
+          "TOTAL DAPUR AKTIF",
+          "STATUS AUDIT",
+          "KETERANGAN",
+        ],
+        [
+          "BGN",
+          "=D11",
+          "=E11",
+          "=B4-C4",
+          "=IF(B4>0; D4/B4; 0)",
+          `=IF(B4=0; "BELUM ADA TRANSAKSI"; IF(E4>=0,15; "SURPLUS EFISIEN (>= 15%)"; IF(E4>=0,05; "SESUAI PAGU (5% - 15%)"; "PERHATIAN: DEFISIT (< 5%)")))`,
+          "=I11",
+          "=COUNTA(B8:B10)",
+          "TERVALIDASI",
+          "KONSOLIDASI LIVE DARI SELURUH DAPUR",
+        ],
+        ["", "", "", "", "", "", "", "", "", ""],
+        ["TABEL KOMPARASI KINERJA & REALISASI ANGGARAN ANTAR-UNIT SPPG", "", "", "", "", "", "", "", "", ""],
+        [
+          "NO",
+          "NAMA UNIT SPPG",
+          "WILAYAH / LOKASI",
+          "TOTAL PLAFON (RP)",
+          "REALISASI BELANJA (RP)",
+          "MARGIN BERSIH (RP)",
+          "% EFISIENSI",
+          "STATUS EVALUASI",
+          "TOTAL TRX",
+          "LINK SPREADSHEET DAPUR",
+        ],
+        [
+          1,
+          "SPPG Patila",
+          "Kab. Luwu Utara, Sulawesi Selatan",
+          `=IFERROR(SUMIFS('02_SEMUA_TRANSAKSI_GLOBAL'!H:H; '02_SEMUA_TRANSAKSI_GLOBAL'!C:C; B8; '02_SEMUA_TRANSAKSI_GLOBAL'!D:D; "PENDAPATAN"; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; ">=" & ${startDateExpr}; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; "<=" & ${endDateExpr}); 0)`,
+          `=IFERROR(SUMIFS('02_SEMUA_TRANSAKSI_GLOBAL'!H:H; '02_SEMUA_TRANSAKSI_GLOBAL'!C:C; B8; '02_SEMUA_TRANSAKSI_GLOBAL'!D:D; "PENGELUARAN"; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; ">=" & ${startDateExpr}; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; "<=" & ${endDateExpr}); 0)`,
+          "=D8-E8",
+          "=IF(D8>0; F8/D8; 0)",
+          `=IF(D8=0; "BELUM ADA TRANSAKSI"; IF(G8>=0,15; "SURPLUS EFISIEN (>= 15%)"; IF(G8>=0,05; "SESUAI PAGU (5% - 15%)"; "PERHATIAN: OVER-BUDGET (< 5%)")))`,
+          `=COUNTIFS('02_SEMUA_TRANSAKSI_GLOBAL'!C:C; B8; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; ">=" & ${startDateExpr}; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; "<=" & ${endDateExpr})`,
+          `=HYPERLINK("https://docs.google.com/spreadsheets/d/${env.GOOGLE_SHEET_ID_PATILA}/edit"; "Buka Spreadsheet Patila")`,
+        ],
+        [
+          2,
+          "SPPG Dapur Unit 2",
+          "Wilayah Operasional Unit 2",
+          `=IFERROR(SUMIFS('02_SEMUA_TRANSAKSI_GLOBAL'!H:H; '02_SEMUA_TRANSAKSI_GLOBAL'!C:C; B9; '02_SEMUA_TRANSAKSI_GLOBAL'!D:D; "PENDAPATAN"; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; ">=" & ${startDateExpr}; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; "<=" & ${endDateExpr}); 0)`,
+          `=IFERROR(SUMIFS('02_SEMUA_TRANSAKSI_GLOBAL'!H:H; '02_SEMUA_TRANSAKSI_GLOBAL'!C:C; B9; '02_SEMUA_TRANSAKSI_GLOBAL'!D:D; "PENGELUARAN"; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; ">=" & ${startDateExpr}; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; "<=" & ${endDateExpr}); 0)`,
+          "=D9-E9",
+          "=IF(D9>0; F9/D9; 0)",
+          `=IF(D9=0; "BELUM ADA TRANSAKSI"; IF(G9>=0,15; "SURPLUS EFISIEN (>= 15%)"; IF(G9>=0,05; "SESUAI PAGU (5% - 15%)"; "PERHATIAN: OVER-BUDGET (< 5%)")))`,
+          `=COUNTIFS('02_SEMUA_TRANSAKSI_GLOBAL'!C:C; B9; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; ">=" & ${startDateExpr}; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; "<=" & ${endDateExpr})`,
+          `=HYPERLINK("https://docs.google.com/spreadsheets/d/${env.GOOGLE_SHEET_ID_UNIT2}/edit"; "Buka Spreadsheet Unit 2")`,
+        ],
+        [
+          3,
+          "SPPG Dapur Unit 3",
+          "Wilayah Operasional Unit 3",
+          `=IFERROR(SUMIFS('02_SEMUA_TRANSAKSI_GLOBAL'!H:H; '02_SEMUA_TRANSAKSI_GLOBAL'!C:C; B10; '02_SEMUA_TRANSAKSI_GLOBAL'!D:D; "PENDAPATAN"; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; ">=" & ${startDateExpr}; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; "<=" & ${endDateExpr}); 0)`,
+          `=IFERROR(SUMIFS('02_SEMUA_TRANSAKSI_GLOBAL'!H:H; '02_SEMUA_TRANSAKSI_GLOBAL'!C:C; B10; '02_SEMUA_TRANSAKSI_GLOBAL'!D:D; "PENGELUARAN"; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; ">=" & ${startDateExpr}; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; "<=" & ${endDateExpr}); 0)`,
+          "=D10-E10",
+          "=IF(D10>0; F10/D10; 0)",
+          `=IF(D10=0; "BELUM ADA TRANSAKSI"; IF(G10>=0,15; "SURPLUS EFISIEN (>= 15%)"; IF(G10>=0,05; "SESUAI PAGU (5% - 15%)"; "PERHATIAN: OVER-BUDGET (< 5%)")))`,
+          `=COUNTIFS('02_SEMUA_TRANSAKSI_GLOBAL'!C:C; B10; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; ">=" & ${startDateExpr}; '02_SEMUA_TRANSAKSI_GLOBAL'!B:B; "<=" & ${endDateExpr})`,
+          `=HYPERLINK("https://docs.google.com/spreadsheets/d/${env.GOOGLE_SHEET_ID_UNIT3}/edit"; "Buka Spreadsheet Unit 3")`,
+        ],
+        [
+          "TOTAL",
+          "TOTAL KONSOLIDASI SELURUH UNIT BGN",
+          "SEMUA WILAYAH",
+          "=SUM(D8:D10)",
+          "=SUM(E8:E10)",
+          "=D11-E11",
+          "=IF(D11>0; F11/D11; 0)",
+          `=IF(D11=0; "BELUM ADA TRANSAKSI"; IF(G11>=0,15; "SURPLUS EFISIEN (>= 15%)"; IF(G11>=0,05; "SESUAI PAGU (5% - 15%)"; "PERHATIAN: DEFISIT (< 5%)")))`,
+          "=SUM(I8:I10)",
+          "-",
+        ],
+      ];
+
+      const valuesTab2 = [
+        [
+          "ID TRANSAKSI",
+          "TANGGAL",
+          "UNIT SPPG",
+          "TIPE TRANSAKSI",
+          "NO SPPG / REF",
+          "REKANAN / SUPPLIER",
+          "URAIAN BARANG / MENU",
+          "TOTAL NOMINAL (RP)",
+          "BUKTI / DOKUMEN",
+          "PIC / PENCATAT",
+          "STATUS",
+        ],
+      ];
+
+      const valuesTab3 = [
+        [
+          "ID UNIT",
+          "NAMA UNIT SPPG",
+          "WILAYAH / LOKASI",
+          "STATUS OPERASIONAL",
+          "PENANGGUNG JAWAB (KEPALA SPPG)",
+          "KONTAK TELEGRAM",
+          "KAPASITAS PORSI / HARI",
+          "TAUTAN SPREADSHEET OPERASIONAL",
+        ],
+        [
+          "sppg-patila",
+          "SPPG Patila",
+          "Kab. Luwu Utara, Sulawesi Selatan",
+          "AKTIF BEROPERASI",
+          "Bapak Iza / Kepala SPPG Patila",
+          "@sppg1bot",
+          3000,
+          `=HYPERLINK("https://docs.google.com/spreadsheets/d/${env.GOOGLE_SHEET_ID_PATILA}/edit"; "Buka Spreadsheet Patila")`,
+        ],
+        [
+          "sppg-unit2",
+          "SPPG Dapur Unit 2",
+          "Wilayah Operasional Unit 2",
+          "AKTIF BEROPERASI",
+          "Admin Dapur Unit 2",
+          "@sppg2bot",
+          3000,
+          `=HYPERLINK("https://docs.google.com/spreadsheets/d/${env.GOOGLE_SHEET_ID_UNIT2}/edit"; "Buka Spreadsheet Unit 2")`,
+        ],
+        [
+          "sppg-unit3",
+          "SPPG Dapur Unit 3",
+          "Wilayah Operasional Unit 3",
+          "AKTIF BEROPERASI",
+          "Admin Dapur Unit 3",
+          "@sppg3bot",
+          3000,
+          `=HYPERLINK("https://docs.google.com/spreadsheets/d/${env.GOOGLE_SHEET_ID_UNIT3}/edit"; "Buka Spreadsheet Unit 3")`,
+        ],
+      ];
+
+      await client.spreadsheets.values.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          valueInputOption: "USER_ENTERED",
+          data: [
+            { range: `'${MASTER_SHEET_NAMES.KONSOLIDASI_NASIONAL}'!A1:J11`, values: valuesTab1 },
+            { range: `'${MASTER_SHEET_NAMES.SEMUA_TRANSAKSI_GLOBAL}'!A1:K1`, values: valuesTab2 },
+            { range: `'${MASTER_SHEET_NAMES.DIREKTORI_SPPG}'!A1:H4`, values: valuesTab3 },
+          ],
+        },
+      });
+
+      const stylingRequests = createMasterDashboardStylingBatchRequests(
+        konsolidasiSheetId,
+        trxSheetId,
+        dirSheetId
+      );
+
+      await client.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: { requests: stylingRequests },
+      });
+
+      logger.info({ spreadsheetId }, "Successfully configured Executive Master Dashboard BGN");
+    } catch (err: any) {
+      logger.error({ err: err?.message || err, spreadsheetId }, "Failed ensuring Master Dashboard structure");
+    }
+  }
+
+  /**
+   * Helper to resolve SPPG Unit display name from spreadsheet ID
+   */
+  getUnitNameFromSpreadsheetId(spreadsheetId: string): string {
+    if (spreadsheetId === env.GOOGLE_SHEET_ID_PATILA) return "SPPG Patila";
+    if (spreadsheetId === env.GOOGLE_SHEET_ID_UNIT2) return "SPPG Dapur Unit 2";
+    if (spreadsheetId === env.GOOGLE_SHEET_ID_UNIT3) return "SPPG Dapur Unit 3";
+    return "SPPG Unit";
+  }
+
+  /**
+   * Appends records directly to Tab 02_SEMUA_TRANSAKSI_GLOBAL on Master Dashboard
+   */
+  async recordToMasterConsolidated(rows: any[][]): Promise<void> {
+    if (!env.GOOGLE_SHEET_ID_MASTER || rows.length === 0) return;
+    await this.ensureMasterDashboardStructure(env.GOOGLE_SHEET_ID_MASTER);
+    await this.appendRowsSafely(env.GOOGLE_SHEET_ID_MASTER, MASTER_SHEET_NAMES.SEMUA_TRANSAKSI_GLOBAL, rows);
+  }
+
+  /**
+   * Pulls existing transactions from operational sheets and synchronizes them to Master Dashboard
+   */
+  async syncAllUnitsToMaster(): Promise<{ syncedCount: number }> {
+    if (!env.GOOGLE_SHEET_ID_MASTER) return { syncedCount: 0 };
+    await this.ensureMasterDashboardStructure(env.GOOGLE_SHEET_ID_MASTER);
+
+    const client = await this.getClient();
+
+    // Read current transactions in Master Dashboard to prevent duplicates
+    const currentMaster = await client.spreadsheets.values.get({
+      spreadsheetId: env.GOOGLE_SHEET_ID_MASTER,
+      range: `'${MASTER_SHEET_NAMES.SEMUA_TRANSAKSI_GLOBAL}'!A2:A`,
+    });
+    const existingIds = new Set((currentMaster.data.values || []).map((r) => r[0]));
+
+    const unitList = [
+      { id: env.GOOGLE_SHEET_ID_PATILA, name: "SPPG Patila" },
+      { id: env.GOOGLE_SHEET_ID_UNIT2, name: "SPPG Dapur Unit 2" },
+      { id: env.GOOGLE_SHEET_ID_UNIT3, name: "SPPG Dapur Unit 3" },
+    ];
+
+    const newRows: any[][] = [];
+
+    for (const unit of unitList) {
+      if (!unit.id || unit.id === env.GOOGLE_SHEET_ID_MASTER) continue;
+
+      try {
+        // Read income
+        const incRes = await client.spreadsheets.values.get({
+          spreadsheetId: unit.id,
+          range: "'02_PENDAPATAN_SPPG'!A2:L",
+        });
+        for (const r of incRes.data.values || []) {
+          if (!r[0] || existingIds.has(r[0])) continue;
+          newRows.push([
+            r[0],
+            r[1],
+            unit.name,
+            "PENDAPATAN",
+            r[3] || "-",
+            r[9] || "Pemerintah / BGN",
+            `${r[4]} (${r[5]} ${r[6]})`,
+            r[8],
+            "-",
+            "Admin SPPG",
+            r[10] || "LENGKAP",
+          ]);
+          existingIds.add(r[0]);
+        }
+
+        // Read expense
+        const expRes = await client.spreadsheets.values.get({
+          spreadsheetId: unit.id,
+          range: "'03_PENGELUARAN_SUPPLIER'!A2:L",
+        });
+        for (const r of expRes.data.values || []) {
+          if (!r[0] || existingIds.has(r[0])) continue;
+          newRows.push([
+            r[0],
+            r[1],
+            unit.name,
+            "PENGELUARAN",
+            r[2] || "-",
+            r[3] || "-",
+            r[4] || "Belanja Bahan Dapur",
+            r[8],
+            r[9] || "-",
+            r[10] || "PIC Dapur",
+            "LUNAS",
+          ]);
+          existingIds.add(r[0]);
+        }
+      } catch (e: any) {
+        logger.warn({ err: e?.message || e, unit: unit.name }, "Could not sync unit to master");
+      }
+    }
+
+    if (newRows.length > 0) {
+      await this.recordToMasterConsolidated(newRows);
+      logger.info({ count: newRows.length }, "Synced transactions to Master Dashboard");
+    }
+
+    return { syncedCount: newRows.length };
+  }
+
+  /**
    * Appends rows safely using exact row index lookup (eliminates row jumping bug)
    */
   private async appendRowsSafely(
@@ -651,6 +1000,30 @@ export class GoogleSheetsService {
     });
 
     await this.appendRowsSafely(spreadsheetId, "02_PENDAPATAN_SPPG", rows);
+
+    // Forward to Master Dashboard if different spreadsheet
+    if (env.GOOGLE_SHEET_ID_MASTER && spreadsheetId !== env.GOOGLE_SHEET_ID_MASTER) {
+      const unitName = this.getUnitNameFromSpreadsheetId(spreadsheetId);
+      const masterRows = order.items.map((item, idx) => {
+        const orderId = `SPPG-ORD-${order.order_date.replace(/-/g, "")}-${String(idx + 1).padStart(3, "0")}`;
+        return [
+          orderId,
+          order.order_date,
+          unitName,
+          "PENDAPATAN",
+          order.order_no,
+          item.supplier_target || "Pemerintah / BGN",
+          `${item.item_name} (${item.qty} ${item.unit})`,
+          item.total_price,
+          "-",
+          order.signed_by || "Admin SPPG",
+          "LENGKAP",
+        ];
+      });
+      await this.recordToMasterConsolidated(masterRows).catch((err) => {
+        logger.warn({ err: err?.message || err }, "Failed forwarding order to Master Dashboard");
+      });
+    }
   }
 
   /**
@@ -689,6 +1062,27 @@ export class GoogleSheetsService {
     ];
 
     await this.appendRowsSafely(spreadsheetId, "03_PENGELUARAN_SUPPLIER", rows);
+
+    // Forward to Master Dashboard if different spreadsheet
+    if (env.GOOGLE_SHEET_ID_MASTER && spreadsheetId !== env.GOOGLE_SHEET_ID_MASTER) {
+      const unitName = this.getUnitNameFromSpreadsheetId(spreadsheetId);
+      const masterRow = [
+        expenseId,
+        receipt.date || nowIso,
+        unitName,
+        "PENGELUARAN",
+        receipt.sppg_ref_no || "-",
+        receipt.supplier_name,
+        itemsSummary || "Belanja Bahan Dapur",
+        receipt.total_amount,
+        driveHyperlinkFormula,
+        picName || "Ayah (Vendor)",
+        "LUNAS",
+      ];
+      await this.recordToMasterConsolidated([masterRow]).catch((err) => {
+        logger.warn({ err: err?.message || err }, "Failed forwarding expense to Master Dashboard");
+      });
+    }
   }
 
   /**
