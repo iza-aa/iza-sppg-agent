@@ -60,10 +60,10 @@ Gulir ke bawah ke bagian **Environment Variables**, lalu masukkan variabel-varia
 | `SUPABASE_URL` | `https://ikqlyniyyfdtlyfdkmmv.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | *(Paste Service Role Key Supabase Anda)* |
 | `GOOGLE_DRIVE_FOLDER_ID` | `1T6iFdrOj7_y8XJiQ941KTmDkOfhwfHeR` |
-| `SPREADSHEET_ID_PATILA` | `1kOOZVfc2m6aYylhDJNi1lRh2_UWLgU540FJ7fwROLPA` |
-| `SPREADSHEET_ID_UNIT2` | `1uh5ULDa6ZcFU5fKPm9yfu_lUqP1y6yNJswr1NhkC4IY` |
-| `SPREADSHEET_ID_UNIT3` | `1-YbHkTZQeeZ5KCRKq4GXES9ApqRUNlXhe0zgi_LnEII` |
-| `SPREADSHEET_ID_MASTER` | `1Bjxue57nLpH-nrwXxH2uh-CZoPWTK_JKZ5YMWgwZSbM` |
+| `GOOGLE_SHEET_ID_PATILA` | `1kOOZVfc2m6aYylhDJNi1lRh2_UWLgU540FJ7fwROLPA` |
+| `GOOGLE_SHEET_ID_UNIT2` | `1uh5ULDa6ZcFU5fKPm9yfu_lUqP1y6yNJswr1NhkC4IY` |
+| `GOOGLE_SHEET_ID_UNIT3` | `1-YbHkTZQeeZ5KCRKq4GXES9ApqRUNlXhe0zgi_LnEII` |
+| `GOOGLE_SHEET_ID_MASTER` | `1Bjxue57nLpH-nrwXxH2uh-CZoPWTK_JKZ5YMWgwZSbM` |
 | `GOOGLE_SERVICE_ACCOUNT_BASE64` | *(Paste string Base64 yang sudah Anda copy di Langkah 1)* |
 | `GEMINI_API_KEYS` | *(Daftar Gemini API Key Anda, dipisahkan koma)* |
 
