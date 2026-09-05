@@ -549,7 +549,12 @@ export class GoogleSheetsService {
   }
 
   /**
-   * Generates standardized ID: SPPG[Kode Unit][Tahun]-[Huruf Bulan/E][Nomor Urut 001]
+   * Generates standardized ID: SPPG[Kode Unit][Tahun]-[I/E][Huruf Bulan][Nomor Urut 001]
+   * Contoh:
+   * - Income Januari: SPPG0126-IA001
+   * - Expense Januari: SPPG0126-EA001
+   * - Income September: SPPG0126-II001
+   * - Expense September: SPPG0126-EI001
    */
   generateTransactionId(
     unitCode: string,
@@ -561,9 +566,9 @@ export class GoogleSheetsService {
     const year = String(d.getFullYear() || new Date().getFullYear()).slice(-2);
     const monthLetters = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
     const monthLetter = monthLetters[d.getMonth()] || "A";
-    const prefixLetter = type === "income" ? monthLetter : "E";
+    const typePrefix = type === "income" ? "I" : "E";
     const padCounter = String(counter).padStart(3, "0");
-    return `SPPG${unitCode}${year}-${prefixLetter}${padCounter}`;
+    return `SPPG${unitCode}${year}-${typePrefix}${monthLetter}${padCounter}`;
   }
 
   /**

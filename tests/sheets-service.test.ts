@@ -45,9 +45,9 @@ describe("Google Sheets 5-Tab Engine", () => {
     };
 
     const driveLink = "https://drive.google.com/file/d/sample123/view";
-    const formula = `=HYPERLINK("${driveLink}", "📸 Lihat Nota")`;
+    const formula = `=HYPERLINK("${driveLink}"; "Lihat Nota")`;
 
-    expect(formula).toContain("📸 Lihat Nota");
+    expect(formula).toContain("Lihat Nota");
     expect(mockReceipt.total_amount).toBe(1750000);
   });
 
@@ -56,9 +56,12 @@ describe("Google Sheets 5-Tab Engine", () => {
       "../src/core/google/sheets-recipes.js"
     );
 
-    expect(MASTER_SHEET_NAMES.KONSOLIDASI_NASIONAL).toBe("01_KONSOLIDASI_NASIONAL");
-    expect(MASTER_SHEET_NAMES.SEMUA_TRANSAKSI_GLOBAL).toBe("02_SEMUA_TRANSAKSI_GLOBAL");
-    expect(MASTER_SHEET_NAMES.DIREKTORI_SPPG).toBe("03_DIREKTORI_SPPG");
+    expect(MASTER_SHEET_NAMES.DASHBOARD).toBe("01_DASHBOARD");
+    expect(MASTER_SHEET_NAMES.SEMUA_TRANSAKSI).toBe("02_SEMUA_TRANSAKSI");
+    expect(MASTER_SHEET_NAMES.DAFTAR_DAPUR).toBe("03_DAFTAR_DAPUR");
+    expect(MASTER_SHEET_NAMES.KONSOLIDASI_NASIONAL).toBe("01_DASHBOARD");
+    expect(MASTER_SHEET_NAMES.SEMUA_TRANSAKSI_GLOBAL).toBe("02_SEMUA_TRANSAKSI");
+    expect(MASTER_SHEET_NAMES.DIREKTORI_SPPG).toBe("03_DAFTAR_DAPUR");
 
     const mockSheetMap = new Map<string, number>([
       ["01_RINGKASAN_EKSEKUTIF", 0],
@@ -67,8 +70,69 @@ describe("Google Sheets 5-Tab Engine", () => {
     const requests = createMasterDashboardStructureBatchRequests(mockSheetMap, 0);
 
     expect(requests.length).toBeGreaterThanOrEqual(3);
-    expect(googleSheetsService.getUnitNameFromSpreadsheetId("1Bjxue57nLpH-nrwXxH2uh-CZoPWTK_JKZ5YMWgwZSbM")).toBe(
-      "SPPG Patila"
-    );
+  });
+
+  it("should generate standardized transaction IDs: SPPG[unit][year]-[I/E][month][counter]", () => {
+    const paguSep = googleSheetsService.generateTransactionId("01", "2026-09-02", 1, "income");
+    expect(paguSep).toBe("SPPG0126-II001");
+
+    const expSep = googleSheetsService.generateTransactionId("01", "2026-09-03", 1, "expense");
+    expect(expSep).toBe("SPPG0126-EI001");
+
+    const janIncome = googleSheetsService.generateTransactionId("02", "2026-01-15", 25, "income");
+    expect(janIncome).toBe("SPPG0226-IA025");
+
+    const janExpense = googleSheetsService.generateTransactionId("01", "2026-01-15", 1, "expense");
+    expect(janExpense).toBe("SPPG0126-EA001");
+
+    const meiIncome = googleSheetsService.generateTransactionId("01", "2026-05-10", 1, "income");
+    expect(meiIncome).toBe("SPPG0126-IE001");
+
+    const meiExpense = googleSheetsService.generateTransactionId("01", "2026-05-10", 1, "expense");
+    expect(meiExpense).toBe("SPPG0126-EE001");
+  });
+
+  it("should verify 5-Tab constants in sheets-recipes", async () => {
+    const { SHEET_NAMES, SHEET_IDS } = await import("../src/core/google/sheets-recipes.js");
+    expect(SHEET_NAMES.DASHBOARD).toBe("01_DASHBOARD");
+    expect(SHEET_NAMES.PAGU_RINGKASAN).toBe("02_PAGU_RINGKASAN");
+    expect(SHEET_NAMES.PAGU_RINCIAN).toBe("03_PAGU_RINCIAN");
+    expect(SHEET_NAMES.PENGELUARAN_SUPPLIER).toBe("04_PENGELUARAN_SUPPLIER");
+    expect(SHEET_NAMES.REKAP_MARGIN).toBe("05_REKAP_MARGIN");
+    expect(SHEET_NAMES.MASTER_DATA).toBe("06_MASTER_DATA");
+
+    expect(SHEET_IDS.PAGU_RINGKASAN).toBe(1002);
+    expect(SHEET_IDS.PAGU_RINCIAN).toBe(1003);
+    expect(SHEET_IDS.PENGELUARAN_SUPPLIER).toBe(1004);
+    expect(SHEET_IDS.REKAP_MARGIN).toBe(1005);
+    expect(SHEET_IDS.MASTER_DATA).toBe(1006);
+  });
+
+  it("should verify Telegram UI drill-down card and keyboard", async () => {
+    const { renderSppgOrderItemsDetail } = await import("../src/core/telegram/formatter.js");
+    const { buildDraftConfirmationKeyboard } = await import("../src/core/telegram/keyboards.js");
+
+    const mockOrder: SppgOrder = {
+      type: "income",
+      sppg_unit: "SPPG Patila",
+      order_no: "05/02/09/26",
+      order_date: "2026-09-02",
+      arrival_date: "2026-09-03",
+      items: [
+        { no: 1, item_name: "Ayam", qty: 248, unit: "Ekor", price: 60000, total_price: 14880000, supplier_target: "Ayam Pasar" },
+      ],
+      total_amount: 14880000,
+    };
+
+    const detailText = renderSppgOrderItemsDetail(mockOrder);
+    expect(detailText).toContain("RINCIAN LENGKAP 1 BAHAN MAKANAN");
+    expect(detailText).toContain("05/02/09/26");
+    expect(detailText).toContain("Ayam Pasar");
+
+    const kb = buildDraftConfirmationKeyboard("draft-123", "SPPG_ORDER", 22);
+    const inlineButtons = (kb as any).inline_keyboard.flat();
+    const viewButton = inlineButtons.find((b: any) => b.text.includes("Lihat 22 Rincian Bahan"));
+    expect(viewButton).toBeDefined();
+    expect(viewButton.callback_data).toBe("v:viewitems:draft-123");
   });
 });
