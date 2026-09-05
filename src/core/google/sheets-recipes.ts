@@ -360,7 +360,7 @@ export function createConditionalFormattingBatchRequests(): sheets_v4.Schema$Req
           booleanRule: {
             condition: {
               type: 'NUMBER_GREATER_THAN_EQ',
-              values: [{ userEnteredValue: '0.15' }]
+              values: [{ userEnteredValue: '0,15' }]
             },
             format: {
               backgroundColor: hexToRgbColor(BGN_PALETTE.ALERT_GREEN_BG),
@@ -390,7 +390,7 @@ export function createConditionalFormattingBatchRequests(): sheets_v4.Schema$Req
           booleanRule: {
             condition: {
               type: 'NUMBER_BETWEEN',
-              values: [{ userEnteredValue: '0.05' }, { userEnteredValue: '0.1499' }]
+              values: [{ userEnteredValue: '0,05' }, { userEnteredValue: '0,1499' }]
             },
             format: {
               backgroundColor: hexToRgbColor(BGN_PALETTE.ALERT_YELLOW_BG),
@@ -420,7 +420,7 @@ export function createConditionalFormattingBatchRequests(): sheets_v4.Schema$Req
           booleanRule: {
             condition: {
               type: 'NUMBER_LESS',
-              values: [{ userEnteredValue: '0.05' }]
+              values: [{ userEnteredValue: '0,05' }]
             },
             format: {
               backgroundColor: hexToRgbColor(BGN_PALETTE.ALERT_RED_BG),

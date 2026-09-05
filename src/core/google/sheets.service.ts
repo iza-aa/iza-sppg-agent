@@ -94,41 +94,60 @@ export class GoogleSheetsService {
   }
 
   /**
-   * Writes official BGN headers and dynamic KPI summary formulas across all tabs
+   * Writes official BGN headers, interactive Year/Month filter dropdowns, and dynamic KPI summary formulas
    */
-  async ensureHeadersAndFormulas(spreadsheetId: string): Promise<void> {
+  async ensureHeadersAndFormulas(spreadsheetId: string, unitName = "SPPG Unit"): Promise<void> {
     const client = await this.getClient();
 
     try {
       const check = await client.spreadsheets.values.get({
         spreadsheetId,
-        range: "'02_PENDAPATAN_SPPG'!A1:B1",
+        range: "'01_RINGKASAN_EKSEKUTIF'!A2",
       });
 
-      if (check.data.values?.[0]?.[0] === "ID Transaksi") {
-        return; // Already has headers
+      if (check.data.values?.[0]?.[0] === "⚙️ FILTER:") {
+        return; // Already configured with interactive filter controls
       }
 
-      logger.info({ spreadsheetId }, "Writing official BGN headers and executive formulas to spreadsheet...");
+      logger.info({ spreadsheetId, unitName }, "Configuring interactive Month/Year filters and BGN formulas...");
 
+      const meta = await client.spreadsheets.get({ spreadsheetId });
+      const targetSheet = (meta.data.sheets || []).find(
+        (s: any) => s.properties?.title === "01_RINGKASAN_EKSEKUTIF"
+      );
+      const ringkasanSheetId = targetSheet?.properties?.sheetId || 0;
+
+      const startDateExpr = `IF(C2="SEMUA TAHUN"; DATE(2020;1;1); IF(E2="SEMUA BULAN"; DATE(VALUE(C2);1;1); DATE(VALUE(C2);VALUE(LEFT(E2;2));1)))`;
+      const endDateExpr = `IF(C2="SEMUA TAHUN"; DATE(2035;12;31); IF(E2="SEMUA BULAN"; DATE(VALUE(C2);12;31); DATE(VALUE(C2);VALUE(LEFT(E2;2))+1;0)))`;
+
+      const formulaPlafon = `=IFERROR(SUMIFS('02_PENDAPATAN_SPPG'!I2:I; '02_PENDAPATAN_SPPG'!B2:B; ">=" & ${startDateExpr}; '02_PENDAPATAN_SPPG'!B2:B; "<=" & ${endDateExpr}); 0)`;
+      const formulaBelanja = `=IFERROR(SUMIFS('03_PENGELUARAN_SUPPLIER'!I2:I; '03_PENGELUARAN_SUPPLIER'!B2:B; ">=" & ${startDateExpr}; '03_PENGELUARAN_SUPPLIER'!B2:B; "<=" & ${endDateExpr}); 0)`;
+      const formulaMargin = `=B4-C4`;
+      const formulaPct = `=IF(B4>0; D4/B4; 0)`;
+      const formulaStatus = `=IF(E4>=0,15; "🟢 HEMAT / SURPLUS (>=15%)"; IF(E4>=0,05; "🟡 SESUAI PAGU (5-15%)"; "🔴 PERHATIAN: OVER-BUDGET (<5%)"))`;
+      const formulaCount = `=COUNTIFS('03_PENGELUARAN_SUPPLIER'!B2:B; ">=" & ${startDateExpr}; '03_PENGELUARAN_SUPPLIER'!B2:B; "<=" & ${endDateExpr})`;
+
+      // 1. Write Values across tabs
       await client.spreadsheets.values.batchUpdate({
         spreadsheetId,
         requestBody: {
           valueInputOption: "USER_ENTERED",
           data: [
             {
-              range: "'01_RINGKASAN_EKSEKUTIF'!A1:E4",
+              range: "'01_RINGKASAN_EKSEKUTIF'!A1:G4",
               values: [
-                ["RINGKASAN EKSEKUTIF KEUANGAN SPPG MBG - BADAN GIZI NASIONAL", "", "", "", ""],
-                ["Unit SPPG", "Status", "Formula Dinamis Real-Time", "", ""],
-                ["TOTAL PLAFON (Rp)", "TOTAL BELANJA (Rp)", "MARGIN BERSIH (Rp)", "PERSENTASE EFISIENSI", "STATUS EVALUASI"],
+                ["🏛️ EXECUTIVE SUMMARY & KPI SPPG - BADAN GIZI NASIONAL", "", "", "", "", "", ""],
+                ["⚙️ FILTER:", "📅 TAHUN:", "SEMUA TAHUN", "🗓️ BULAN:", "SEMUA BULAN", "🏢 UNIT:", unitName],
                 [
-                  "=IFERROR(SUM('02_PENDAPATAN_SPPG'!I2:I), 0)",
-                  "=IFERROR(SUM('03_PENGELUARAN_SUPPLIER'!I2:I), 0)",
-                  "=A4-B4",
-                  "=IF(A4>0, C4/A4, 0)",
-                  '=IF(D4>=0.15, "🟢 HEMAT / SURPLUS (>=15%)", IF(D4>=0.05, "🟡 SESUAI PAGU (5-15%)", "🔴 PERHATIAN: OVER-BUDGET (<5%)"))',
+                  "NO",
+                  "TOTAL PLAFON (PAGU)",
+                  "REALISASI BELANJA RIIL",
+                  "MARGIN BERSIH SPPG",
+                  "% EFISIENSI MARGIN",
+                  "STATUS EVALUASI BGN",
+                  "TRANSAKSI BELANJA",
                 ],
+                ["1", formulaPlafon, formulaBelanja, formulaMargin, formulaPct, formulaStatus, formulaCount],
               ],
             },
             {
@@ -189,11 +208,271 @@ export class GoogleSheetsService {
         },
       });
 
-      // Apply formatting and data validation
+      // 2. Format UI & Setup Dropdown Validations
+      const { hexToRgbColor, BGN_PALETTE } = await import("./sheets-recipes.js");
+      const navyBg = hexToRgbColor(BGN_PALETTE.DEEP_NAVY);
+      const whiteTxt = hexToRgbColor(BGN_PALETTE.WHITE);
+      const filterBg = hexToRgbColor("#FEF3C7");
+      const slateLightBg = hexToRgbColor(BGN_PALETTE.SLATE_LIGHT);
+
       await client.spreadsheets.batchUpdate({
         spreadsheetId,
         requestBody: {
           requests: [
+            // Merge A1:G1 for Title Banner
+            {
+              mergeCells: {
+                range: {
+                  sheetId: ringkasanSheetId,
+                  startRowIndex: 0,
+                  endRowIndex: 1,
+                  startColumnIndex: 0,
+                  endColumnIndex: 7,
+                },
+                mergeType: "MERGE_ALL",
+              },
+            },
+            // Title banner styling
+            {
+              repeatCell: {
+                range: {
+                  sheetId: ringkasanSheetId,
+                  startRowIndex: 0,
+                  endRowIndex: 1,
+                  startColumnIndex: 0,
+                  endColumnIndex: 7,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    backgroundColor: navyBg,
+                    textFormat: { foregroundColor: whiteTxt, bold: true, fontSize: 12 },
+                    horizontalAlignment: "CENTER",
+                    verticalAlignment: "MIDDLE",
+                  },
+                },
+                fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)",
+              },
+            },
+            // Filter bar row 2 styling
+            {
+              repeatCell: {
+                range: {
+                  sheetId: ringkasanSheetId,
+                  startRowIndex: 1,
+                  endRowIndex: 2,
+                  startColumnIndex: 0,
+                  endColumnIndex: 7,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    backgroundColor: slateLightBg,
+                    textFormat: { bold: true, fontSize: 10 },
+                    verticalAlignment: "MIDDLE",
+                  },
+                },
+                fields: "userEnteredFormat(backgroundColor,textFormat,verticalAlignment)",
+              },
+            },
+            // Highlight dropdown cells C2 and E2
+            {
+              repeatCell: {
+                range: {
+                  sheetId: ringkasanSheetId,
+                  startRowIndex: 1,
+                  endRowIndex: 2,
+                  startColumnIndex: 2,
+                  endColumnIndex: 3,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    backgroundColor: filterBg,
+                    textFormat: { bold: true, fontSize: 10, foregroundColor: hexToRgbColor("#92400E") },
+                    horizontalAlignment: "CENTER",
+                  },
+                },
+                fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)",
+              },
+            },
+            {
+              repeatCell: {
+                range: {
+                  sheetId: ringkasanSheetId,
+                  startRowIndex: 1,
+                  endRowIndex: 2,
+                  startColumnIndex: 4,
+                  endColumnIndex: 5,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    backgroundColor: filterBg,
+                    textFormat: { bold: true, fontSize: 10, foregroundColor: hexToRgbColor("#92400E") },
+                    horizontalAlignment: "CENTER",
+                  },
+                },
+                fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)",
+              },
+            },
+            // Dropdown validation C2 (Tahun)
+            {
+              setDataValidation: {
+                range: {
+                  sheetId: ringkasanSheetId,
+                  startRowIndex: 1,
+                  endRowIndex: 2,
+                  startColumnIndex: 2,
+                  endColumnIndex: 3,
+                },
+                rule: {
+                  condition: {
+                    type: "ONE_OF_LIST",
+                    values: [
+                      { userEnteredValue: "SEMUA TAHUN" },
+                      { userEnteredValue: "2026" },
+                      { userEnteredValue: "2027" },
+                      { userEnteredValue: "2025" },
+                    ],
+                  },
+                  showCustomUi: true,
+                  strict: true,
+                },
+              },
+            },
+            // Dropdown validation E2 (Bulan)
+            {
+              setDataValidation: {
+                range: {
+                  sheetId: ringkasanSheetId,
+                  startRowIndex: 1,
+                  endRowIndex: 2,
+                  startColumnIndex: 4,
+                  endColumnIndex: 5,
+                },
+                rule: {
+                  condition: {
+                    type: "ONE_OF_LIST",
+                    values: [
+                      { userEnteredValue: "SEMUA BULAN" },
+                      { userEnteredValue: "01 - Januari" },
+                      { userEnteredValue: "02 - Februari" },
+                      { userEnteredValue: "03 - Maret" },
+                      { userEnteredValue: "04 - April" },
+                      { userEnteredValue: "05 - Mei" },
+                      { userEnteredValue: "06 - Juni" },
+                      { userEnteredValue: "07 - Juli" },
+                      { userEnteredValue: "08 - Agustus" },
+                      { userEnteredValue: "09 - September" },
+                      { userEnteredValue: "10 - Oktober" },
+                      { userEnteredValue: "11 - November" },
+                      { userEnteredValue: "12 - Desember" },
+                    ],
+                  },
+                  showCustomUi: true,
+                  strict: true,
+                },
+              },
+            },
+            // Header row 3 styling
+            {
+              repeatCell: {
+                range: {
+                  sheetId: ringkasanSheetId,
+                  startRowIndex: 2,
+                  endRowIndex: 3,
+                  startColumnIndex: 0,
+                  endColumnIndex: 7,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    backgroundColor: navyBg,
+                    textFormat: { foregroundColor: whiteTxt, bold: true, fontSize: 10 },
+                    horizontalAlignment: "CENTER",
+                    verticalAlignment: "MIDDLE",
+                  },
+                },
+                fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)",
+              },
+            },
+            // Values formatting row 4
+            {
+              repeatCell: {
+                range: {
+                  sheetId: ringkasanSheetId,
+                  startRowIndex: 3,
+                  endRowIndex: 4,
+                  startColumnIndex: 1,
+                  endColumnIndex: 4,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    numberFormat: { type: "CURRENCY", pattern: '"Rp"#,##0' },
+                    textFormat: { bold: true, fontSize: 13 },
+                    horizontalAlignment: "RIGHT",
+                    verticalAlignment: "MIDDLE",
+                  },
+                },
+                fields: "userEnteredFormat(numberFormat,textFormat,horizontalAlignment,verticalAlignment)",
+              },
+            },
+            {
+              repeatCell: {
+                range: {
+                  sheetId: ringkasanSheetId,
+                  startRowIndex: 3,
+                  endRowIndex: 4,
+                  startColumnIndex: 4,
+                  endColumnIndex: 5,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    numberFormat: { type: "PERCENT", pattern: "0.00%" },
+                    textFormat: { bold: true, fontSize: 13 },
+                    horizontalAlignment: "CENTER",
+                    verticalAlignment: "MIDDLE",
+                  },
+                },
+                fields: "userEnteredFormat(numberFormat,textFormat,horizontalAlignment,verticalAlignment)",
+              },
+            },
+            {
+              repeatCell: {
+                range: {
+                  sheetId: ringkasanSheetId,
+                  startRowIndex: 3,
+                  endRowIndex: 4,
+                  startColumnIndex: 5,
+                  endColumnIndex: 6,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    textFormat: { bold: true, fontSize: 11 },
+                    horizontalAlignment: "CENTER",
+                    verticalAlignment: "MIDDLE",
+                  },
+                },
+                fields: "userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment)",
+              },
+            },
+            {
+              repeatCell: {
+                range: {
+                  sheetId: ringkasanSheetId,
+                  startRowIndex: 3,
+                  endRowIndex: 4,
+                  startColumnIndex: 6,
+                  endColumnIndex: 7,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    numberFormat: { type: "NUMBER", pattern: "#,##0" },
+                    textFormat: { bold: true, fontSize: 13 },
+                    horizontalAlignment: "CENTER",
+                    verticalAlignment: "MIDDLE",
+                  },
+                },
+                fields: "userEnteredFormat(numberFormat,textFormat,horizontalAlignment,verticalAlignment)",
+              },
+            },
+            // Other tab batch formatters
             ...createHeaderStylingBatchRequests(),
             ...createNumberFormattingBatchRequests(),
             ...createDataValidationBatchRequests(),
@@ -202,7 +481,7 @@ export class GoogleSheetsService {
         },
       });
 
-      logger.info({ spreadsheetId }, "Successfully established BGN headers and styling");
+      logger.info({ spreadsheetId, unitName }, "Successfully established BGN interactive headers, filters, and styling");
     } catch (err: any) {
       logger.warn({ err: err?.message || err, spreadsheetId }, "Note writing headers and formulas");
     }
