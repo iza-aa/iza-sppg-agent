@@ -112,4 +112,40 @@ describe("Telegram Bot Handler & Formatting Module", () => {
     expect(card).toContain("Beras Medium 50kg");
     expect(card).toContain("Lihat Nota di Google Drive");
   });
+
+  it("should build multi-sheet selector keyboard with all unit links", async () => {
+    const { buildMultiSheetSelectorKeyboard } = await import("../src/core/telegram/keyboards.js");
+    const keyboard = buildMultiSheetSelectorKeyboard("sppg_patila");
+    expect(keyboard).toBeDefined();
+    const flatButtons = keyboard.inline_keyboard.flat();
+    const texts = flatButtons.map((btn) => btn.text);
+    expect(texts.some((t) => t.includes("Patila"))).toBe(true);
+    expect(texts.some((t) => t.includes("Master"))).toBe(true);
+  });
+
+  it("should render transaction list and detail cards cleanly", async () => {
+    const { renderTransactionListCard, renderTransactionDetailCard } = await import("../src/core/telegram/formatter.js");
+    const listCard = renderTransactionListCard([
+      { id: "SUPP-EXP-001", date: "2026-09-05", title: "Ayam Potong", amount: 200000, type: "expense" },
+    ]);
+    expect(listCard).toContain("RIWAYAT TRANSAKSI TERAKHIR");
+    expect(listCard).toContain("SUPP-EXP-001");
+    expect(listCard).toContain("Ayam Potong");
+
+    const detailCard = renderTransactionDetailCard({
+      found: true,
+      id: "SUPP-EXP-001",
+      sheetName: "03_PENGELUARAN_SUPPLIER",
+      type: "expense",
+      date: "2026-09-05",
+      supplierOrUnit: "Pasar Ayam",
+      items: "Ayam Potong",
+      amount: 200000,
+      notes: "Cash",
+    });
+    expect(detailCard).toContain("DETAIL BELANJA SUPPLIER");
+    expect(detailCard).toContain("Pasar Ayam");
+    expect(detailCard).toContain("200.000");
+  });
 });
+

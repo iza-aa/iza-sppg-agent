@@ -98,3 +98,74 @@ export async function safeEditMessageText(ctx: Context, text: string, extra?: an
     throw err;
   }
 }
+
+export function renderTransactionListCard(
+  transactions: Array<{
+    id: string;
+    date: string;
+    type: "expense" | "income";
+    title: string;
+    amount: number;
+    detail: string;
+  }>
+): string {
+  if (transactions.length === 0) {
+    return "ℹ️ <b>Belum ada transaksi tercatat di Spreadsheet unit ini.</b>";
+  }
+
+  const lines = [
+    `📋 <b>RIWAYAT TRANSAKSI TERAKHIR:</b>`,
+    `------------------------------------------`,
+  ];
+
+  transactions.forEach((t, i) => {
+    const icon = t.type === "income" ? "🟢" : "🔴";
+    const typeLabel = t.type === "income" ? "Pagu" : "Belanja";
+    lines.push(
+      `${i + 1}. ${icon} <b>${escapeHtml(t.title)}</b>\n` +
+      `   • ID: <code>${escapeHtml(t.id)}</code>\n` +
+      `   • Nominal: <b>${formatRupiah(t.amount)}</b> (${typeLabel})\n` +
+      `   • Tanggal: <code>${escapeHtml(t.date)}</code>`
+    );
+  });
+
+  lines.push(`------------------------------------------`);
+  lines.push(`💡 <i>Ketuk tombol di bawah atau ketik "detail [ID]" untuk melihat rincian / mengedit.</i>`);
+  return lines.join("\n");
+}
+
+export function renderTransactionDetailCard(detail: {
+  id: string;
+  type?: "expense" | "income";
+  date?: string;
+  supplierOrUnit?: string;
+  items?: string;
+  amount?: number;
+  link?: string;
+  notes?: string;
+}): string {
+  const isIncome = detail.type === "income";
+  const icon = isIncome ? "📋" : "🧾";
+  const title = isIncome ? "DETAIL NOTA PESANAN SPPG" : "DETAIL BELANJA SUPPLIER";
+  const partnerLabel = isIncome ? "Unit SPPG" : "Nama Supplier";
+  const amountLabel = isIncome ? "TOTAL PAGU" : "TOTAL BELANJA";
+
+  const driveSection = detail.link && detail.link.startsWith("http")
+    ? `📁 <b>Bukti Foto</b>: <a href="${detail.link}">📸 Buka Foto di Google Drive</a>`
+    : `📁 <b>Bukti Foto</b>: <i>Tersimpan lokal / tanpa foto</i>`;
+
+  return [
+    `${icon} <b>${title}</b>`,
+    `------------------------------------------`,
+    `• <b>ID Transaksi:</b> <code>${escapeHtml(detail.id)}</code>`,
+    `• <b>Tanggal:</b> <code>${escapeHtml(detail.date || "-")}</code>`,
+    `• <b>${partnerLabel}:</b> <b>${escapeHtml(detail.supplierOrUnit || "-")}</b>`,
+    `• <b>Rincian:</b> ${escapeHtml(detail.items || "-")}`,
+    `• <b>${amountLabel}:</b> <b>${formatRupiah(detail.amount || 0)}</b>`,
+    `• <b>Catatan:</b> ${escapeHtml(detail.notes || "-")}`,
+    driveSection,
+    `------------------------------------------`,
+    `💡 <i>Gunakan tombol di bawah untuk mengubah nominal atau menghapus transaksi dari kas & spreadsheet.</i>`,
+  ].join("\n");
+}
+

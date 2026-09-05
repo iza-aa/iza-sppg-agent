@@ -6,6 +6,7 @@ import { UserRepository } from "../db/repositories/user.repository.js";
 import { PendingActionRepository } from "../db/repositories/pending-action.repository.js";
 import { parseSppgOrderFromImage } from "../ai/parsers/sppg-order.parser.js";
 import { parseSupplierReceiptFromImage } from "../ai/parsers/supplier-receipt.parser.js";
+import { metaAgent } from "../ai/meta-agent.js";
 import { googleDriveService } from "../google/drive.service.js";
 import { googleSheetsService } from "../google/sheets.service.js";
 import { generateOfficialSppgPdf } from "../pdf/pdf-report.service.js";
@@ -14,12 +15,18 @@ import {
   buildEditSubmenuKeyboard,
   buildCancelInputKeyboard,
   buildRekapActionKeyboard,
+  buildMultiSheetSelectorKeyboard,
+  buildTransactionListKeyboard,
+  buildTransactionDetailKeyboard,
+  buildDeleteConfirmKeyboard,
 } from "./keyboards.js";
 import {
   escapeHtml,
   formatRupiah,
   renderSppgOrderDraftCard,
   renderSupplierExpenseDraftCard,
+  renderTransactionListCard,
+  renderTransactionDetailCard,
   safeEditMessageText,
 } from "./formatter.js";
 import { logger } from "../utils/logger.js";
@@ -28,6 +35,7 @@ interface UserInteractionState {
   activeDraftId?: string;
   activeDraftMsgId?: number;
   editingField?: "nominal" | "name" | null;
+  editingTransactionId?: string;
   promptMsgId?: number;
 }
 
@@ -64,7 +72,7 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
   // ============================================================================
 
   // 1. /myid - Displays Telegram identity, user ID, and connection status
-  bot.command("myid", async (ctx) => {
+  async function sendMyId(ctx: Context) {
     if (!ctx.from) return;
     const tgId = ctx.from.id;
     const tgName = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(" ");
@@ -96,7 +104,9 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     ];
 
     await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
-  });
+  }
+
+  bot.command("myid", sendMyId);
 
   // 2. /start - Handles both standard greeting and secure invite claim (?start=INV-XXXXXX)
   bot.command("start", async (ctx) => {
@@ -163,10 +173,11 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
         `🎖️ Peran: <b>${roleDesc}</b>`,
         `------------------------------------------`,
         `💡 <b>Mulai Sekarang Anda Dapat:</b>`,
-        `1. 📸 Kirim foto <b>Nota Pesanan SPPG</b> untuk mencatat Plafon/Pagu.`,
-        `2. 🧾 Kirim foto <b>Bon/Struk Belanja Pasar</b> untuk mencatat Pengeluaran Riil.`,
-        `3. 📊 Ketik /rekap untuk melihat margin laba hari ini.`,
-        `4. 📄 Ketik /pdf untuk cetak laporan resmi SPJ BGN.`,
+        `1. ✍️ <b>Ketik Belanjaan Langsung</b>: <i>"Beli ayam 200rb di pasar ayam"</i>.`,
+        `2. 📸 <b>Kirim Foto Nota/Struk</b> untuk pencatatan otomatis OCR.`,
+        `3. 📊 Ketik <i>"rekap"</i> untuk ringkasan margin laba hari ini.`,
+        `4. 📄 Ketik <i>"pdf"</i> untuk cetak dokumen resmi SPJ BGN.`,
+        `5. 🌐 Ketik <i>"sheets"</i> untuk membuka spreadsheet online.`,
       ].join("\n");
 
       await ctx.reply(claimSuccessText, { parse_mode: "HTML" });
@@ -190,12 +201,13 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
       `🏢 Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
       `Badan Gizi Nasional (BGN) Republik Indonesia`,
       `--------------------------------------`,
-      `💡 <b>Cara Penggunaan:</b>`,
-      `1. 📸 <b>Kirim Foto Nota Pesanan SPPG</b> untuk mencatat Plafon Pendapatan (20+ bahan).`,
-      `2. 🧾 <b>Kirim Foto Bon/Struk Belanja Pasar</b> untuk mencatat Pengeluaran Riil suplier.`,
-      `3. 📊 Ketik /rekap untuk melihat ringkasan omset dan margin laba bersih.`,
-      `4. 📄 Ketik /pdf untuk mencetak laporan resmi SPJ Badan Gizi Nasional.`,
-      `5. 🌐 Ketik /sheets untuk membuka lembar Google Sheets online.`,
+      `💡 <b>AI Agent Siap Melayani Anda Secara Natural:</b>`,
+      `1. ✍️ <b>Ketik Langsung:</b> <i>"Beli telur 3 rak 165rb di Hj Muliadi tunai"</i>`,
+      `2. 📸 <b>Kirim Foto:</b> Foto Nota SPPG atau Bon belanja pasar`,
+      `3. 📊 <b>Minta Rekap:</b> Cukup ketik <i>"rekap"</i> atau <i>"margin"</i>`,
+      `4. 📄 <b>Laporan SPJ:</b> Cukup ketik <i>"kirim pdf"</i> atau <i>"cetak spj"</i>`,
+      `5. 🌐 <b>Spreadsheet:</b> Cukup ketik <i>"buka sheets"</i>`,
+      `6. 🔍 <b>Riwayat Belanja:</b> Cukup ketik <i>"transaksi"</i>`,
     ].join("\n");
 
     await ctx.reply(welcomeText, { parse_mode: "HTML" });
@@ -222,25 +234,24 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
   });
 
   // ============================================================================
-  // AUTHENTICATED COMMANDS
+  // AUTHENTICATED COMMANDS & HELPERS
   // ============================================================================
 
-  // 3. /invite - Super Admin / Admin creates single-use invite link
-  bot.command("invite", async (ctx) => {
+  async function handleInviteCommand(ctx: Context, targetName?: string, roleArg = "admin") {
     if (!ctx.from) return;
     const isAdmin = await userRepo.isAdminOrSuperAdmin(ctx.from.id);
     if (!isAdmin) {
-      await ctx.reply("⛔ <b>Akses Ditolak</b>: Perintah <code>/invite</code> hanya dapat dijalankan oleh Admin atau Super Admin.", {
+      await ctx.reply("⛔ <b>Akses Ditolak</b>: Perintah undangan hanya dapat dijalankan oleh Admin atau Super Admin.", {
         parse_mode: "HTML",
       });
       return;
     }
 
-    const args = ctx.match?.trim().split(/\s+/) || [];
-    if (args.length === 0 || !args[0]) {
+    if (!targetName) {
       const usage = [
         `🎟️ <b>CARA MEMBUAT LINK UNDANGAN RESMI:</b>`,
         `Ketik: <code>/invite [Nama] [Peran (opsional: admin/member)]</code>`,
+        `atau ketik langsung: <i>"Undang Ayah admin"</i>`,
         ``,
         `<b>Contoh:</b>`,
         `• <code>/invite Ayah admin</code> (untuk Ayah sebagai Admin Operator)`,
@@ -253,8 +264,6 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
       return;
     }
 
-    const targetName = args[0];
-    const roleArg = (args[1] || "admin").toLowerCase();
     const targetRole: "super_admin" | "admin" | "member" =
       roleArg === "super_admin" ? "super_admin" : roleArg === "member" ? "member" : "admin";
 
@@ -286,16 +295,27 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     ].join("\n");
 
     await ctx.reply(replyText, { parse_mode: "HTML" });
+  }
+
+  // 3. /invite - Super Admin / Admin creates single-use invite link
+  bot.command("invite", async (ctx) => {
+    const args = ctx.match?.trim().split(/\s+/) || [];
+    await handleInviteCommand(ctx, args[0], args[1]);
   });
 
-  bot.command("sheets", async (ctx) => {
-    const url = `https://docs.google.com/spreadsheets/d/${unitConfig.spreadsheetId}/edit`;
-    await ctx.reply(`🌐 <b>Google Sheets ${escapeHtml(unitConfig.name)}:</b>\n<a href="${url}">Buka Spreadsheet Online</a>`, {
-      parse_mode: "HTML",
-    });
-  });
+  async function sendSheets(ctx: Context) {
+    await ctx.reply(
+      `🌐 <b>PILIH SPREADSHEET GOOGLE SHEETS MBG:</b>\n\n` +
+      `Unit aktif Anda saat ini: <b>${escapeHtml(unitConfig.name)}</b>\n\n` +
+      `Silakan ketuk tombol di bawah untuk membuka spreadsheet online:`,
+      {
+        parse_mode: "HTML",
+        reply_markup: buildMultiSheetSelectorKeyboard(unitConfig.id),
+      }
+    );
+  }
 
-  bot.command("rekap", async (ctx) => {
+  async function sendRekap(ctx: Context) {
     await withTyping(ctx, async () => {
       const kpi = await googleSheetsService.getExecutiveKpi(unitConfig.spreadsheetId);
       const sheetUrl = `https://docs.google.com/spreadsheets/d/${unitConfig.spreadsheetId}/edit`;
@@ -316,9 +336,9 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
         reply_markup: buildRekapActionKeyboard(sheetUrl, unitConfig.id),
       });
     });
-  });
+  }
 
-  bot.command("pdf", async (ctx) => {
+  async function sendPdf(ctx: Context) {
     await withTyping(ctx, async () => {
       await ctx.reply("⏳ Sedang memproses dan menyusun Dokumen PDF Resmi SPJ BGN...", { parse_mode: "HTML" });
       const kpi = await googleSheetsService.getExecutiveKpi(unitConfig.spreadsheetId);
@@ -341,7 +361,42 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
         parse_mode: "HTML",
       });
     });
-  });
+  }
+
+  async function sendRecentTransactions(ctx: Context, limit = 8) {
+    await withTyping(ctx, async () => {
+      const transactions = await googleSheetsService.getRecentTransactions(unitConfig.spreadsheetId, limit);
+      const text = renderTransactionListCard(transactions);
+      await ctx.reply(text, {
+        parse_mode: "HTML",
+        reply_markup: transactions.length > 0 ? buildTransactionListKeyboard(transactions) : undefined,
+      });
+    });
+  }
+
+  async function sendTransactionDetail(ctx: Context, transactionId: string) {
+    await withTyping(ctx, async () => {
+      const detail = await googleSheetsService.getTransactionDetail(unitConfig.spreadsheetId, transactionId);
+      if (!detail.found) {
+        await ctx.reply(`⚠️ Transaksi dengan ID <code>${escapeHtml(transactionId)}</code> tidak ditemukan di Google Sheets unit ${escapeHtml(unitConfig.name)}.`, {
+          parse_mode: "HTML",
+        });
+        return;
+      }
+
+      const text = renderTransactionDetailCard(detail);
+      const sheetUrl = `https://docs.google.com/spreadsheets/d/${unitConfig.spreadsheetId}/edit`;
+      await ctx.reply(text, {
+        parse_mode: "HTML",
+        reply_markup: buildTransactionDetailKeyboard(detail.id, sheetUrl),
+      });
+    });
+  }
+
+  bot.command("sheets", sendSheets);
+  bot.command("rekap", sendRekap);
+  bot.command("pdf", sendPdf);
+  bot.command("transaksi", async (ctx) => sendRecentTransactions(ctx, 8));
 
   // ============================================================================
   // PHOTO & DOCUMENT UPLOAD HANDLER
@@ -632,7 +687,70 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
   });
 
   // ============================================================================
-  // TEXT INPUT WIZARD WITH AUTO-CLEANUP
+  // TRANSACTION CRUD CALLBACK HANDLERS
+  // ============================================================================
+
+  // [📋 Daftar Transaksi]
+  bot.callbackQuery("v:trx:list", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendRecentTransactions(ctx, 8);
+  });
+
+  // [🔍 Lihat Detail Transaksi]
+  bot.callbackQuery(/^v:trx:view:(.+)$/, async (ctx) => {
+    const trxId = ctx.match[1];
+    await ctx.answerCallbackQuery();
+    await sendTransactionDetail(ctx, trxId);
+  });
+
+  // [🗑️ Tombol Hapus Transaksi (Konfirmasi)]
+  bot.callbackQuery(/^v:trx:del:(.+)$/, async (ctx) => {
+    const trxId = ctx.match[1];
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      `⚠️ Apakah Anda yakin ingin <b>menghapus permanen</b> transaksi <code>${escapeHtml(trxId)}</code> dari Google Sheets?`,
+      {
+        parse_mode: "HTML",
+        reply_markup: buildDeleteConfirmKeyboard(trxId),
+      }
+    );
+  });
+
+  // [🗑️ Ya, Hapus Sekarang (Eksekusi Atomic)]
+  bot.callbackQuery(/^v:trx:delyes:(.+)$/, async (ctx) => {
+    const trxId = ctx.match[1];
+    await ctx.answerCallbackQuery({ text: "🗑️ Menghapus transaksi...", show_alert: false });
+    const result = await googleSheetsService.deleteTransactionRow(unitConfig.spreadsheetId, trxId);
+    if (result.success) {
+      await safeEditMessageText(
+        ctx,
+        `✅ <b>Transaksi Berhasil Dihapus!</b>\n\nID Transaksi: <code>${escapeHtml(trxId)}</code> telah dihapus dari Google Sheets unit <b>${escapeHtml(unitConfig.name)}</b>.`,
+        { parse_mode: "HTML" }
+      );
+    } else {
+      await safeEditMessageText(
+        ctx,
+        `❌ Gagal menghapus transaksi: <code>${escapeHtml(trxId)}</code> tidak ditemukan di Google Sheets.`,
+        { parse_mode: "HTML" }
+      );
+    }
+  });
+
+  // [✏️ Ubah Nominal Transaksi]
+  bot.callbackQuery(/^v:trx:edit:(.+)$/, async (ctx) => {
+    const trxId = ctx.match[1];
+    const state = getState(ctx.from.id);
+    state.editingTransactionId = trxId;
+    await ctx.answerCallbackQuery();
+    const prompt = await ctx.reply(
+      `Ketik <b>nominal baru</b> untuk transaksi <code>${escapeHtml(trxId)}</code> (contoh: <code>850000</code> atau <code>850rb</code>):`,
+      { parse_mode: "HTML" }
+    );
+    state.promptMsgId = prompt.message_id;
+  });
+
+  // ============================================================================
+  // TEXT MESSAGE HANDLER (CONVERSATIONAL AI AGENT & WIZARD)
   // ============================================================================
 
   bot.on("message:text", async (ctx) => {
@@ -640,55 +758,190 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     const userId = ctx.from.id;
     const chatId = ctx.chat.id;
     const state = getState(userId);
-
-    if (!state.editingField || !state.activeDraftId) {
-      return;
-    }
-
-    const draft = await pendingRepo.getById(state.activeDraftId);
-    if (!draft) {
-      state.editingField = null;
-      return;
-    }
-
     const text = ctx.message.text.trim();
 
-    if (state.editingField === "nominal") {
+    // 1. If currently editing existing transaction in Google Sheets
+    if (state.editingTransactionId) {
       const cleanNum = parseInt(text.replace(/[^\d]/g, ""), 10);
-      if (!isNaN(cleanNum) && cleanNum > 0) {
-        draft.payload.total_amount = cleanNum;
+      const trxId = state.editingTransactionId;
+      state.editingTransactionId = undefined;
+
+      // Auto-cleanup user input & prompt message
+      await ctx.deleteMessage().catch(() => { });
+      if (state.promptMsgId) {
+        await ctx.api.deleteMessage(chatId, state.promptMsgId).catch(() => { });
+        state.promptMsgId = undefined;
+      }
+
+      if (isNaN(cleanNum) || cleanNum <= 0) {
+        await ctx.reply("⚠️ Nominal tidak valid. Pembaruan dibatalkan.", { parse_mode: "HTML" });
+        return;
+      }
+
+      const result = await googleSheetsService.updateTransactionRow(unitConfig.spreadsheetId, trxId, {
+        total_amount: cleanNum,
+      });
+
+      if (result.success) {
+        await ctx.reply(
+          `✅ <b>Berhasil Memperbarui Transaksi!</b>\n\nID: <code>${escapeHtml(trxId)}</code>\nNominal Baru: <b>${formatRupiah(cleanNum)}</b>\nData telah disinkronkan ke Google Sheets unit <b>${escapeHtml(unitConfig.name)}</b>.`,
+          { parse_mode: "HTML" }
+        );
+      } else {
+        await ctx.reply(`❌ ${escapeHtml(result.message)}`, { parse_mode: "HTML" });
+      }
+      return;
+    }
+
+    // 2. If currently editing pending draft field (nominal or name)
+    if (state.editingField && state.activeDraftId) {
+      const draft = await pendingRepo.getById(state.activeDraftId);
+      if (!draft) {
+        state.editingField = null;
+        return;
+      }
+
+      if (state.editingField === "nominal") {
+        const cleanNum = parseInt(text.replace(/[^\d]/g, ""), 10);
+        if (!isNaN(cleanNum) && cleanNum > 0) {
+          draft.payload.total_amount = cleanNum;
+          await pendingRepo.updatePayload(draft.id, draft.payload);
+        }
+      } else if (state.editingField === "name") {
+        if (draft.action_type === "SPPG_ORDER") {
+          draft.payload.sppg_unit = text;
+        } else {
+          draft.payload.supplier_name = text;
+        }
         await pendingRepo.updatePayload(draft.id, draft.payload);
       }
-    } else if (state.editingField === "name") {
-      if (draft.action_type === "SPPG_ORDER") {
-        draft.payload.sppg_unit = text;
-      } else {
-        draft.payload.supplier_name = text;
+
+      state.editingField = null;
+
+      // Auto-cleanup user input & prompt message
+      await ctx.deleteMessage().catch(() => { });
+      if (state.promptMsgId) {
+        await ctx.api.deleteMessage(chatId, state.promptMsgId).catch(() => { });
+        state.promptMsgId = undefined;
       }
-      await pendingRepo.updatePayload(draft.id, draft.payload);
+
+      // In-place edit card message with updated values
+      if (state.activeDraftMsgId) {
+        const updatedCard =
+          draft.action_type === "SPPG_ORDER"
+            ? renderSppgOrderDraftCard(draft.payload, draft.id, "PENDING")
+            : renderSupplierExpenseDraftCard(draft.payload, draft.id, "PENDING", draft.media_url);
+
+        await ctx.api.editMessageText(chatId, state.activeDraftMsgId, updatedCard, {
+          parse_mode: "HTML",
+          reply_markup: buildDraftConfirmationKeyboard(draft.id, draft.action_type),
+        });
+      }
+      return;
     }
 
-    state.editingField = null;
+    // 3. Conversational Meta-Agent Classifier & Router
+    await withTyping(ctx, async () => {
+      const intent = await metaAgent.classifyAndRoute(text, unitConfig.name);
+      logger.info({ userId, intentType: intent.type }, "Meta-agent classified user message");
 
-    // Auto-cleanup user input & prompt message
-    await ctx.deleteMessage().catch(() => { });
-    if (state.promptMsgId) {
-      await ctx.api.deleteMessage(chatId, state.promptMsgId).catch(() => { });
-      state.promptMsgId = undefined;
-    }
+      switch (intent.type) {
+        case "GET_REKAP":
+          await sendRekap(ctx);
+          break;
 
-    // In-place edit card message with updated values
-    if (state.activeDraftMsgId) {
-      const updatedCard =
-        draft.action_type === "SPPG_ORDER"
-          ? renderSppgOrderDraftCard(draft.payload, draft.id, "PENDING")
-          : renderSupplierExpenseDraftCard(draft.payload, draft.id, "PENDING", draft.media_url);
+        case "GET_PDF":
+          await sendPdf(ctx);
+          break;
 
-      await ctx.api.editMessageText(chatId, state.activeDraftMsgId, updatedCard, {
-        parse_mode: "HTML",
-        reply_markup: buildDraftConfirmationKeyboard(draft.id, draft.action_type),
-      });
-    }
+        case "GET_SHEETS":
+          await sendSheets(ctx);
+          break;
+
+        case "GET_MY_ID":
+          await sendMyId(ctx);
+          break;
+
+        case "LIST_TRANSACTIONS":
+          await sendRecentTransactions(ctx, intent.limit || 8);
+          break;
+
+        case "DETAIL_TRANSACTION":
+          await sendTransactionDetail(ctx, intent.transactionId);
+          break;
+
+        case "DELETE_TRANSACTION":
+          await ctx.reply(
+            `⚠️ Apakah Anda yakin ingin <b>menghapus permanen</b> transaksi <code>${escapeHtml(intent.transactionId)}</code> dari Google Sheets?`,
+            {
+              parse_mode: "HTML",
+              reply_markup: buildDeleteConfirmKeyboard(intent.transactionId),
+            }
+          );
+          break;
+
+        case "EDIT_TRANSACTION":
+          if (intent.newAmount) {
+            const res = await googleSheetsService.updateTransactionRow(unitConfig.spreadsheetId, intent.transactionId, {
+              total_amount: intent.newAmount,
+            });
+            if (res.success) {
+              await ctx.reply(
+                `✅ Berhasil memperbarui nominal transaksi <b>${escapeHtml(intent.transactionId)}</b> menjadi <b>${formatRupiah(intent.newAmount)}</b> di Google Sheets.`,
+                { parse_mode: "HTML" }
+              );
+            } else {
+              await ctx.reply(`⚠️ Transaksi <code>${escapeHtml(intent.transactionId)}</code> tidak ditemukan di Google Sheets.`, {
+                parse_mode: "HTML",
+              });
+            }
+          } else {
+            state.editingTransactionId = intent.transactionId;
+            const prompt = await ctx.reply(
+              `Ketik <b>nominal baru</b> untuk transaksi <code>${escapeHtml(intent.transactionId)}</code> (contoh: <code>850000</code> atau <code>850rb</code>):`,
+              { parse_mode: "HTML" }
+            );
+            state.promptMsgId = prompt.message_id;
+          }
+          break;
+
+        case "INVITE":
+          await handleInviteCommand(ctx, intent.name, intent.role);
+          break;
+
+        case "RECORD_TRANSACTION": {
+          const draftId = `draft_${Date.now()}`;
+          await pendingRepo.create({
+            id: draftId,
+            sppg_id: unitConfig.id,
+            telegram_user_id: userId,
+            telegram_chat_id: chatId,
+            action_type: intent.parsed.type,
+            payload: intent.parsed.data,
+          });
+
+          state.activeDraftId = draftId;
+
+          const cardText =
+            intent.parsed.type === "SPPG_ORDER"
+              ? renderSppgOrderDraftCard(intent.parsed.data as any, draftId, "PENDING")
+              : renderSupplierExpenseDraftCard(intent.parsed.data as any, draftId, "PENDING");
+
+          const sentMsg = await ctx.reply(cardText, {
+            parse_mode: "HTML",
+            reply_markup: buildDraftConfirmationKeyboard(draftId, intent.parsed.type),
+          });
+
+          state.activeDraftMsgId = sentMsg.message_id;
+          break;
+        }
+
+        case "GENERAL_CHAT":
+        default:
+          await ctx.reply(intent.reply, { parse_mode: "HTML" });
+          break;
+      }
+    });
   });
 
   return bot;

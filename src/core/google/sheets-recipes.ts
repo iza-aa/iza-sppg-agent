@@ -419,7 +419,7 @@ export function createConditionalFormattingBatchRequests(): sheets_v4.Schema$Req
           ],
           booleanRule: {
             condition: {
-              type: 'NUMBER_LESS_THAN',
+              type: 'NUMBER_LESS',
               values: [{ userEnteredValue: '0.05' }]
             },
             format: {
@@ -434,5 +434,92 @@ export function createConditionalFormattingBatchRequests(): sheets_v4.Schema$Req
         index: 2
       }
     }
+  ];
+}
+
+/**
+ * BatchUpdate Requests untuk styling Header baris 1 setiap Tab (Deep Navy & Teks Putih Bold)
+ */
+export function createHeaderStylingBatchRequests(): sheets_v4.Schema$Request[] {
+  const navyBg = hexToRgbColor(BGN_PALETTE.DEEP_NAVY);
+  const whiteTxt = hexToRgbColor(BGN_PALETTE.WHITE);
+
+  return [
+    {
+      repeatCell: {
+        range: {
+          sheetId: SHEET_IDS.PENDAPATAN_SPPG,
+          startRowIndex: 0,
+          endRowIndex: 1,
+          startColumnIndex: 0,
+          endColumnIndex: 12,
+        },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: navyBg,
+            textFormat: { foregroundColor: whiteTxt, bold: true, fontSize: 10 },
+            horizontalAlignment: 'CENTER',
+          },
+        },
+        fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+      },
+    },
+    {
+      repeatCell: {
+        range: {
+          sheetId: SHEET_IDS.PENGELUARAN_SUPPLIER,
+          startRowIndex: 0,
+          endRowIndex: 1,
+          startColumnIndex: 0,
+          endColumnIndex: 12,
+        },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: navyBg,
+            textFormat: { foregroundColor: whiteTxt, bold: true, fontSize: 10 },
+            horizontalAlignment: 'CENTER',
+          },
+        },
+        fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+      },
+    },
+    {
+      repeatCell: {
+        range: {
+          sheetId: SHEET_IDS.REKAP_MARGIN_HARIAN,
+          startRowIndex: 0,
+          endRowIndex: 1,
+          startColumnIndex: 0,
+          endColumnIndex: 7,
+        },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: navyBg,
+            textFormat: { foregroundColor: whiteTxt, bold: true, fontSize: 10 },
+            horizontalAlignment: 'CENTER',
+          },
+        },
+        fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+      },
+    },
+    {
+      repeatCell: {
+        range: {
+          sheetId: SHEET_IDS.MASTER_DATA,
+          startRowIndex: 0,
+          endRowIndex: 1,
+          startColumnIndex: 0,
+          endColumnIndex: 3,
+        },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: navyBg,
+            textFormat: { foregroundColor: whiteTxt, bold: true, fontSize: 10 },
+            horizontalAlignment: 'CENTER',
+          },
+        },
+        fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+      },
+    },
   ];
 }
