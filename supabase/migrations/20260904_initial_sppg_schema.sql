@@ -4,7 +4,7 @@
 
 -- 1. Whitelist Pengguna Telegram & Otorisasi
 CREATE TABLE IF NOT EXISTS sppg_users (
-  id BIGINT PRIMARY KEY, -- Telegram User ID (numerik)
+  id BIGINT PRIMARY KEY,
   username TEXT,
   first_name TEXT,
   last_name TEXT,
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS sppg_users (
 );
 
 -- 2. State Machine Draf Konfirmasi Transaksi (TTL 10 Menit)
-CREATE TABLE IF NOT EXISTS pending_agent_actions (
+CREATE TABLE IF NOT EXISTS sppg_pending_actions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   sppg_id TEXT NOT NULL,
   telegram_user_id BIGINT NOT NULL,
@@ -31,8 +31,8 @@ CREATE TABLE IF NOT EXISTS pending_agent_actions (
   resolved_at TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS idx_pending_actions_user_status ON pending_agent_actions(telegram_user_id, status);
-CREATE INDEX IF NOT EXISTS idx_pending_actions_expires ON pending_agent_actions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_sppg_pending_actions_user_status ON sppg_pending_actions(telegram_user_id, status);
+CREATE INDEX IF NOT EXISTS idx_sppg_pending_actions_expires ON sppg_pending_actions(expires_at);
 
 -- 3. Header Nota Pesanan SPPG (Plafon / Pendapatan)
 CREATE TABLE IF NOT EXISTS sppg_orders (

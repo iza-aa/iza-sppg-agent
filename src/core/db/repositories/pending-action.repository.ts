@@ -37,7 +37,7 @@ export class PendingActionRepository {
 
     // Try persisting to Supabase
     try {
-      await this.supabase.from("pending_agent_actions").insert(fullRecord);
+      await this.supabase.from("sppg_pending_actions").insert(fullRecord);
     } catch (err) {
       logger.debug({ err, id: record.id }, "Persisting draft to Supabase failed (using in-memory fallback)");
     }
@@ -58,7 +58,7 @@ export class PendingActionRepository {
     // 2. Query Supabase
     try {
       const { data, error } = await this.supabase
-        .from("pending_agent_actions")
+        .from("sppg_pending_actions")
         .select("*")
         .eq("id", id)
         .single();
@@ -86,7 +86,7 @@ export class PendingActionRepository {
 
     try {
       await this.supabase
-        .from("pending_agent_actions")
+        .from("sppg_pending_actions")
         .update({ status: "PROCESSING" })
         .eq("id", id)
         .eq("status", "PENDING");
@@ -106,7 +106,7 @@ export class PendingActionRepository {
 
     try {
       await this.supabase
-        .from("pending_agent_actions")
+        .from("sppg_pending_actions")
         .update({ status, resolved_at: new Date().toISOString() })
         .eq("id", id);
     } catch (err) {
@@ -123,7 +123,7 @@ export class PendingActionRepository {
 
     try {
       await this.supabase
-        .from("pending_agent_actions")
+        .from("sppg_pending_actions")
         .update({ payload: newPayload })
         .eq("id", id);
     } catch (err) {
