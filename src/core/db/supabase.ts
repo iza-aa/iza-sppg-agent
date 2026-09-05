@@ -1,5 +1,11 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import WebSocket from "ws";
 import { env } from "../../config/env.js";
+
+// Polyfill WebSocket for Node.js environments (< Node 22)
+if (typeof (globalThis as any).WebSocket === "undefined") {
+  (globalThis as any).WebSocket = WebSocket;
+}
 
 let supabaseInstance: SupabaseClient | null = null;
 

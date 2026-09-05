@@ -168,15 +168,19 @@ async function main() {
   const enabledUnits = getEnabledSppgUnits();
   logger.info(`Found ${enabledUnits.length} enabled SPPG units.`);
 
-  // 1. Instant HTTP Health & Keep-Alive Server (starts immediately for Render port check)
-  healthServerInstance = createHealthServer({
-    mode: EXECUTION_MODE,
-    getActiveUnits: () =>
-      EXECUTION_MODE === "fork"
-        ? Array.from(workers.keys())
-        : activeBots.map((b) => b.id),
-  });
-  await healthServerInstance.start();
+  // 1. Instant HTTP Health & Keep-Alive Server (starts immediately for Render/VPS port check)
+  try {
+    healthServerInstance = createHealthServer({
+      mode: EXECUTION_MODE,
+      getActiveUnits: () =>
+        EXECUTION_MODE === "fork"
+          ? Array.from(workers.keys())
+          : activeBots.map((b) => b.id),
+    });
+    await healthServerInstance.start();
+  } catch (httpErr) {
+    logger.warn({ err: httpErr }, "⚠️ HTTP Health listener could not bind port, continuing bot operations without HTTP server");
+  }
 
   if (enabledUnits.length === 0) {
     logger.warn("⚠️ No enabled SPPG units found with valid tokens. Please check your .env configuration.");
@@ -233,6 +237,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  logger.error("[Supervisor] Fatal supervisor error:", err);
+  logger.error({ err }, "[Supervisor] Fatal supervisor error: " + (err?.stack || err));
+  console.error("FATAL SUPERVISOR ERROR:", err);
   process.exit(1);
 });
