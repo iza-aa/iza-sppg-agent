@@ -31,6 +31,11 @@ RUN apk add --no-cache vips dumb-init
 
 ENV NODE_ENV=production
 ENV LOG_LEVEL=info
+ENV PORT=8080
+ENV EXECUTION_MODE=single
+ENV NODE_OPTIONS="--max-old-space-size=350"
+
+EXPOSE 8080
 
 # Copy production artifacts from builder
 COPY --from=builder /app/package.json ./

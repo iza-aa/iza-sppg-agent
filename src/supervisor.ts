@@ -3,12 +3,26 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getEnabledSppgUnits, SPPGUnitConfig } from "./config/sppg.config.js";
 import { startHeartbeatScheduler, stopHeartbeatScheduler } from "./core/db/heartbeat.js";
+import { createHealthServer } from "./core/server/health-server.js";
+import { createSppgBot } from "./core/telegram/bot-handler.js";
 import { logger } from "./core/utils/logger.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const isTs = __filename.endsWith(".ts");
 const workerScript = path.resolve(__dirname, isTs ? "worker.ts" : "worker.js");
+
+// Execution Mode: "single" (default for low-RAM clouds like Render) or "fork" (multi-process for VPS)
+const EXECUTION_MODE = (process.env.EXECUTION_MODE || "single").toLowerCase();
+
+// Process-level resilience guards: prevent entire container crash on unhandled async rejections
+process.on("unhandledRejection", (reason) => {
+  logger.error({ reason }, "🛡️ [Process Guard] Intercepted unhandled Promise rejection");
+});
+
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "🛡️ [Process Guard] Intercepted uncaught exception");
+});
 
 interface ManagedWorker {
   config: SPPGUnitConfig;
@@ -18,7 +32,9 @@ interface ManagedWorker {
 }
 
 const workers = new Map<string, ManagedWorker>();
+const activeBots: Array<{ id: string; name: string; bot: ReturnType<typeof createSppgBot> }> = [];
 let isShuttingDown = false;
+let healthServerInstance: ReturnType<typeof createHealthServer> | null = null;
 
 function spawnWorker(unit: SPPGUnitConfig) {
   if (isShuttingDown) return;
@@ -46,7 +62,6 @@ function spawnWorker(unit: SPPGUnitConfig) {
       return;
     }
   } else {
-    // Reset restart counter after stable run
     managed.restarts = 0;
   }
 
@@ -87,35 +102,59 @@ async function shutdown(signal: string) {
   isShuttingDown = true;
 
   logger.info(`[Supervisor] Received ${signal}. Initiating graceful shutdown...`);
+
+  // 1. Stop Supabase Heartbeat
   stopHeartbeatScheduler();
 
-  const killPromises: Promise<void>[] = [];
-
-  for (const [id, worker] of workers.entries()) {
-    if (worker.process && !worker.process.killed) {
-      killPromises.push(
-        new Promise<void>((resolve) => {
-          logger.info(`[Supervisor] Sending SIGTERM to worker ${id}...`);
-          worker.process?.kill("SIGTERM");
-          const timeout = setTimeout(() => {
-            if (worker.process && !worker.process.killed) {
-              logger.warn(`[Supervisor] Worker ${id} did not exit gracefully. Forcing SIGKILL...`);
-              worker.process.kill("SIGKILL");
-            }
-            resolve();
-          }, 4000);
-
-          worker.process?.once("exit", () => {
-            clearTimeout(timeout);
-            resolve();
-          });
-        })
-      );
-    }
+  // 2. Stop Health Server
+  if (healthServerInstance) {
+    await healthServerInstance.stop().catch((e) => logger.warn({ err: e }, "Error closing HTTP server"));
   }
 
-  await Promise.all(killPromises);
-  logger.info("[Supervisor] All micro-workers terminated. Supervisor exiting cleanly.");
+  // 3. Stop Bots based on execution mode
+  if (EXECUTION_MODE === "fork") {
+    const killPromises: Promise<void>[] = [];
+
+    for (const [id, worker] of workers.entries()) {
+      if (worker.process && !worker.process.killed) {
+        killPromises.push(
+          new Promise<void>((resolve) => {
+            logger.info(`[Supervisor] Sending SIGTERM to worker ${id}...`);
+            worker.process?.kill("SIGTERM");
+            const timeout = setTimeout(() => {
+              if (worker.process && !worker.process.killed) {
+                logger.warn(`[Supervisor] Worker ${id} did not exit gracefully. Forcing SIGKILL...`);
+                worker.process.kill("SIGKILL");
+              }
+              resolve();
+            }, 4000);
+
+            worker.process?.once("exit", () => {
+              clearTimeout(timeout);
+              resolve();
+            });
+          })
+        );
+      }
+    }
+
+    await Promise.all(killPromises);
+  } else {
+    // Single-process mode: stop all Grammy bots
+    const stopPromises = activeBots.map(async ({ id, bot }) => {
+      try {
+        logger.info(`[Supervisor] Stopping Grammy bot instance for ${id}...`);
+        await bot.stop();
+        logger.info(`[Supervisor] Bot ${id} stopped cleanly.`);
+      } catch (e) {
+        logger.warn({ err: e, id }, `Error stopping bot ${id}`);
+      }
+    });
+
+    await Promise.all(stopPromises);
+  }
+
+  logger.info("[Supervisor] All services terminated. Supervisor exiting cleanly.");
   process.exit(0);
 }
 
@@ -123,25 +162,72 @@ async function main() {
   logger.info("=================================================");
   logger.info("  🍽️  MBG ASSISTANT - MASTER SUPERVISOR STARTING  ");
   logger.info("  Badan Gizi Nasional (BGN) Multi-Unit Bot System ");
+  logger.info(`  Execution Mode: [${EXECUTION_MODE.toUpperCase()}]`);
   logger.info("=================================================");
 
   const enabledUnits = getEnabledSppgUnits();
   logger.info(`Found ${enabledUnits.length} enabled SPPG units.`);
 
+  // 1. Instant HTTP Health & Keep-Alive Server (starts immediately for Render port check)
+  healthServerInstance = createHealthServer({
+    mode: EXECUTION_MODE,
+    getActiveUnits: () =>
+      EXECUTION_MODE === "fork"
+        ? Array.from(workers.keys())
+        : activeBots.map((b) => b.id),
+  });
+  await healthServerInstance.start();
+
   if (enabledUnits.length === 0) {
     logger.warn("⚠️ No enabled SPPG units found with valid tokens. Please check your .env configuration.");
-    process.exit(0);
+    return;
   }
 
-  // 1. Spawn worker for each enabled unit
-  for (const unit of enabledUnits) {
-    spawnWorker(unit);
+  // 2. Initialize units according to EXECUTION_MODE
+  if (EXECUTION_MODE === "fork") {
+    logger.info("🔀 Running in multi-process mode (fork)...");
+    for (const unit of enabledUnits) {
+      spawnWorker(unit);
+    }
+  } else {
+    logger.info("⚡ Running in single-process mode (low-RAM optimized, ~50MB baseline)...");
+    for (const unit of enabledUnits) {
+      logger.info(`[Single Mode] Initializing bot for ${unit.name} (${unit.id})...`);
+      const bot = createSppgBot(unit);
+
+      // Isolated error boundary per bot instance
+      bot.catch((err) => {
+        logger.error(
+          {
+            unit: unit.id,
+            message: err.message,
+            ctx: err.ctx?.update?.update_id,
+            error: err.error,
+          },
+          `🚨 [Single Mode] Isolated error in bot ${unit.id}`
+        );
+      });
+
+      activeBots.push({ id: unit.id, name: unit.name, bot });
+
+      // Start long-polling concurrently
+      bot
+        .start({
+          onStart: (botInfo) => {
+            logger.info(`✅ [Single Mode] ${unit.name} active as @${botInfo.username} (ID: ${botInfo.id})`);
+          },
+          drop_pending_updates: true,
+        })
+        .catch((err) => {
+          logger.error({ err, unit: unit.id }, `[Single Mode] Runner error for ${unit.id}`);
+        });
+    }
   }
 
-  // 2. Start Supabase Keep-Warm Heartbeat (every 12 hours)
+  // 3. Start Supabase Keep-Warm Heartbeat (every 12 hours)
   startHeartbeatScheduler(12);
 
-  // 3. Register Process Termination Signals
+  // 4. Register Process Termination Signals
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }

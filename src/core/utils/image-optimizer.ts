@@ -1,9 +1,10 @@
 import sharp from "sharp";
 import { logger } from "./logger.js";
 
-// Restrict Sharp's internal concurrency and cache to prevent VPS/server memory spikes
+// Restrict Sharp's internal concurrency and disable cache completely to prevent native memory leaks
 sharp.concurrency(1);
-sharp.cache({ memory: 16, files: 0, items: 20 });
+sharp.cache(false);
+sharp.simd(true);
 
 export interface OptimizationResult {
   buffer: Buffer;
@@ -15,10 +16,13 @@ export interface OptimizationResult {
   height?: number;
 }
 
-export async function optimizeReceiptImage(
+// Sequential queue mutex: guarantees only 1 image is in libvips memory at any millisecond
+let optimizationMutex = Promise.resolve();
+
+async function runSharpPipeline(
   inputBuffer: Buffer,
-  maxWidth = 1200,
-  quality = 80
+  maxWidth: number,
+  quality: number
 ): Promise<OptimizationResult> {
   const originalSize = inputBuffer.length;
 
@@ -64,4 +68,23 @@ export async function optimizeReceiptImage(
       format: "webp",
     };
   }
+}
+
+export async function optimizeReceiptImage(
+  inputBuffer: Buffer,
+  maxWidth = 1200,
+  quality = 80
+): Promise<OptimizationResult> {
+  // Chain to mutex queue to guarantee sequential execution
+  const task = optimizationMutex.then(
+    () => runSharpPipeline(inputBuffer, maxWidth, quality),
+    () => runSharpPipeline(inputBuffer, maxWidth, quality)
+  );
+
+  optimizationMutex = task.then(
+    () => {},
+    () => {}
+  );
+
+  return task;
 }
