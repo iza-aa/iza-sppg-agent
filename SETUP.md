@@ -28,13 +28,13 @@ Dokumen ini berisi panduan lengkap langkah-demi-langkah untuk menyiapkan, mengon
 5. **Daftarkan Telegram ID Pengguna (Whitelist):**
    Jalankan query SQL berikut untuk mendaftarkan akun Telegram Anda dan Ayah:
    ```sql
-   INSERT INTO sppg_users (telegram_user_id, full_name, role)
+   INSERT INTO sppg_users (id, first_name, role, status)
    VALUES
-     (123456789, 'Ayah (Operator Utama)', 'ADMIN'),
-     (987654321, 'Iza (Super Admin)', 'SUPERADMIN')
-   ON CONFLICT (telegram_user_id) DO NOTHING;
+     (123456789, 'Ayah', 'admin', 'active'),
+     (987654321, 'Iza', 'super_admin', 'active')
+   ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, status = EXCLUDED.status;
    ```
-   *(Ganti `123456789` dengan Telegram User ID yang sebenarnya. User ID dapat dicek di Telegram via bot `@userinfobot`).*
+   *(Ganti `123456789` dengan Telegram User ID Anda & Ayah. ID dapat dicek di Telegram via bot `@userinfobot`).*
 
 ---
 
