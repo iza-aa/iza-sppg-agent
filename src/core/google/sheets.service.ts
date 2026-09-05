@@ -96,17 +96,19 @@ export class GoogleSheetsService {
   /**
    * Writes official BGN headers, interactive Year/Month filter dropdowns, and dynamic KPI summary formulas
    */
-  async ensureHeadersAndFormulas(spreadsheetId: string, unitName = "SPPG Unit"): Promise<void> {
+  async ensureHeadersAndFormulas(spreadsheetId: string, unitName = "SPPG Unit", force = false): Promise<void> {
     const client = await this.getClient();
 
     try {
-      const check = await client.spreadsheets.values.get({
-        spreadsheetId,
-        range: "'01_RINGKASAN_EKSEKUTIF'!A2",
-      });
+      if (!force) {
+        const check = await client.spreadsheets.values.get({
+          spreadsheetId,
+          range: "'01_RINGKASAN_EKSEKUTIF'!A2",
+        });
 
-      if (check.data.values?.[0]?.[0] === "⚙️ FILTER:") {
-        return; // Already configured with interactive filter controls
+        if (check.data.values?.[0]?.[0] === "FILTER") {
+          return; // Already configured with professional filter controls
+        }
       }
 
       logger.info({ spreadsheetId, unitName }, "Configuring interactive Month/Year filters and BGN formulas...");
@@ -124,7 +126,7 @@ export class GoogleSheetsService {
       const formulaBelanja = `=IFERROR(SUMIFS('03_PENGELUARAN_SUPPLIER'!I2:I; '03_PENGELUARAN_SUPPLIER'!B2:B; ">=" & ${startDateExpr}; '03_PENGELUARAN_SUPPLIER'!B2:B; "<=" & ${endDateExpr}); 0)`;
       const formulaMargin = `=B4-C4`;
       const formulaPct = `=IF(B4>0; D4/B4; 0)`;
-      const formulaStatus = `=IF(E4>=0,15; "🟢 HEMAT / SURPLUS (>=15%)"; IF(E4>=0,05; "🟡 SESUAI PAGU (5-15%)"; "🔴 PERHATIAN: OVER-BUDGET (<5%)"))`;
+      const formulaStatus = `=IF(E4>=0,15; "SURPLUS EFISIEN (>= 15%)"; IF(E4>=0,05; "SESUAI PAGU (5% - 15%)"; "PERHATIAN: OVER-BUDGET (< 5%)"))`;
       const formulaCount = `=COUNTIFS('03_PENGELUARAN_SUPPLIER'!B2:B; ">=" & ${startDateExpr}; '03_PENGELUARAN_SUPPLIER'!B2:B; "<=" & ${endDateExpr})`;
 
       // 1. Write Values across tabs
@@ -136,16 +138,16 @@ export class GoogleSheetsService {
             {
               range: "'01_RINGKASAN_EKSEKUTIF'!A1:G4",
               values: [
-                ["🏛️ EXECUTIVE SUMMARY & KPI SPPG - BADAN GIZI NASIONAL", "", "", "", "", "", ""],
-                ["⚙️ FILTER:", "📅 TAHUN:", "SEMUA TAHUN", "🗓️ BULAN:", "SEMUA BULAN", "🏢 UNIT:", unitName],
+                ["EXECUTIVE SUMMARY & KPI REALISASI SPPG - BADAN GIZI NASIONAL", "", "", "", "", "", ""],
+                ["FILTER", "TAHUN ANGGARAN:", "SEMUA TAHUN", "BULAN TRANSAKSI:", "SEMUA BULAN", "UNIT KERJA:", unitName],
                 [
                   "NO",
                   "TOTAL PLAFON (PAGU)",
                   "REALISASI BELANJA RIIL",
                   "MARGIN BERSIH SPPG",
                   "% EFISIENSI MARGIN",
-                  "STATUS EVALUASI BGN",
-                  "TRANSAKSI BELANJA",
+                  "STATUS EVALUASI KEUANGAN",
+                  "TOTAL TRANSAKSI",
                 ],
                 ["1", formulaPlafon, formulaBelanja, formulaMargin, formulaPct, formulaStatus, formulaCount],
               ],
@@ -214,11 +216,77 @@ export class GoogleSheetsService {
       const whiteTxt = hexToRgbColor(BGN_PALETTE.WHITE);
       const filterBg = hexToRgbColor("#FEF3C7");
       const slateLightBg = hexToRgbColor(BGN_PALETTE.SLATE_LIGHT);
+      const borderGray = hexToRgbColor("#CBD5E1");
 
       await client.spreadsheets.batchUpdate({
         spreadsheetId,
         requestBody: {
           requests: [
+            // Set Row Heights on Tab 01
+            {
+              updateDimensionProperties: {
+                range: { sheetId: ringkasanSheetId, dimension: "ROWS", startIndex: 0, endIndex: 1 },
+                properties: { pixelSize: 42 },
+                fields: "pixelSize",
+              },
+            },
+            {
+              updateDimensionProperties: {
+                range: { sheetId: ringkasanSheetId, dimension: "ROWS", startIndex: 1, endIndex: 2 },
+                properties: { pixelSize: 32 },
+                fields: "pixelSize",
+              },
+            },
+            {
+              updateDimensionProperties: {
+                range: { sheetId: ringkasanSheetId, dimension: "ROWS", startIndex: 2, endIndex: 3 },
+                properties: { pixelSize: 38 },
+                fields: "pixelSize",
+              },
+            },
+            {
+              updateDimensionProperties: {
+                range: { sheetId: ringkasanSheetId, dimension: "ROWS", startIndex: 3, endIndex: 4 },
+                properties: { pixelSize: 44 },
+                fields: "pixelSize",
+              },
+            },
+            // Set Column Widths on Tab 01 (Generous, zero text cutoff)
+            {
+              updateDimensionProperties: {
+                range: { sheetId: ringkasanSheetId, dimension: "COLUMNS", startIndex: 0, endIndex: 1 },
+                properties: { pixelSize: 80 },
+                fields: "pixelSize",
+              },
+            },
+            {
+              updateDimensionProperties: {
+                range: { sheetId: ringkasanSheetId, dimension: "COLUMNS", startIndex: 1, endIndex: 4 },
+                properties: { pixelSize: 240 },
+                fields: "pixelSize",
+              },
+            },
+            {
+              updateDimensionProperties: {
+                range: { sheetId: ringkasanSheetId, dimension: "COLUMNS", startIndex: 4, endIndex: 5 },
+                properties: { pixelSize: 190 },
+                fields: "pixelSize",
+              },
+            },
+            {
+              updateDimensionProperties: {
+                range: { sheetId: ringkasanSheetId, dimension: "COLUMNS", startIndex: 5, endIndex: 6 },
+                properties: { pixelSize: 280 },
+                fields: "pixelSize",
+              },
+            },
+            {
+              updateDimensionProperties: {
+                range: { sheetId: ringkasanSheetId, dimension: "COLUMNS", startIndex: 6, endIndex: 7 },
+                properties: { pixelSize: 220 },
+                fields: "pixelSize",
+              },
+            },
             // Merge A1:G1 for Title Banner
             {
               mergeCells: {
@@ -371,7 +439,7 @@ export class GoogleSheetsService {
                 },
               },
             },
-            // Header row 3 styling
+            // Header row 3 styling with WRAP strategy
             {
               repeatCell: {
                 range: {
@@ -387,12 +455,32 @@ export class GoogleSheetsService {
                     textFormat: { foregroundColor: whiteTxt, bold: true, fontSize: 10 },
                     horizontalAlignment: "CENTER",
                     verticalAlignment: "MIDDLE",
+                    wrapStrategy: "WRAP",
                   },
                 },
-                fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)",
+                fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)",
               },
             },
             // Values formatting row 4
+            {
+              repeatCell: {
+                range: {
+                  sheetId: ringkasanSheetId,
+                  startRowIndex: 3,
+                  endRowIndex: 4,
+                  startColumnIndex: 0,
+                  endColumnIndex: 1,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    textFormat: { bold: true, fontSize: 12 },
+                    horizontalAlignment: "CENTER",
+                    verticalAlignment: "MIDDLE",
+                  },
+                },
+                fields: "userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment)",
+              },
+            },
             {
               repeatCell: {
                 range: {
@@ -470,6 +558,24 @@ export class GoogleSheetsService {
                   },
                 },
                 fields: "userEnteredFormat(numberFormat,textFormat,horizontalAlignment,verticalAlignment)",
+              },
+            },
+            // Table Borders for Row 2 to 4
+            {
+              updateBorders: {
+                range: {
+                  sheetId: ringkasanSheetId,
+                  startRowIndex: 2,
+                  endRowIndex: 4,
+                  startColumnIndex: 0,
+                  endColumnIndex: 7,
+                },
+                top: { style: "SOLID", width: 1, color: navyBg },
+                bottom: { style: "SOLID_MEDIUM", width: 2, color: navyBg },
+                left: { style: "SOLID", width: 1, color: borderGray },
+                right: { style: "SOLID", width: 1, color: borderGray },
+                innerHorizontal: { style: "SOLID", width: 1, color: borderGray },
+                innerVertical: { style: "SOLID", width: 1, color: borderGray },
               },
             },
             // Other tab batch formatters
@@ -598,16 +704,22 @@ export class GoogleSheetsService {
     const client = await this.getClient();
 
     try {
+      // Helper to parse Indonesian currency with dot thousand separators
+      const parseAmount = (val: any): number => {
+        if (typeof val === "number") return val;
+        const clean = String(val || "").replace(/[^\d,.-]/g, "").trim();
+        const normalized = clean.replace(/\./g, "").replace(/,/g, ".");
+        const num = parseFloat(normalized);
+        return isNaN(num) ? 0 : num;
+      };
+
       // 1. Read all Pagu from 02_PENDAPATAN_SPPG (Col I)
       const incomeRes = await client.spreadsheets.values.get({
         spreadsheetId,
         range: "'02_PENDAPATAN_SPPG'!I2:I",
       });
       const incomeValues = incomeRes.data.values || [];
-      const totalPlafon = incomeValues.reduce((sum, row) => {
-        const val = Number(String(row[0] || "").replace(/[^\d.-]/g, ""));
-        return sum + (isNaN(val) ? 0 : val);
-      }, 0);
+      const totalPlafon = incomeValues.reduce((sum, row) => sum + parseAmount(row[0]), 0);
 
       // 2. Read all Belanja from 03_PENGELUARAN_SUPPLIER (Col I)
       const expenseRes = await client.spreadsheets.values.get({
@@ -615,10 +727,7 @@ export class GoogleSheetsService {
         range: "'03_PENGELUARAN_SUPPLIER'!I2:I",
       });
       const expenseValues = expenseRes.data.values || [];
-      const totalBelanja = expenseValues.reduce((sum, row) => {
-        const val = Number(String(row[0] || "").replace(/[^\d.-]/g, ""));
-        return sum + (isNaN(val) ? 0 : val);
-      }, 0);
+      const totalBelanja = expenseValues.reduce((sum, row) => sum + parseAmount(row[0]), 0);
 
       const marginBersih = totalPlafon - totalBelanja;
       const marginPercentage = totalPlafon > 0 ? (marginBersih / totalPlafon) * 100 : 0;

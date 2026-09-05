@@ -7,8 +7,8 @@ describe("Configuration Loader & SPPG Mapping", () => {
     expect(env.TELEGRAM_BOT_TOKEN_PATILA).toBeDefined();
     expect(env.TELEGRAM_BOT_TOKEN_PATILA.length).toBeGreaterThan(10);
     expect(env.GOOGLE_DRIVE_FOLDER_ID).toBe("1T6iFdrOj7_y8XJiQ941KTmDkOfhwfHeR");
-    expect(env.GOOGLE_SHEET_ID_PATILA).toBe("1kOOZVfc2m6aYylhDJNi1lRh2_UWLgU540FJ7fwROLPA");
-    expect(env.GOOGLE_SHEET_ID_MASTER).toBe("1Bjxue57nLpH-nrwXxH2uh-CZoPWTK_JKZ5YMWgwZSbM");
+    expect(env.GOOGLE_SHEET_ID_PATILA).toBe("1Bjxue57nLpH-nrwXxH2uh-CZoPWTK_JKZ5YMWgwZSbM");
+    expect(env.GOOGLE_SHEET_ID_MASTER).toBe("1-YbHkTZQeeZ5KCRKq4GXES9ApqRUNlXhe0zgi_LnEII");
   });
 
   it("should configure SPPG units accurately", () => {
