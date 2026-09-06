@@ -61,18 +61,22 @@ export const MASTER_SHEET_IDS = {
   DASHBOARD: 0,
   SEMUA_TRANSAKSI: 2002,
   DAFTAR_DAPUR: 2003,
+  LOG_AKTIVITAS: 2004,
   KONSOLIDASI_NASIONAL: 0,
   SEMUA_TRANSAKSI_GLOBAL: 2002,
   DIREKTORI_SPPG: 2003,
+  LOG_AKTIVITAS_GLOBAL: 2004,
 } as const;
 
 export const MASTER_SHEET_NAMES = {
   DASHBOARD: '01_DASHBOARD',
   SEMUA_TRANSAKSI: '02_SEMUA_TRANSAKSI',
   DAFTAR_DAPUR: '03_DAFTAR_DAPUR',
+  LOG_AKTIVITAS: '04_LOG_AKTIVITAS',
   KONSOLIDASI_NASIONAL: '01_DASHBOARD',
   SEMUA_TRANSAKSI_GLOBAL: '02_SEMUA_TRANSAKSI',
   DIREKTORI_SPPG: '03_DAFTAR_DAPUR',
+  LOG_AKTIVITAS_GLOBAL: '04_LOG_AKTIVITAS',
 } as const;
 
 /**
@@ -872,7 +876,43 @@ export function createMasterDashboardStructureBatchRequests(
     });
   }
 
-  // 4. Delete old operational single-unit sheets if they exist
+  // 4. Rename or Add 04_LOG_AKTIVITAS
+  const oldLogId = existingSheetMap.get('04_LOG_AKTIVITAS') ?? existingSheetMap.get('04_LOG_AKTIVITAS_GLOBAL');
+  if (oldLogId !== undefined) {
+    requests.push({
+      updateSheetProperties: {
+        properties: {
+          sheetId: oldLogId,
+          title: MASTER_SHEET_NAMES.LOG_AKTIVITAS,
+          tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.SLATE_GRAY) },
+          gridProperties: {
+            rowCount: 5000,
+            columnCount: 11,
+            frozenRowCount: 1,
+          },
+        },
+        fields: 'title,tabColorStyle,gridProperties(rowCount,columnCount,frozenRowCount)',
+      },
+    });
+  } else {
+    requests.push({
+      addSheet: {
+        properties: {
+          sheetId: MASTER_SHEET_IDS.LOG_AKTIVITAS,
+          title: MASTER_SHEET_NAMES.LOG_AKTIVITAS,
+          index: 3,
+          tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.SLATE_GRAY) },
+          gridProperties: {
+            rowCount: 5000,
+            columnCount: 11,
+            frozenRowCount: 1,
+          },
+        },
+      },
+    });
+  }
+
+  // 5. Delete old operational single-unit sheets if they exist
   for (const oldTitle of [
     SHEET_NAMES.PENDAPATAN_SPPG,
     SHEET_NAMES.PENGELUARAN_SUPPLIER,
@@ -1167,11 +1207,16 @@ export function getMasterDashboardValues() {
     ['ID Unit', 'Nama Dapur SPPG', 'Wilayah / Lokasi', 'Status Operasional', 'Penanggung Jawab', 'Kontak Telegram', 'Kapasitas Porsi / Hari', 'Tautan Spreadsheet']
   ];
 
+  const tab4Headers = [
+    ['Waktu (WITA)', 'Unit Dapur SPPG', 'Editor / Pengubah', 'Lembar (Tab)', 'No PO / ID', 'Kolom Diedit', 'Nilai Lama', 'Nilai Baru', 'Sumber Aksi', 'Status']
+  ];
+
   return {
     valuesDashboard,
     valuesHelper,
     tab2Headers,
-    tab3Headers
+    tab3Headers,
+    tab4Headers
   };
 }
 
@@ -1243,7 +1288,8 @@ export function createMasterDashboardChartRequest(firstId: number): sheets_v4.Sc
 export function createMasterDashboardStylingBatchRequests(
   firstId: number,
   globalTxSheetId: number = MASTER_SHEET_IDS.SEMUA_TRANSAKSI,
-  direktoriSheetId: number = MASTER_SHEET_IDS.DAFTAR_DAPUR
+  direktoriSheetId: number = MASTER_SHEET_IDS.DAFTAR_DAPUR,
+  logAktivitasSheetId: number = MASTER_SHEET_IDS.LOG_AKTIVITAS
 ): sheets_v4.Schema$Request[] {
   const navyBg = hexToRgbColor(BGN_PALETTE.DEEP_NAVY);
   const slateDarkBg = hexToRgbColor(BGN_PALETTE.SLATE_DARK);
@@ -2307,6 +2353,162 @@ export function createMasterDashboardStylingBatchRequests(
             endRowIndex: 100,
             startColumnIndex: 0,
             endColumnIndex: 8,
+          },
+        },
+      },
+    },
+
+    // =========================================================================
+    // Tab 4: 04_LOG_AKTIVITAS Styling
+    // =========================================================================
+    // 1. Data rows default formatting
+    {
+      repeatCell: {
+        range: {
+          sheetId: logAktivitasSheetId,
+          startRowIndex: 1,
+          endRowIndex: 1000,
+          startColumnIndex: 0,
+          endColumnIndex: 10,
+        },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: whiteTxt,
+            textFormat: { foregroundColor: darkTxt, bold: false, fontSize: 10, fontFamily: 'Roboto' },
+            verticalAlignment: 'MIDDLE',
+            wrapStrategy: 'CLIP',
+          },
+        },
+        fields: 'userEnteredFormat(backgroundColor,textFormat,verticalAlignment,wrapStrategy)',
+      },
+    },
+    // 2. Header Row Styling
+    {
+      repeatCell: {
+        range: {
+          sheetId: logAktivitasSheetId,
+          startRowIndex: 0,
+          endRowIndex: 1,
+          startColumnIndex: 0,
+          endColumnIndex: 10,
+        },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: navyBg,
+            textFormat: { foregroundColor: whiteTxt, bold: true, fontSize: 10, fontFamily: 'Roboto' },
+            horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
+            wrapStrategy: 'WRAP',
+          },
+        },
+        fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)',
+      },
+    },
+    // 3. Row heights
+    {
+      updateDimensionProperties: {
+        range: { sheetId: logAktivitasSheetId, dimension: 'ROWS', startIndex: 0, endIndex: 1 },
+        properties: { pixelSize: 34 },
+        fields: 'pixelSize',
+      },
+    },
+    {
+      updateDimensionProperties: {
+        range: { sheetId: logAktivitasSheetId, dimension: 'ROWS', startIndex: 1, endIndex: 100 },
+        properties: { pixelSize: 28 },
+        fields: 'pixelSize',
+      },
+    },
+    // 4. Column widths for Tab 4
+    ...[
+      { col: 0, width: 170 }, // A: Waktu (WITA)
+      { col: 1, width: 160 }, // B: Unit Dapur SPPG
+      { col: 2, width: 180 }, // C: Editor / Pengubah
+      { col: 3, width: 180 }, // D: Lembar (Tab)
+      { col: 4, width: 160 }, // E: No PO / ID
+      { col: 5, width: 180 }, // F: Kolom Diedit
+      { col: 6, width: 180 }, // G: Nilai Lama
+      { col: 7, width: 180 }, // H: Nilai Baru
+      { col: 8, width: 140 }, // I: Sumber Aksi
+      { col: 9, width: 130 }, // J: Status
+    ].map((cw) => ({
+      updateDimensionProperties: {
+        range: {
+          sheetId: logAktivitasSheetId,
+          dimension: 'COLUMNS',
+          startIndex: cw.col,
+          endIndex: cw.col + 1,
+        },
+        properties: { pixelSize: cw.width },
+        fields: 'pixelSize',
+      },
+    })),
+    // 5. Alignments & Formats for Tab 4
+    {
+      repeatCell: {
+        range: { sheetId: logAktivitasSheetId, startRowIndex: 1, endRowIndex: 1000, startColumnIndex: 0, endColumnIndex: 1 },
+        cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
+        fields: 'userEnteredFormat.horizontalAlignment',
+      },
+    },
+    {
+      repeatCell: {
+        range: { sheetId: logAktivitasSheetId, startRowIndex: 1, endRowIndex: 1000, startColumnIndex: 1, endColumnIndex: 2 },
+        cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
+        fields: 'userEnteredFormat.horizontalAlignment',
+      },
+    },
+    {
+      repeatCell: {
+        range: { sheetId: logAktivitasSheetId, startRowIndex: 1, endRowIndex: 1000, startColumnIndex: 2, endColumnIndex: 3 },
+        cell: { userEnteredFormat: { horizontalAlignment: 'LEFT', padding: { left: 8 } } },
+        fields: 'userEnteredFormat(horizontalAlignment,padding)',
+      },
+    },
+    {
+      repeatCell: {
+        range: { sheetId: logAktivitasSheetId, startRowIndex: 1, endRowIndex: 1000, startColumnIndex: 3, endColumnIndex: 4 },
+        cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
+        fields: 'userEnteredFormat.horizontalAlignment',
+      },
+    },
+    {
+      repeatCell: {
+        range: { sheetId: logAktivitasSheetId, startRowIndex: 1, endRowIndex: 1000, startColumnIndex: 4, endColumnIndex: 5 },
+        cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
+        fields: 'userEnteredFormat.horizontalAlignment',
+      },
+    },
+    {
+      repeatCell: {
+        range: { sheetId: logAktivitasSheetId, startRowIndex: 1, endRowIndex: 1000, startColumnIndex: 8, endColumnIndex: 10 },
+        cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
+        fields: 'userEnteredFormat.horizontalAlignment',
+      },
+    },
+    // 6. Header border
+    {
+      updateBorders: {
+        range: { sheetId: logAktivitasSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 10 },
+        bottom: { style: 'SOLID_MEDIUM', color: navyBg },
+      },
+    },
+    {
+      updateBorders: {
+        range: { sheetId: logAktivitasSheetId, startRowIndex: 1, endRowIndex: 200, startColumnIndex: 0, endColumnIndex: 10 },
+        innerHorizontal: { style: 'SOLID', color: hexToRgbColor('#E2E8F0') },
+      },
+    },
+    // 7. Basic Filter on Tab 4
+    {
+      setBasicFilter: {
+        filter: {
+          range: {
+            sheetId: logAktivitasSheetId,
+            startRowIndex: 0,
+            endRowIndex: 2000,
+            startColumnIndex: 0,
+            endColumnIndex: 10,
           },
         },
       },

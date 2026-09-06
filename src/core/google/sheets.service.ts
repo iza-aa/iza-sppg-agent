@@ -56,6 +56,19 @@ export interface PaguCandidate {
   status: string;
 }
 
+export interface MasterAuditLogEntry {
+  timestamp?: string; // Default to current WITA
+  unitName: string;
+  editor: string; // e.g. "Ayah (Spreadsheet)", "Telegram Bot", "Delta Sync"
+  sheetTab: string; // e.g. "03_PAGU_RINCIAN"
+  refId: string; // e.g. "SPPG/2026/09/001" or transaction ID
+  columnEdited: string; // e.g. "Harga Pagu Satuan (H)"
+  oldValue: string | number;
+  newValue: string | number;
+  sourceAction: string; // e.g. "Spreadsheet Direct Edit", "Telegram Input", "Delta Reconcile"
+  status?: string; // e.g. "TERCATAT", "TERVERIFIKASI"
+}
+
 export class GoogleSheetsService {
   private sheets: sheets_v4.Sheets | null = null;
   private initializedSpreadsheets = new Set<string>();
@@ -408,7 +421,14 @@ export class GoogleSheetsService {
           })
           .catch(() => ({ data: { values: null } }));
 
-        if (check.data.values?.[0]?.[0]?.includes("DASHBOARD PUSAT")) {
+        const checkTab4 = await client.spreadsheets.values
+          .get({
+            spreadsheetId,
+            range: `'${MASTER_SHEET_NAMES.LOG_AKTIVITAS}'!A1`,
+          })
+          .catch(() => ({ data: { values: null } }));
+
+        if (check.data.values?.[0]?.[0]?.includes("DASHBOARD PUSAT") && checkTab4.data.values?.[0]?.[0]) {
           return;
         }
       }
@@ -453,6 +473,9 @@ export class GoogleSheetsService {
       const dirSheetId =
         updatedMeta.data.sheets?.find((s) => s.properties?.title === MASTER_SHEET_NAMES.DAFTAR_DAPUR)
           ?.properties?.sheetId ?? MASTER_SHEET_IDS.DAFTAR_DAPUR;
+      const logAktivitasSheetId =
+        updatedMeta.data.sheets?.find((s) => s.properties?.title === MASTER_SHEET_NAMES.LOG_AKTIVITAS)
+          ?.properties?.sheetId ?? MASTER_SHEET_IDS.LOG_AKTIVITAS;
 
       // Clear old residual values and reset formatting in 01_DASHBOARD to ensure pure clean canvas
       await client.spreadsheets.values
@@ -498,7 +521,7 @@ export class GoogleSheetsService {
         },
       }).catch(() => {});
 
-      const { valuesDashboard, valuesHelper, tab2Headers, tab3Headers } = getMasterDashboardValues();
+      const { valuesDashboard, valuesHelper, tab2Headers, tab3Headers, tab4Headers } = getMasterDashboardValues();
 
       const valuesTab3 = [
         tab3Headers[0],
@@ -543,6 +566,7 @@ export class GoogleSheetsService {
             { range: `'${MASTER_SHEET_NAMES.DASHBOARD}'!M1:M4`, values: valuesHelper },
             { range: `'${MASTER_SHEET_NAMES.SEMUA_TRANSAKSI}'!A1:K1`, values: tab2Headers },
             { range: `'${MASTER_SHEET_NAMES.DAFTAR_DAPUR}'!A1:H4`, values: valuesTab3 },
+            { range: `'${MASTER_SHEET_NAMES.LOG_AKTIVITAS}'!A1:J1`, values: tab4Headers },
           ],
         },
       });
@@ -552,7 +576,8 @@ export class GoogleSheetsService {
         ...createMasterDashboardStylingBatchRequests(
           konsolidasiSheetId,
           trxSheetId,
-          dirSheetId
+          dirSheetId,
+          logAktivitasSheetId
         ),
         chartRequest,
       ];
@@ -565,6 +590,49 @@ export class GoogleSheetsService {
       logger.info({ spreadsheetId }, "Successfully configured clean Executive Master Dashboard SPPG");
     } catch (err: any) {
       logger.error({ err: err?.message || err, spreadsheetId }, "Failed ensuring Master Dashboard structure");
+    }
+  }
+
+  /**
+   * Appends an audit trail entry directly into Master Dashboard 04_LOG_AKTIVITAS
+   */
+  async appendMasterAuditLog(entry: MasterAuditLogEntry): Promise<void> {
+    const masterId = env.GOOGLE_SHEET_ID_MASTER;
+    if (!masterId) return;
+
+    try {
+      await this.ensureMasterDashboardStructure(masterId);
+
+      const now = new Date();
+      // Format WITA (UTC+8)
+      const witaStr = entry.timestamp || new Intl.DateTimeFormat("id-ID", {
+        timeZone: "Asia/Makassar",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).format(now).replace(/\./g, ":");
+
+      const row = [
+        witaStr,
+        entry.unitName,
+        entry.editor || "Editor",
+        entry.sheetTab,
+        entry.refId || "-",
+        entry.columnEdited,
+        String(entry.oldValue ?? "-"),
+        String(entry.newValue ?? "-"),
+        entry.sourceAction || "Spreadsheet Edit",
+        entry.status || "TERCATAT",
+      ];
+
+      await this.appendRowsSafely(masterId, MASTER_SHEET_NAMES.LOG_AKTIVITAS, [row]);
+      logger.info({ unit: entry.unitName, tab: entry.sheetTab, col: entry.columnEdited }, "Master Audit Log recorded");
+    } catch (err: any) {
+      logger.warn({ err: err?.message || err }, "Failed appending to Master Audit Log");
     }
   }
 
@@ -701,7 +769,13 @@ export class GoogleSheetsService {
 
       for (let i = 1; i < rows.length; i++) {
         const rowId = String(rows[i]?.[0] || "").trim().toLowerCase();
-        if (rowId === cleanTxId || rowId.includes(cleanTxId) || cleanTxId.includes(rowId)) {
+        const rowRef = String(rows[i]?.[4] || "").trim().toLowerCase();
+        if (
+          rowId === cleanTxId ||
+          rowId.includes(cleanTxId) ||
+          cleanTxId.includes(rowId) ||
+          (cleanTxId && (rowRef === cleanTxId || rowRef.includes(cleanTxId)))
+        ) {
           const rowNum = i + 1;
           const updateData: Array<{ range: string; values: any[][] }> = [];
           if (updates.supplier_name) {
@@ -926,36 +1000,49 @@ export class GoogleSheetsService {
 
     const uniqueSuppliers = new Set(order.items.map((i) => i.supplier_target).filter(Boolean));
     const supplierCountStr = `${uniqueSuppliers.size || 1} Supplier`;
-    const itemCountStr = `${order.items.length} Item`;
     const driveLinkFormula = driveLink ? `=HYPERLINK("${driveLink}"; "Lihat Dokumen")` : "-";
+    const ringkasanRowIdx = Math.max(existingCount + 1, 2);
 
-    // 1. Row for 02_PAGU_RINGKASAN
+    // 1. Row for 02_PAGU_RINGKASAN (formula-driven for instant reactivity)
     const ringkasanRow = [
       order.order_no,                                             // A: No SPPG
       orderId,                                                    // B: ID Transaksi
       order.order_date,                                           // C: Tanggal Pesanan
-      itemCountStr,                                               // D: Jumlah Item Bahan
+      `=COUNTIF('03_PAGU_RINCIAN'!$A:$A; A${ringkasanRowIdx}) & " Item"`, // D: Jumlah Item Bahan
       supplierCountStr,                                           // E: Jumlah Target Supplier
-      order.total_amount,                                         // F: Total Pagu Anggaran
+      `=SUMIF('03_PAGU_RINCIAN'!$A:$A; A${ringkasanRowIdx}; '03_PAGU_RINCIAN'!$I:$I)`, // F: Total Pagu Anggaran
       driveLinkFormula,                                           // G: Link Bukti Dokumen
       rawCaption || order.notes || "-",                           // H: Pesan Asli Telegram
       order.signed_by || picName || "Kepala SPPG",               // I: PIC / Penanggung Jawab
       "-",                                                        // J: Riwayat Edit
     ];
 
-    // 2. Rows for 03_PAGU_RINCIAN (all items)
-    const rincianRows = order.items.map((item, idx) => [
-      order.order_no,                                             // A: No SPPG Ref
-      orderId,                                                    // B: ID Ref
-      idx + 1,                                                    // C: No Urut
-      item.supplier_target || "Lainnya",                          // D: Target Supplier
-      item.item_name,                                             // E: Uraian Bahan
-      item.qty,                                                   // F: Kuantitas
-      item.unit,                                                  // G: Satuan
-      item.price,                                                 // H: Harga Pagu Satuan
-      item.total_price,                                           // I: Total Pagu
-      (item as any).specifications || item.category || "-",       // J: Keterangan / Spesifikasi
-    ]);
+    // Query 03_PAGU_RINCIAN count for row index calculation
+    const rincianColA = await client.spreadsheets.values
+      .get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A:A`,
+      })
+      .catch(() => ({ data: { values: null } }));
+    const rincianExistingCount = (rincianColA.data?.values || []).length;
+    const rincianStartRow = Math.max(rincianExistingCount + 1, 2);
+
+    // 2. Rows for 03_PAGU_RINCIAN (all items with formula on Col I)
+    const rincianRows = order.items.map((item, idx) => {
+      const r = rincianStartRow + idx;
+      return [
+        order.order_no,                                           // A: No SPPG Ref
+        orderId,                                                  // B: ID Ref
+        idx + 1,                                                  // C: No Urut
+        item.supplier_target || "Lainnya",                        // D: Target Supplier
+        item.item_name,                                           // E: Uraian Bahan
+        item.qty,                                                 // F: Kuantitas
+        item.unit,                                                // G: Satuan
+        item.price,                                               // H: Harga Pagu Satuan
+        `=IF(OR(F${r}=""; H${r}=""); ""; F${r} * H${r})`,        // I: Total Pagu
+        (item as any).specifications || item.category || "-",     // J: Keterangan / Spesifikasi
+      ];
+    });
 
     // 3. Rows for 05_REKAP_MARGIN (Template awal pencocokan dengan status MENUNGGU INVOICE)
     const rekapColA = await client.spreadsheets.values
@@ -977,7 +1064,7 @@ export class GoogleSheetsService {
         item.qty,                                                 // E: Kuantitas
         item.unit,                                                // F: Satuan
         item.price,                                               // G: Harga Pagu
-        item.total_price,                                         // H: Total Pagu
+        `=IF(OR(E${r}=""; G${r}=""); ""; E${r} * G${r})`,         // H: Total Pagu
         "",                                                       // I: Harga Invoice
         "",                                                       // J: Total Realisasi
         `=IF(J${r}=""; ""; H${r}-J${r})`,                         // K: Margin Bersih (Rp)

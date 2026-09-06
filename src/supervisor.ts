@@ -6,6 +6,7 @@ import { startHeartbeatScheduler, stopHeartbeatScheduler } from "./core/db/heart
 import { createHealthServer } from "./core/server/health-server.js";
 import { createSppgBot } from "./core/telegram/bot-handler.js";
 import { googleSheetsService } from "./core/google/sheets.service.js";
+import { getDeltaSyncDaemon } from "./core/sync/delta-sync.daemon.js";
 import { agyConnector } from "./core/ai/agy-connector.js";
 import { logger } from "./core/utils/logger.js";
 
@@ -37,6 +38,7 @@ const workers = new Map<string, ManagedWorker>();
 const activeBots: Array<{ id: string; name: string; bot: ReturnType<typeof createSppgBot> }> = [];
 let isShuttingDown = false;
 let healthServerInstance: ReturnType<typeof createHealthServer> | null = null;
+const deltaSyncDaemon = getDeltaSyncDaemon(googleSheetsService);
 
 function spawnWorker(unit: SPPGUnitConfig) {
   if (isShuttingDown) return;
@@ -105,8 +107,9 @@ async function shutdown(signal: string) {
 
   logger.info(`[Supervisor] Received ${signal}. Initiating graceful shutdown...`);
 
-  // 1. Stop Supabase Heartbeat
+  // 1. Stop Supabase Heartbeat & Delta Sync Daemon
   stopHeartbeatScheduler();
+  deltaSyncDaemon.stop();
 
   // 2. Stop Health Server
   if (healthServerInstance) {
@@ -181,6 +184,9 @@ async function main() {
         EXECUTION_MODE === "fork"
           ? Array.from(workers.keys())
           : activeBots.map((b) => b.id),
+      onSheetsWebhook: async (payload) => {
+        await deltaSyncDaemon.handleWebhookEdit(payload);
+      },
     });
     await healthServerInstance.start();
   } catch (httpErr) {
@@ -242,10 +248,15 @@ async function main() {
     logger.warn({ err }, "[Supervisor] Non-critical: Agy warm-up background task encountered an issue");
   });
 
-  // 5. Start Supabase Keep-Warm Heartbeat (every 12 hours)
+  // 5. Start Autonomous Delta Sync Daemon (two-way reactivity & audit trail)
+  deltaSyncDaemon.start().catch((err) => {
+    logger.warn({ err: err?.message || err }, "[Supervisor] Warning starting delta sync daemon");
+  });
+
+  // 6. Start Supabase Keep-Warm Heartbeat (every 12 hours)
   startHeartbeatScheduler(12);
 
-  // 5. Register Process Termination Signals
+  // 7. Register Process Termination Signals
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }

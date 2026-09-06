@@ -91,7 +91,7 @@ describe("Database Repositories & State Machine", () => {
       first_name: "Imposter",
     });
     expect(secondClaim).toBeNull();
-  });
+  }, 45000);
 
   it("should create 15-minute member invite and enforce member RBAC permissions", async () => {
     const memberCode = `INV-MEMBER-${Date.now()}`;

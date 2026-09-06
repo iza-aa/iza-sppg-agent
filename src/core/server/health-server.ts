@@ -5,6 +5,7 @@ export interface HealthServerOptions {
   port?: number;
   mode?: string;
   getActiveUnits?: () => string[];
+  onSheetsWebhook?: (payload: any) => Promise<void> | void;
 }
 
 export function createHealthServer(options: HealthServerOptions = {}) {
@@ -14,7 +15,47 @@ export function createHealthServer(options: HealthServerOptions = {}) {
   const server = http.createServer((req, res) => {
     const url = req.url?.split("?")[0] || "/";
 
-    // 1. Keep-warm ping endpoint for Cron-job.org / UptimeRobot
+    // 0. Handle CORS Preflight
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      });
+      res.end();
+      return;
+    }
+
+    // 1. Google Sheets Webhook endpoint for zero-latency sync
+    if (req.method === "POST" && (url === "/api/sheets-webhook" || url === "/webhook/sheets")) {
+      let rawBody = "";
+      req.on("data", (chunk) => {
+        rawBody += chunk;
+      });
+      req.on("end", async () => {
+        try {
+          const payload = rawBody ? JSON.parse(rawBody) : {};
+          if (options.onSheetsWebhook) {
+            await options.onSheetsWebhook(payload);
+          }
+          res.writeHead(200, {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.end(JSON.stringify({ success: true, message: "Webhook accepted and processed" }));
+        } catch (err: any) {
+          logger.warn({ err: err?.message }, "[HTTP Server] Error processing sheets webhook");
+          res.writeHead(400, {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.end(JSON.stringify({ success: false, error: err?.message || "Invalid payload" }));
+        }
+      });
+      return;
+    }
+
+    // 2. Keep-warm ping endpoint for Cron-job.org / UptimeRobot
     if (url === "/ping" || url === "/") {
       res.writeHead(200, {
         "Content-Type": "text/plain",
