@@ -1,6 +1,7 @@
-import { geminiKeyManager } from "../gemini-client.js";
+import { agyConnector } from "../agy-connector.js";
 import { SupplierReceipt, SupplierReceiptSchema } from "../schemas/supplier-receipt.schema.js";
 import { SppgOrder, SppgOrderSchema } from "../schemas/sppg-order.schema.js";
+import { staticParseTransaction } from "../static-fallback.js";
 import { logger } from "../../utils/logger.js";
 
 export type ParsedTextTransaction =
@@ -9,7 +10,7 @@ export type ParsedTextTransaction =
 
 const TEXT_PARSER_SYSTEM_PROMPT = `
 Anda adalah AI Auditor & Pencatat Keuangan Program Makanan Bergizi Gratis (MBG) Badan Gizi Nasional (BGN).
-Tugas Anda: Menganalisis pesan teks berbahasa Indonesia dari operator/Ayah untuk mencatat transaksi keuangan SPPG.
+Tugas Anda: Menganalisis pesan teks berbahasa Indonesia dari operator SPPG untuk mencatat transaksi keuangan SPPG.
 
 IDENTIFIKASI JENIS TRANSAKSI:
 1. PENGELUARAN SUPPLIER ("type": "expense"):
@@ -66,28 +67,14 @@ export async function parseTransactionFromText(
   userText: string,
   defaultSppgUnit = "SPPG Patila"
 ): Promise<ParsedTextTransaction | null> {
-  return await geminiKeyManager.executeWithFallback(async (genAI, modelName) => {
-    logger.info({ modelName }, "Parsing natural language transaction text via Gemini...");
+  const todayStr = new Date().toISOString().split("T")[0];
+  const prompt = `Tanggal hari ini: ${todayStr}.\nUnit default: ${defaultSppgUnit}.\nPesan teks pengguna:\n"${userText}"\n\nEkstrak transaksi ke dalam format JSON yang ditentukan:`;
 
-    const model = genAI.getGenerativeModel({
-      model: modelName,
-      systemInstruction: TEXT_PARSER_SYSTEM_PROMPT,
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.1,
-      },
-    });
+  // Layer 1 (agy CLI) & Layer 2 (Gemini SDK fallback via agyConnector)
+  try {
+    const parsed = await agyConnector.executeReasoning(TEXT_PARSER_SYSTEM_PROMPT, prompt, false);
 
-    const todayStr = new Date().toISOString().split("T")[0];
-    const prompt = `Tanggal hari ini: ${todayStr}.\nUnit default: ${defaultSppgUnit}.\nPesan teks pengguna:\n"${userText}"\n\nEkstrak transaksi ke dalam format JSON yang ditentukan:`;
-
-    const result = await model.generateContent(prompt);
-    const rawText = result.response.text();
-    const cleanJson = rawText.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/```\s*$/, "").trim();
-
-    try {
-      const parsed = JSON.parse(cleanJson);
-
+    if (parsed) {
       if (parsed.transaction_type === "SPPG_ORDER" && parsed.payload) {
         const orderData = parsed.payload;
         if (!orderData.order_date) orderData.order_date = todayStr;
@@ -130,11 +117,20 @@ export async function parseTransactionFromText(
         const validated = SupplierReceiptSchema.parse(expData);
         return { type: "SUPPLIER_EXPENSE", data: validated };
       }
-
-      return null;
-    } catch (parseErr) {
-      logger.warn({ parseErr, rawText }, "Failed to parse text transaction output into valid schema");
-      return null;
     }
-  });
+  } catch (aiErr: any) {
+    logger.warn(
+      { err: aiErr?.message || aiErr },
+      "AI parsing failed for text transaction, attempting Layer 3 static regex fallback"
+    );
+  }
+
+  // Layer 3: Static Regex Fallback
+  const staticResult = staticParseTransaction(userText, defaultSppgUnit);
+  if (staticResult) {
+    logger.info({ type: staticResult.type }, "Successfully parsed text transaction via Layer 3 static regex fallback");
+    return staticResult;
+  }
+
+  return null;
 }

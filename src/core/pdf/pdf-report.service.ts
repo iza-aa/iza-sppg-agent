@@ -90,6 +90,11 @@ export async function generateOfficialSppgPdf(data: SppgPdfReportData): Promise<
     const boxWidth = 165;
     const boxHeight = 50;
 
+    const totalPlafon = data.totalPlafon ?? 0;
+    const totalBelanja = data.totalBelanja ?? 0;
+    const marginBersih = totalPlafon - totalBelanja;
+    const marginPercentage = totalPlafon > 0 ? Math.round((marginBersih / totalPlafon) * 10000) / 100 : 0;
+
     // Box 1: Plafon SPPG (Navy)
     doc.rect(40, currentY, boxWidth, boxHeight).fillAndStroke(navyColor, navyColor);
     doc
@@ -100,7 +105,7 @@ export async function generateOfficialSppgPdf(data: SppgPdfReportData): Promise<
       .fontSize(11)
       .font("Helvetica-Bold")
       .fillColor(goldColor)
-      .text(formatRupiah(data.totalPlafon), 45, currentY + 26, { width: boxWidth - 10, align: "center" });
+      .text(formatRupiah(totalPlafon), 45, currentY + 26, { width: boxWidth - 10, align: "center" });
 
     // Box 2: Total Belanja (Slate Gray)
     doc.rect(215, currentY, boxWidth, boxHeight).fillAndStroke("#334155", "#334155");
@@ -111,22 +116,22 @@ export async function generateOfficialSppgPdf(data: SppgPdfReportData): Promise<
       .text("TOTAL BELANJA SUPPLIER", 220, currentY + 10, { width: boxWidth - 10, align: "center" })
       .fontSize(11)
       .font("Helvetica-Bold")
-      .text(formatRupiah(data.totalBelanja), 220, currentY + 26, { width: boxWidth - 10, align: "center" });
+      .text(formatRupiah(totalBelanja), 220, currentY + 26, { width: boxWidth - 10, align: "center" });
 
-    // Box 3: Margin Bersih (Forest Green)
-    const marginColor = data.marginBersih >= 0 ? "#14532D" : "#991B1B";
+    // Box 3: Margin Bersih (Forest Green or Red)
+    const marginColor = marginBersih >= 0 ? "#14532D" : "#991B1B";
     doc.rect(390, currentY, boxWidth, boxHeight).fillAndStroke(marginColor, marginColor);
     doc
       .fillColor("#FFFFFF")
       .fontSize(8)
       .font("Helvetica")
-      .text(`SISA MARGIN LABA (${data.marginPercentage}%)`, 395, currentY + 10, {
+      .text(`SISA MARGIN LABA (${marginPercentage}%)`, 395, currentY + 10, {
         width: boxWidth - 10,
         align: "center",
       })
       .fontSize(11)
       .font("Helvetica-Bold")
-      .text(formatRupiah(data.marginBersih), 395, currentY + 26, { width: boxWidth - 10, align: "center" });
+      .text(formatRupiah(marginBersih), 395, currentY + 26, { width: boxWidth - 10, align: "center" });
 
     currentY += 65;
 
@@ -148,37 +153,75 @@ export async function generateOfficialSppgPdf(data: SppgPdfReportData): Promise<
 
     currentY += 20;
 
-    // Table Rows
-    const items = data.expenses.length > 0 ? data.expenses : [
-      { date: data.periodDate, supplier: "Ayam Pasar", items: "Ayam Potong 248 Ekor", amount: 14880000 },
-      { date: data.periodDate, supplier: "Hj Muliadi", items: "Minyak 14 Jrg, Wortel 75 Kg, Kentang", amount: 8920000 },
-      { date: data.periodDate, supplier: "Mas Pandu", items: "Tempe 105 KG", amount: 1575000 },
-      { date: data.periodDate, supplier: "Best Fruit", items: "Kelengkeng 15 Keranjang", amount: 5700000 },
-    ];
-
-    items.forEach((item, idx) => {
-      const isZebra = idx % 2 === 1;
-      if (isZebra) {
-        doc.rect(40, currentY, 515, 18).fill(grayBg);
-      }
-
+    // Table Rows (Live data from Google Sheets)
+    const items = data.expenses || [];
+    if (items.length === 0) {
+      doc.rect(40, currentY, 515, 24).fill(grayBg);
       doc
-        .fillColor(textDark)
+        .fillColor("#64748B")
         .fontSize(8)
-        .font("Helvetica")
-        .text(String(idx + 1), 45, currentY + 4)
-        .text(item.date, 65, currentY + 4)
-        .font("Helvetica-Bold")
-        .text(item.supplier, 130, currentY + 4)
-        .font("Helvetica")
-        .text(item.items.slice(0, 42), 240, currentY + 4)
-        .font("Helvetica-Bold")
-        .text(formatRupiah(item.amount), 460, currentY + 4, { width: 90, align: "right" });
+        .font("Helvetica-Oblique")
+        .text("Belum ada rincian belanja supplier yang tercatat pada sistem.", 45, currentY + 7, {
+          width: 505,
+          align: "center",
+        });
+      currentY += 24;
+    } else {
+      items.forEach((item, idx) => {
+        if (currentY > 720) {
+          doc.addPage();
+          currentY = 40;
+          doc.rect(40, currentY, 515, 20).fill(navyColor);
+          doc
+            .fillColor("#FFFFFF")
+            .fontSize(8)
+            .font("Helvetica-Bold")
+            .text("No", 45, currentY + 6)
+            .text("Tanggal", 65, currentY + 6)
+            .text("Supplier", 130, currentY + 6)
+            .text("Rincian Belanja", 240, currentY + 6)
+            .text("Total Bayar", 460, currentY + 6, { width: 90, align: "right" });
+          currentY += 20;
+        }
 
-      currentY += 18;
-    });
+        const isZebra = idx % 2 === 1;
+        if (isZebra) {
+          doc.rect(40, currentY, 515, 18).fill(grayBg);
+        }
 
-    currentY += 30;
+        doc
+          .fillColor(textDark)
+          .fontSize(8)
+          .font("Helvetica")
+          .text(String(idx + 1), 45, currentY + 4)
+          .text(item.date || "-", 65, currentY + 4)
+          .font("Helvetica-Bold")
+          .text(item.supplier || "Supplier", 130, currentY + 4)
+          .font("Helvetica")
+          .text((item.items || "-").slice(0, 42), 240, currentY + 4)
+          .font("Helvetica-Bold")
+          .text(formatRupiah(item.amount || 0), 460, currentY + 4, { width: 90, align: "right" });
+
+        currentY += 18;
+      });
+    }
+
+    // Table Total Footer Row
+    doc.rect(40, currentY, 515, 20).fill("#EEF2F6");
+    doc
+      .fillColor(navyColor)
+      .fontSize(8)
+      .font("Helvetica-Bold")
+      .text("TOTAL BELANJA SUPPLIER REALISASI", 45, currentY + 6)
+      .text(formatRupiah(totalBelanja), 460, currentY + 6, { width: 90, align: "right" });
+
+    currentY += 28;
+
+    // Check if signature fits on current page (needs ~90pt)
+    if (currentY > 670) {
+      doc.addPage();
+      currentY = 50;
+    }
 
     // 5. KOLOM PENGESAHAN / TANDA TANGAN
     doc

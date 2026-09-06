@@ -29,6 +29,7 @@ export class UserRepository {
   private allowedIdsSet: Set<number> = new Set([PRIMARY_SUPER_ADMIN_ID]);
   private superAdminIdsSet: Set<number> = new Set([PRIMARY_SUPER_ADMIN_ID]);
   private activeInvites = new Map<string, SppgInvite>();
+  private cachedUsers = new Map<number, SppgUser>();
 
   constructor(private supabase: SupabaseClient) {
     if (env.ALLOWED_TELEGRAM_USER_IDS) {
@@ -119,6 +120,10 @@ export class UserRepository {
       };
     }
 
+    if (this.cachedUsers.has(telegramUserId)) {
+      return this.cachedUsers.get(telegramUserId)!;
+    }
+
     try {
       const { data } = await this.supabase
         .from("sppg_users")
@@ -126,7 +131,11 @@ export class UserRepository {
         .eq("id", telegramUserId)
         .single();
 
-      if (data) return data as SppgUser;
+      if (data) {
+        const u = data as SppgUser;
+        this.cachedUsers.set(telegramUserId, u);
+        return u;
+      }
     } catch (err) {
       logger.debug({ err, telegramUserId }, "Error fetching user from database");
     }
@@ -139,6 +148,17 @@ export class UserRepository {
     if (user.role === "super_admin") {
       this.superAdminIdsSet.add(user.id);
     }
+
+    const cached: SppgUser = {
+      id: user.id,
+      username: user.username,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      role: user.role || "member",
+      status: user.status || "active",
+      sppg_assigned_id: user.sppg_assigned_id || "sppg_patila",
+    };
+    this.cachedUsers.set(user.id, cached);
 
     try {
       await this.supabase.from("sppg_users").upsert({
@@ -233,11 +253,18 @@ export class UserRepository {
       return null;
     }
 
-    // Create / activate user
+    // Create / activate user: display name is taken directly from Telegram account profile
+    const displayName =
+      [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(" ").trim() ||
+      telegramUser.first_name ||
+      telegramUser.username ||
+      invite.name ||
+      "Pengguna";
+
     const newUser: SppgUser = {
       id: telegramUser.id,
       username: telegramUser.username,
-      first_name: telegramUser.first_name || invite.name,
+      first_name: displayName,
       last_name: telegramUser.last_name,
       role: invite.role,
       status: "active",

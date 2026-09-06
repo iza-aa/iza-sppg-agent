@@ -2,6 +2,15 @@ import { getSppgUnitById, getEnabledSppgUnits } from "./config/sppg.config.js";
 import { createSppgBot } from "./core/telegram/bot-handler.js";
 import { logger } from "./core/utils/logger.js";
 
+// Process-level resilience guards: prevent entire worker crash on unhandled async rejections
+process.on("unhandledRejection", (reason) => {
+  logger.error({ reason }, "🛡️ [Worker Process Guard] Intercepted unhandled Promise rejection");
+});
+
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "🛡️ [Worker Process Guard] Intercepted uncaught exception");
+});
+
 async function main() {
   const unitId = process.env.SPPG_ID || process.argv[2];
 

@@ -7,3 +7,4 @@ service-account*.json
 *.pem
 *.log
 .DS_Store
+google-apps-script/

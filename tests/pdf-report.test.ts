@@ -24,4 +24,23 @@ describe("Official BGN PDF Report Generator", () => {
     // PDF Magic number check: starts with %PDF-
     expect(pdfBuffer.subarray(0, 5).toString()).toBe("%PDF-");
   });
+
+  it("should handle empty expenses cleanly without rendering dummy fallback rows", async () => {
+    const reportData = {
+      sppgName: "Patila, Luwu Utara",
+      periodDate: "2026-09-06",
+      orderNo: "REKAP-BULANAN",
+      totalPlafon: 82847000,
+      totalBelanja: 0,
+      marginBersih: 82847000,
+      marginPercentage: 100,
+      expenses: [],
+    };
+
+    const pdfBuffer = await generateOfficialSppgPdf(reportData);
+
+    expect(pdfBuffer).toBeDefined();
+    expect(pdfBuffer.length).toBeGreaterThan(1000);
+    expect(pdfBuffer.subarray(0, 5).toString()).toBe("%PDF-");
+  });
 });

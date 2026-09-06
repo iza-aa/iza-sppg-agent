@@ -56,7 +56,7 @@ describe("Database Repositories & State Machine", () => {
     const code = `INV-TEST-${Date.now()}`;
     const invite = await userRepo.createInvite({
       code,
-      name: "Ayah",
+      name: "Staff Unit",
       role: "admin",
       sppg_assigned_id: "sppg_patila",
       created_by: 7546537134,
@@ -64,7 +64,7 @@ describe("Database Repositories & State Machine", () => {
     });
 
     expect(invite.code).toBe(code);
-    expect(invite.name).toBe("Ayah");
+    expect(invite.name).toBe("Staff Unit");
 
     // Before claim, new user 888888 is not allowed
     const beforeClaim = await userRepo.isAllowed(888888);
@@ -73,8 +73,8 @@ describe("Database Repositories & State Machine", () => {
     // Claim invite
     const claimRes = await userRepo.claimInvite(code, {
       id: 888888,
-      username: "ayah_mbg",
-      first_name: "Ayah",
+      username: "staff_mbg",
+      first_name: "Staff Unit",
     });
 
     expect(claimRes).not.toBeNull();
@@ -91,5 +91,41 @@ describe("Database Repositories & State Machine", () => {
       first_name: "Imposter",
     });
     expect(secondClaim).toBeNull();
+  });
+
+  it("should create 15-minute member invite and enforce member RBAC permissions", async () => {
+    const memberCode = `INV-MEMBER-${Date.now()}`;
+    const invite = await userRepo.createInvite({
+      code: memberCode,
+      name: "Staf Dapur",
+      role: "member",
+      sppg_assigned_id: "sppg_patila",
+      created_by: 7546537134,
+      ttlMinutes: 15,
+    });
+
+    expect(invite.role).toBe("member");
+
+    // Claim as operational member
+    const memberUser = await userRepo.claimInvite(memberCode, {
+      id: 777777,
+      first_name: "Pak Budi",
+      last_name: "Belanja",
+    });
+
+    expect(memberUser).not.toBeNull();
+    expect(memberUser?.user.role).toBe("member");
+    expect(memberUser?.user.first_name).toBe("Pak Budi Belanja");
+
+    // Member is allowed into the system
+    const isAllowed = await userRepo.isAllowed(777777);
+    expect(isAllowed).toBe(true);
+
+    // But member is NOT admin or super_admin
+    const isAdmin = await userRepo.isAdminOrSuperAdmin(777777);
+    expect(isAdmin).toBe(false);
+
+    const isSuper = await userRepo.isSuperAdmin(777777);
+    expect(isSuper).toBe(false);
   });
 });

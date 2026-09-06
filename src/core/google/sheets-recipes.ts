@@ -268,15 +268,15 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
   const rekapMarginId = resolveSheetId(sheetMap, SHEET_NAMES.REKAP_MARGIN, SHEET_IDS.REKAP_MARGIN);
 
   return [
-    // Tab 02 (PAGU_RINGKASAN): Tanggal Pesanan (Kolom B)
+    // Tab 02 (PAGU_RINGKASAN): Tanggal Pesanan (Kolom C)
     {
       repeatCell: {
         range: {
           sheetId: paguRingkasanId,
           startRowIndex: 1,
           endRowIndex: 2000,
-          startColumnIndex: 1,
-          endColumnIndex: 2
+          startColumnIndex: 2,
+          endColumnIndex: 3
         },
         cell: {
           userEnteredFormat: {
@@ -340,15 +340,15 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
         fields: 'userEnteredFormat.numberFormat'
       }
     },
-    // Tab 04 (PENGELUARAN_SUPPLIER): Tanggal Transaksi (Kolom B)
+    // Tab 04 (PENGELUARAN_SUPPLIER): Tanggal Transaksi (Kolom C)
     {
       repeatCell: {
         range: {
           sheetId: pengeluaranId,
           startRowIndex: 1,
           endRowIndex: 5000,
-          startColumnIndex: 1,
-          endColumnIndex: 2
+          startColumnIndex: 2,
+          endColumnIndex: 3
         },
         cell: {
           userEnteredFormat: {
@@ -577,6 +577,36 @@ export function createConditionalFormattingBatchRequests(sheetMap?: Map<string, 
         },
         index: 3
       }
+    },
+    // 5. Oranye: BELUM LENGKAP
+    {
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [
+            {
+              sheetId: rekapMarginId,
+              startRowIndex: 1,
+              endRowIndex: 5000,
+              startColumnIndex: 12,
+              endColumnIndex: 13
+            }
+          ],
+          booleanRule: {
+            condition: {
+              type: 'TEXT_CONTAINS',
+              values: [{ userEnteredValue: 'BELUM LENGKAP' }]
+            },
+            format: {
+              backgroundColor: hexToRgbColor('#FFEDD5'),
+              textFormat: {
+                foregroundColor: hexToRgbColor('#C2410C'),
+                bold: true
+              }
+            }
+          }
+        },
+        index: 4
+      }
     }
   ];
 }
@@ -593,7 +623,7 @@ export function createHeaderStylingBatchRequests(sheetMap?: Map<string, number>)
     // Tab 02: PAGU_RINGKASAN (10 Kolom)
     {
       sheetId: resolveSheetId(sheetMap, SHEET_NAMES.PAGU_RINGKASAN, SHEET_IDS.PAGU_RINGKASAN),
-      widths: [140, 110, 120, 110, 120, 140, 120, 220, 150, 180]
+      widths: [130, 140, 110, 110, 120, 140, 120, 220, 150, 180]
     },
     // Tab 03: PAGU_RINCIAN (10 Kolom)
     {
@@ -603,7 +633,7 @@ export function createHeaderStylingBatchRequests(sheetMap?: Map<string, number>)
     // Tab 04: PENGELUARAN_SUPPLIER (10 Kolom)
     {
       sheetId: resolveSheetId(sheetMap, SHEET_NAMES.PENGELUARAN_SUPPLIER, SHEET_IDS.PENGELUARAN_SUPPLIER),
-      widths: [140, 110, 120, 150, 130, 140, 110, 120, 130, 180]
+      widths: [130, 140, 110, 150, 130, 140, 110, 120, 130, 180]
     },
     // Tab 05: REKAP_MARGIN (13 Kolom)
     {
@@ -2393,14 +2423,14 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     // R6: KPI Values
     [
       '',
-      `=IFERROR(SUMIFS('02_PAGU_RINGKASAN'!$F$2:$F; '02_PAGU_RINGKASAN'!$B$2:$B; ">="&$M$1; '02_PAGU_RINGKASAN'!$B$2:$B; "<="&$M$2); 0)`,
+      `=IFERROR(SUMIFS('02_PAGU_RINGKASAN'!$F$2:$F; '02_PAGU_RINGKASAN'!$C$2:$C; ">="&$M$1; '02_PAGU_RINGKASAN'!$C$2:$C; "<="&$M$2); 0)`,
       '',
-      `=IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; "<="&$M$2); 0)`,
+      `=IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$C$2:$C; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$C$2:$C; "<="&$M$2); 0)`,
       '',
       '',
       `=B6-D6`,
       '',
-      `=IFERROR(COUNTIFS('04_PENGELUARAN_SUPPLIER'!$B$2:$B; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; "<="&$M$2; '04_PENGELUARAN_SUPPLIER'!$A$2:$A; "<>"); 0)`,
+      `=IFERROR(COUNTIFS('04_PENGELUARAN_SUPPLIER'!$C$2:$C; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$C$2:$C; "<="&$M$2; '04_PENGELUARAN_SUPPLIER'!$A$2:$A; "<>"); 0)`,
       '',
       ''
     ],
@@ -2425,13 +2455,13 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     // R10
     [
       '',
-      `=IFERROR(INDEX('06_MASTER_DATA'!$A$2:$A; 1); "Supplier 1")`,
+      `=IFERROR(INDEX(QUERY('04_PENGELUARAN_SUPPLIER'!$A$2:$F; "SELECT Col4, SUM(Col6) WHERE Col4 IS NOT NULL AND Col3 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col3 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col4 ORDER BY SUM(Col6) DESC LABEL Col4 '', SUM(Col6) ''"; 0); 1; 1); "-")`,
       '',
       '',
-      `=IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$D$2:$D; B10; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; "<="&$M$2); 0)`,
+      `=IF(B10="-"; 0; IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$D$2:$D; B10; '04_PENGELUARAN_SUPPLIER'!$C$2:$C; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$C$2:$C; "<="&$M$2); 0))`,
       '',
       'Protein Hewani',
-      `=IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$D$2:$D; "Ayam Pasar"; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; "<="&$M$2); 0)`,
+      `=IFERROR(SUM(FILTER('05_REKAP_MARGIN'!$J$2:$J; '05_REKAP_MARGIN'!$B$2:$B>=$M$1; '05_REKAP_MARGIN'!$B$2:$B<=$M$2; REGEXMATCH(LOWER('05_REKAP_MARGIN'!$D$2:$D); "telur|ayam|daging|ikan|sapi|udang|bebek|susu|tongkol|lele|nugget"))); 0)`,
       `=IFERROR(H10/$H$15; 0)`,
       `=REPT("█"; ROUND(I10*28)) & REPT("░"; 28-ROUND(I10*28))`,
       ''
@@ -2439,13 +2469,13 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     // R11
     [
       '',
-      `=IFERROR(INDEX('06_MASTER_DATA'!$A$2:$A; 2); "Supplier 2")`,
+      `=IFERROR(INDEX(QUERY('04_PENGELUARAN_SUPPLIER'!$A$2:$F; "SELECT Col4, SUM(Col6) WHERE Col4 IS NOT NULL AND Col3 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col3 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col4 ORDER BY SUM(Col6) DESC LABEL Col4 '', SUM(Col6) ''"; 0); 2; 1); "-")`,
       '',
       '',
-      `=IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$D$2:$D; B11; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; "<="&$M$2); 0)`,
+      `=IF(B11="-"; 0; IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$D$2:$D; B11; '04_PENGELUARAN_SUPPLIER'!$C$2:$C; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$C$2:$C; "<="&$M$2); 0))`,
       '',
       'Sayuran Segar',
-      `=IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$D$2:$D; "Hj Muliadi"; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; "<="&$M$2); 0)`,
+      `=IFERROR(SUM(FILTER('05_REKAP_MARGIN'!$J$2:$J; '05_REKAP_MARGIN'!$B$2:$B>=$M$1; '05_REKAP_MARGIN'!$B$2:$B<=$M$2; REGEXMATCH(LOWER('05_REKAP_MARGIN'!$D$2:$D); "sayur|wortel|buncis|kol|kubis|sawi|kangkung|bayam|tomat|labu|kentang|kacang|tauge|terong|timun|brokoli"))); 0)`,
       `=IFERROR(H11/$H$15; 0)`,
       `=REPT("█"; ROUND(I11*28)) & REPT("░"; 28-ROUND(I11*28))`,
       ''
@@ -2453,13 +2483,13 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     // R12
     [
       '',
-      `=IFERROR(INDEX('06_MASTER_DATA'!$A$2:$A; 3); "Supplier 3")`,
+      `=IFERROR(INDEX(QUERY('04_PENGELUARAN_SUPPLIER'!$A$2:$F; "SELECT Col4, SUM(Col6) WHERE Col4 IS NOT NULL AND Col3 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col3 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col4 ORDER BY SUM(Col6) DESC LABEL Col4 '', SUM(Col6) ''"; 0); 3; 1); "-")`,
       '',
       '',
-      `=IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$D$2:$D; B12; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; "<="&$M$2); 0)`,
+      `=IF(B12="-"; 0; IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$D$2:$D; B12; '04_PENGELUARAN_SUPPLIER'!$C$2:$C; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$C$2:$C; "<="&$M$2); 0))`,
       '',
       'Bahan Pokok & Beras',
-      `=IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$D$2:$D; "Mas Pandu"; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; "<="&$M$2); 0)`,
+      `=IFERROR(SUM(FILTER('05_REKAP_MARGIN'!$J$2:$J; '05_REKAP_MARGIN'!$B$2:$B>=$M$1; '05_REKAP_MARGIN'!$B$2:$B<=$M$2; REGEXMATCH(LOWER('05_REKAP_MARGIN'!$D$2:$D); "beras|minyak|tahu|tempe|tepung|gula|garam|mie|bihun|soun|santan"))); 0)`,
       `=IFERROR(H12/$H$15; 0)`,
       `=REPT("█"; ROUND(I12*28)) & REPT("░"; 28-ROUND(I12*28))`,
       ''
@@ -2467,13 +2497,13 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     // R13
     [
       '',
-      `=IFERROR(INDEX('06_MASTER_DATA'!$A$2:$A; 4); "Supplier 4")`,
+      `=IFERROR(INDEX(QUERY('04_PENGELUARAN_SUPPLIER'!$A$2:$F; "SELECT Col4, SUM(Col6) WHERE Col4 IS NOT NULL AND Col3 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col3 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col4 ORDER BY SUM(Col6) DESC LABEL Col4 '', SUM(Col6) ''"; 0); 4; 1); "-")`,
       '',
       '',
-      `=IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$D$2:$D; B13; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; "<="&$M$2); 0)`,
+      `=IF(B13="-"; 0; IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$D$2:$D; B13; '04_PENGELUARAN_SUPPLIER'!$C$2:$C; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$C$2:$C; "<="&$M$2); 0))`,
       '',
       'Buah Segar',
-      `=IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$D$2:$D; "Best Fruit"; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; "<="&$M$2); 0)`,
+      `=IFERROR(SUM(FILTER('05_REKAP_MARGIN'!$J$2:$J; '05_REKAP_MARGIN'!$B$2:$B>=$M$1; '05_REKAP_MARGIN'!$B$2:$B<=$M$2; REGEXMATCH(LOWER('05_REKAP_MARGIN'!$D$2:$D); "buah|pisang|semangka|melon|jeruk|apel|pepaya|mangga|nanas|salak|anggur|kelengkeng|pir"))); 0)`,
       `=IFERROR(H13/$H$15; 0)`,
       `=REPT("█"; ROUND(I13*28)) & REPT("░"; 28-ROUND(I13*28))`,
       ''
@@ -2481,10 +2511,10 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     // R14
     [
       '',
-      `=IFERROR(INDEX('06_MASTER_DATA'!$A$2:$A; 5); "Supplier 5")`,
+      `=IFERROR(INDEX(QUERY('04_PENGELUARAN_SUPPLIER'!$A$2:$F; "SELECT Col4, SUM(Col6) WHERE Col4 IS NOT NULL AND Col3 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col3 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col4 ORDER BY SUM(Col6) DESC LABEL Col4 '', SUM(Col6) ''"; 0); 5; 1); "-")`,
       '',
       '',
-      `=IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$D$2:$D; B14; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B; "<="&$M$2); 0)`,
+      `=IF(B14="-"; 0; IFERROR(SUMIFS('04_PENGELUARAN_SUPPLIER'!$F$2:$F; '04_PENGELUARAN_SUPPLIER'!$D$2:$D; B14; '04_PENGELUARAN_SUPPLIER'!$C$2:$C; ">="&$M$1; '04_PENGELUARAN_SUPPLIER'!$C$2:$C; "<="&$M$2); 0))`,
       '',
       'Bumbu & Operasional',
       `=IFERROR(D6 - SUM(H10:H13); 0)`,
@@ -2523,11 +2553,11 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
       '',
       '',
       '',
-      `=IFERROR(INDEX(SORT(FILTER('04_PENGELUARAN_SUPPLIER'!$B$2:$J; '04_PENGELUARAN_SUPPLIER'!$A$2:$A<>""; '04_PENGELUARAN_SUPPLIER'!$B$2:$B>=$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B<=$M$2); 1; FALSE); ${i}; 1); "-")`,
-      `=IFERROR(INDEX(SORT(FILTER('04_PENGELUARAN_SUPPLIER'!$B$2:$J; '04_PENGELUARAN_SUPPLIER'!$A$2:$A<>""; '04_PENGELUARAN_SUPPLIER'!$B$2:$B>=$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B<=$M$2); 1; FALSE); ${i}; 3); "-")`,
-      `=IFERROR(INDEX(SORT(FILTER('04_PENGELUARAN_SUPPLIER'!$B$2:$J; '04_PENGELUARAN_SUPPLIER'!$A$2:$A<>""; '04_PENGELUARAN_SUPPLIER'!$B$2:$B>=$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B<=$M$2); 1; FALSE); ${i}; 5); 0)`,
-      `=IFERROR(INDEX(SORT(FILTER('04_PENGELUARAN_SUPPLIER'!$B$2:$J; '04_PENGELUARAN_SUPPLIER'!$A$2:$A<>""; '04_PENGELUARAN_SUPPLIER'!$B$2:$B>=$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B<=$M$2); 1; FALSE); ${i}; 6); "-")`,
-      `=IFERROR(IF(INDEX(SORT(FILTER('04_PENGELUARAN_SUPPLIER'!$B$2:$J; '04_PENGELUARAN_SUPPLIER'!$A$2:$A<>""; '04_PENGELUARAN_SUPPLIER'!$B$2:$B>=$M$1; '04_PENGELUARAN_SUPPLIER'!$B$2:$B<=$M$2); 1; FALSE); ${i}; 1)<>"-"; "LUNAS"; "-"); "-")`
+      `=IFERROR(INDEX(SORT(FILTER('04_PENGELUARAN_SUPPLIER'!$C$2:$J; '04_PENGELUARAN_SUPPLIER'!$A$2:$A<>""; '04_PENGELUARAN_SUPPLIER'!$C$2:$C>=$M$1; '04_PENGELUARAN_SUPPLIER'!$C$2:$C<=$M$2); 1; FALSE); ${i}; 1); "-")`,
+      `=IFERROR(INDEX(SORT(FILTER('04_PENGELUARAN_SUPPLIER'!$C$2:$J; '04_PENGELUARAN_SUPPLIER'!$A$2:$A<>""; '04_PENGELUARAN_SUPPLIER'!$C$2:$C>=$M$1; '04_PENGELUARAN_SUPPLIER'!$C$2:$C<=$M$2); 1; FALSE); ${i}; 2); "-")`,
+      `=IFERROR(INDEX(SORT(FILTER('04_PENGELUARAN_SUPPLIER'!$C$2:$J; '04_PENGELUARAN_SUPPLIER'!$A$2:$A<>""; '04_PENGELUARAN_SUPPLIER'!$C$2:$C>=$M$1; '04_PENGELUARAN_SUPPLIER'!$C$2:$C<=$M$2); 1; FALSE); ${i}; 4); 0)`,
+      `=IFERROR(INDEX(SORT(FILTER('04_PENGELUARAN_SUPPLIER'!$C$2:$J; '04_PENGELUARAN_SUPPLIER'!$A$2:$A<>""; '04_PENGELUARAN_SUPPLIER'!$C$2:$C>=$M$1; '04_PENGELUARAN_SUPPLIER'!$C$2:$C<=$M$2); 1; FALSE); ${i}; 5); "-")`,
+      `=IFERROR(IF(INDEX(SORT(FILTER('04_PENGELUARAN_SUPPLIER'!$C$2:$J; '04_PENGELUARAN_SUPPLIER'!$A$2:$A<>""; '04_PENGELUARAN_SUPPLIER'!$C$2:$C>=$M$1; '04_PENGELUARAN_SUPPLIER'!$C$2:$C<=$M$2); 1; FALSE); ${i}; 1)<>"-"; "LUNAS"; "-"); "-")`
     ]);
   }
 
@@ -2539,7 +2569,7 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
   ];
 
   const tabPaguRingkasanHeaders = [
-    ['ID Transaksi', 'Tanggal Pesanan', 'No SPPG', 'Jumlah Item Bahan', 'Jumlah Target Supplier', 'Total Pagu Anggaran', 'Link Bukti Dokumen', 'Pesan Asli Telegram', 'PIC / Penanggung Jawab', 'Riwayat Edit']
+    ['No SPPG', 'ID Transaksi', 'Tanggal Pesanan', 'Jumlah Item Bahan', 'Jumlah Target Supplier', 'Total Pagu Anggaran', 'Link Bukti Dokumen', 'Pesan Asli Telegram', 'PIC / Penanggung Jawab', 'Riwayat Edit']
   ];
 
   const tabPaguRincianHeaders = [
@@ -2547,7 +2577,7 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
   ];
 
   const tabPengeluaranHeaders = [
-    ['ID Transaksi', 'Tanggal Transaksi', 'No SPPG Ref', 'Nama Supplier', 'No Invoice Supplier', 'Total Nominal Tagihan', 'Metode Pembayaran', 'Link Bukti Nota', 'PIC / Operator', 'Catatan / Keterangan']
+    ['No SPPG Ref', 'ID Transaksi', 'Tanggal Transaksi', 'Nama Supplier', 'No Invoice Supplier', 'Total Nominal Tagihan', 'Metode Pembayaran', 'Link Bukti Nota', 'PIC / Operator', 'Catatan / Keterangan']
   ];
 
   const tabRekapMarginHeaders = [

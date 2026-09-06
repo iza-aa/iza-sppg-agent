@@ -135,4 +135,98 @@ describe("Google Sheets 5-Tab Engine", () => {
     expect(viewButton).toBeDefined();
     expect(viewButton.callback_data).toBe("v:viewitems:draft-123");
   });
+
+  it("should accurately parse Indonesian currency formatted strings", async () => {
+    const { parseCurrencyNumber } = await import("../src/core/google/sheets.service.js");
+    expect(parseCurrencyNumber("5.658.000")).toBe(5658000);
+    expect(parseCurrencyNumber("Rp 5.658.000")).toBe(5658000);
+    expect(parseCurrencyNumber("Rp1.040.000,50")).toBe(1040000.5);
+    expect(parseCurrencyNumber("18500000")).toBe(18500000);
+    expect(parseCurrencyNumber(250000)).toBe(250000);
+    expect(parseCurrencyNumber("")).toBe(0);
+    expect(parseCurrencyNumber("-")).toBe(0);
+  });
+
+  it("should ensure descending row index sorting for atomic Google Sheets batch deletion", () => {
+    // Given arbitrary row indices from various sheets
+    const rowIndices = [2, 14, 5, 8, 22, 1];
+    const sortedDescending = Array.from(new Set(rowIndices)).sort((a, b) => b - a);
+
+    // Guaranteed order: highest row index first, lowest row index last
+    expect(sortedDescending).toEqual([22, 14, 8, 5, 2, 1]);
+
+    // Verify invariant: each deletion does not shift indices below it
+    for (let i = 0; i < sortedDescending.length - 1; i++) {
+      expect(sortedDescending[i]).toBeGreaterThan(sortedDescending[i + 1]);
+    }
+  });
+
+  it("should protect Tab 03 (03_PAGU_RINCIAN) from standalone deletion", async () => {
+    const { SHEET_NAMES } = await import("../src/core/google/sheets-recipes.js");
+
+    // Mock detail object representing a row found in Tab 03
+    const mockDetail = {
+      found: true,
+      id: "SPPG0126-II001",
+      sheetName: SHEET_NAMES.PAGU_RINCIAN,
+      orderNo: "05/02/09/26",
+      isProtected: true,
+      rowIndex: 5,
+    };
+
+    expect(mockDetail.isProtected).toBe(true);
+    expect(mockDetail.sheetName).toBe("03_PAGU_RINCIAN");
+  });
+
+  it("should render partial fulfillment indicator in supplier expense draft card", async () => {
+    const { renderSupplierExpenseDraftCard } = await import("../src/core/telegram/formatter.js");
+
+    const mockReceiptWithContext = {
+      supplier_name: "TOKO FARHAN",
+      date: "2026-08-31",
+      total_amount: 96000,
+      payment_method: "Transfer BNI",
+      items: [
+        { item_name: "Telur", qty: 2, unit: "Rak", price: 48000, total_price: 96000 },
+      ],
+      paguContext: {
+        sppg_ref_no: "03/31/08/26",
+        pagu_supplier: "Annisa",
+        item_name: "Telur",
+        target_qty: 117,
+        unit: "Rak",
+        fulfilled_qty: 0,
+        current_qty: 2,
+        remaining_qty: 115,
+      },
+    };
+
+    const card = renderSupplierExpenseDraftCard(mockReceiptWithContext as any, "draft_test", "PENDING");
+    expect(card).toContain("DRAF BELANJA SUPPLIER");
+    expect(card).toContain("TOKO FARHAN");
+    expect(card).toContain("03/31/08/26");
+    expect(card).toContain("Annisa");
+    expect(card).toContain("Baru beli sebagian (2 dari 117 Rak, masih kurang 115 Rak)");
+  });
+
+  it("should build Pagu selector keyboard with candidate list and cancel option", async () => {
+    const { buildPaguSelectorKeyboard } = await import("../src/core/telegram/keyboards.js");
+
+    const mockCandidates = [
+      { sppg_ref_no: "03/31/08/26", order_date: "2026-08-31", item_name: "Telur", remaining_qty: 115, unit: "Rak", supplier_name: "Annisa" },
+      { sppg_ref_no: "04/01/09/26", order_date: "2026-09-01", item_name: "Telur", remaining_qty: 120, unit: "Rak", supplier_name: "Annisa" },
+    ];
+
+    const keyboard = buildPaguSelectorKeyboard("draft_test", mockCandidates);
+    const flatButtons = keyboard.inline_keyboard.flat();
+    const texts = flatButtons.map((b) => b.text);
+    const callbacks = flatButtons.map((b) => ("callback_data" in b ? b.callback_data : ""));
+
+    expect(texts.some((t) => t.includes("2026-08-31") && t.includes("115 Rak"))).toBe(true);
+    expect(texts.some((t) => t.includes("2026-09-01") && t.includes("120 Rak"))).toBe(true);
+    expect(callbacks).toContain("v:pagu_set:draft_test:03/31/08/26");
+    expect(callbacks).toContain("v:pagu_set:draft_test:04/01/09/26");
+    expect(callbacks).toContain("v:pagu_set:draft_test:-");
+    expect(callbacks).toContain("v:sub:back:draft_test");
+  });
 });

@@ -74,7 +74,7 @@ export class GoogleDriveService {
     sppgId: string,
     year: string,
     month: string,
-    docType: "01_Nota_Pesanan_SPPG" | "02_Kwitansi_Supplier"
+    docType: "01_Nota_Pesanan_SPPG" | "02_Kwitansi_Supplier" | "03_Dokumen_PDF" | string
   ): Promise<string> {
     // Structure: [Root: mbg-assistant] / [01_ARSIP_SPPG_PATILA] / [2026] / [09-September] / [02_Kwitansi_Supplier]
     const sppgFolderMap: Record<string, string> = {
@@ -97,12 +97,25 @@ export class GoogleDriveService {
   ): Promise<{ webViewLink: string; fileId: string }> {
     const drive = await this.getClient();
 
-    // 1. Optimize image to WebP
-    const optimized = await optimizeReceiptImage(rawBuffer);
-    const finalFileName = fileName.endsWith(".webp") ? fileName : `${fileName.replace(/\.[^/.]+$/, "")}.webp`;
+    // 1. Detect if document is PDF or image
+    const isPdf = fileName.toLowerCase().endsWith(".pdf") || rawBuffer.subarray(0, 5).toString() === "%PDF-";
+    let finalFileName: string;
+    let mimeType: string;
+    let bufferToUpload: Buffer;
+
+    if (isPdf) {
+      finalFileName = fileName.toLowerCase().endsWith(".pdf") ? fileName : `${fileName}.pdf`;
+      mimeType = "application/pdf";
+      bufferToUpload = rawBuffer;
+    } else {
+      const optimized = await optimizeReceiptImage(rawBuffer);
+      finalFileName = fileName.endsWith(".webp") ? fileName : `${fileName.replace(/\.[^/.]+$/, "")}.webp`;
+      mimeType = "image/webp";
+      bufferToUpload = optimized.buffer;
+    }
 
     const stream = new Readable();
-    stream.push(optimized.buffer);
+    stream.push(bufferToUpload);
     stream.push(null);
 
     // 2. Check if file with same name exists (in-place upsert)
@@ -121,13 +134,13 @@ export class GoogleDriveService {
       const updateRes = await drive.files.update({
         fileId,
         media: {
-          mimeType: "image/webp",
+          mimeType,
           body: stream,
         },
         fields: "id, webViewLink",
       });
       webViewLink = updateRes.data.webViewLink;
-      logger.info({ fileId, finalFileName }, "Updated existing file content in Google Drive");
+      logger.info({ fileId, finalFileName, mimeType }, "Updated existing file content in Google Drive");
     } else {
       const createRes = await drive.files.create({
         requestBody: {
@@ -135,14 +148,14 @@ export class GoogleDriveService {
           parents: [targetFolderId],
         },
         media: {
-          mimeType: "image/webp",
+          mimeType,
           body: stream,
         },
         fields: "id, webViewLink",
       });
       fileId = createRes.data.id;
       webViewLink = createRes.data.webViewLink;
-      logger.info({ fileId, finalFileName }, "Uploaded new WebP file to Google Drive");
+      logger.info({ fileId, finalFileName, mimeType }, "Uploaded file to Google Drive");
     }
 
     // 3. Set public view permission so user can click without permission error

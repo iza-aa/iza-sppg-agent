@@ -3,9 +3,9 @@ import { SppgOrderSchema } from "../src/core/ai/schemas/sppg-order.schema.js";
 import { SupplierReceiptSchema } from "../src/core/ai/schemas/supplier-receipt.schema.js";
 import { agyConnector } from "../src/core/ai/agy-connector.js";
 
-describe("AI Dual Parsers & Schema Integrity (MBG SPPG Domain)", () => {
-  it("should successfully parse and validate the exact 22 items SPPG Patila order sheet", () => {
-    // Exact data from Ayah's photo: SPPG Patila No. 05/02/09/26
+describe("AI Multimodal Parsers (Live Golden Schema Tests)", () => {
+  it("should extract SPPG Order from raw document text", async () => {
+    // Exact data from official order note: SPPG Patila No. 05/02/09/26
     const realPatilaData = {
       type: "income",
       sppg_unit: "SPPG Patila, Luwu Utara",

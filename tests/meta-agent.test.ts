@@ -69,10 +69,10 @@ describe("MetaAgent Fast-Path & Heuristic Intent Classifier", () => {
   });
 
   it("should classify invite command with name and role", async () => {
-    const res = await metaAgent.classifyAndRoute("undang Ayah admin");
+    const res = await metaAgent.classifyAndRoute("undang Ahmad admin");
     expect(res).toEqual({
       type: "INVITE",
-      name: "Ayah",
+      name: "Ahmad",
       role: "admin",
     });
 
@@ -82,5 +82,32 @@ describe("MetaAgent Fast-Path & Heuristic Intent Classifier", () => {
       name: "Budi",
       role: "member",
     });
+  });
+
+  it("should classify short transaction codes and detail queries as DETAIL_TRANSACTION", async () => {
+    const r1 = await metaAgent.classifyAndRoute("EI002");
+    expect(r1).toEqual({ type: "DETAIL_TRANSACTION", transactionId: "EI002" });
+
+    const r2 = await metaAgent.classifyAndRoute("cek EI002");
+    expect(r2).toEqual({ type: "DETAIL_TRANSACTION", transactionId: "EI002" });
+
+    const r3 = await metaAgent.classifyAndRoute("rincian untuk kode transaksi EI002");
+    expect(r3).toEqual({ type: "DETAIL_TRANSACTION", transactionId: "EI002" });
+
+    const r4 = await metaAgent.classifyAndRoute("SPPG0126-EI002");
+    expect(r4).toEqual({ type: "DETAIL_TRANSACTION", transactionId: "SPPG0126-EI002" });
+
+    // Multi-month tests (Jan: EA, Mar: EC, Aug: EH, Dec: EL)
+    const rJan = await metaAgent.classifyAndRoute("EA001");
+    expect(rJan).toEqual({ type: "DETAIL_TRANSACTION", transactionId: "EA001" });
+
+    const rMar = await metaAgent.classifyAndRoute("cek EC005");
+    expect(rMar).toEqual({ type: "DETAIL_TRANSACTION", transactionId: "EC005" });
+
+    const rAug = await metaAgent.classifyAndRoute("SPPG0126-EH001");
+    expect(rAug).toEqual({ type: "DETAIL_TRANSACTION", transactionId: "SPPG0126-EH001" });
+
+    const rDec = await metaAgent.classifyAndRoute("EL012");
+    expect(rDec).toEqual({ type: "DETAIL_TRANSACTION", transactionId: "EL012" });
   });
 });

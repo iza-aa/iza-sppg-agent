@@ -5,6 +5,8 @@ import { getEnabledSppgUnits, SPPGUnitConfig } from "./config/sppg.config.js";
 import { startHeartbeatScheduler, stopHeartbeatScheduler } from "./core/db/heartbeat.js";
 import { createHealthServer } from "./core/server/health-server.js";
 import { createSppgBot } from "./core/telegram/bot-handler.js";
+import { googleSheetsService } from "./core/google/sheets.service.js";
+import { agyConnector } from "./core/ai/agy-connector.js";
 import { logger } from "./core/utils/logger.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -154,6 +156,9 @@ async function shutdown(signal: string) {
     await Promise.all(stopPromises);
   }
 
+  // 4. Shutdown persistent Agy stream worker
+  agyConnector.shutdown();
+
   logger.info("[Supervisor] All services terminated. Supervisor exiting cleanly.");
   process.exit(0);
 }
@@ -228,10 +233,19 @@ async function main() {
     }
   }
 
-  // 3. Start Supabase Keep-Warm Heartbeat (every 12 hours)
+  // 3. Background Pre-Warm Spreadsheets (Eliminates cold-start latency for Google Sheets)
+  const spreadsheetIds = enabledUnits.map((u) => u.spreadsheetId).filter(Boolean);
+  googleSheetsService.warmUp(spreadsheetIds);
+
+  // 4. Background Pre-Warm Persistent Agy Stream Worker (Eliminates cold-start latency for AI reasoning)
+  agyConnector.warmUp().catch((err) => {
+    logger.warn({ err }, "[Supervisor] Non-critical: Agy warm-up background task encountered an issue");
+  });
+
+  // 5. Start Supabase Keep-Warm Heartbeat (every 12 hours)
   startHeartbeatScheduler(12);
 
-  // 4. Register Process Termination Signals
+  // 5. Register Process Termination Signals
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
