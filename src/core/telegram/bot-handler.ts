@@ -1,14 +1,14 @@
 import { Bot, Context } from "grammy";
-import { SPPGUnitConfig } from "../../config/sppg.config.js";
+import type { SPPGUnitConfig } from "../../config/sppg.config.js";
 import { getSupabaseClient } from "../db/supabase.js";
 import { UserRepository } from "../db/repositories/user.repository.js";
 import { PendingActionRepository } from "../db/repositories/pending-action.repository.js";
 import { logger } from "../utils/logger.js";
 import { escapeHtml, cleanMarkdownToTelegramHtml } from "./formatter.js";
 import {
-  BotContext,
-  UserInteractionState,
-  PaguOneShotDraft,
+  type BotContext,
+  type UserInteractionState,
+  type PaguOneShotDraft,
   pendingPaguModifications,
   renderPaguOneShotCard,
 } from "./types/bot-context.js";
@@ -30,9 +30,9 @@ import {
 
 // Re-export shared types and state maps for backward compatibility
 export {
-  BotContext,
-  UserInteractionState,
-  PaguOneShotDraft,
+  type BotContext,
+  type UserInteractionState,
+  type PaguOneShotDraft,
   pendingPaguModifications,
   renderPaguOneShotCard,
 };

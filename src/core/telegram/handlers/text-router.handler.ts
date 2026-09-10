@@ -1,5 +1,5 @@
 import { Context, InlineKeyboard } from "grammy";
-import { BotContext, PaguOneShotDraft, pendingPaguModifications, renderPaguOneShotCard } from "../types/bot-context.js";
+import { type BotContext, type PaguOneShotDraft, pendingPaguModifications, renderPaguOneShotCard } from "../types/bot-context.js";
 import { metaAgent } from "../../ai/meta-agent.js";
 import { staticParsePaguModification } from "../../ai/parsers/pagu-modification.parser.js";
 import { staticConversationalReply } from "../../ai/static-fallback.js";

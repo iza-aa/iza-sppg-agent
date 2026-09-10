@@ -1,6 +1,6 @@
 import { Context } from "grammy";
 import crypto from "node:crypto";
-import { BotContext } from "../types/bot-context.js";
+import type { BotContext } from "../types/bot-context.js";
 import { escapeHtml } from "../formatter.js";
 import {
   buildStartQuickActionKeyboard,

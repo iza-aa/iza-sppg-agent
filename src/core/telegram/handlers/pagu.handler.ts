@@ -1,5 +1,5 @@
 import { Context, InlineKeyboard } from "grammy";
-import { BotContext, pendingPaguModifications, renderPaguOneShotCard } from "../types/bot-context.js";
+import { type BotContext, pendingPaguModifications, renderPaguOneShotCard } from "../types/bot-context.js";
 import { googleSheetsService } from "../../google/sheets.service.js";
 import { logger } from "../../utils/logger.js";
 import {

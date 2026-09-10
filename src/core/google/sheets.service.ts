@@ -13,30 +13,30 @@ import {
   SheetsClientProvider,
   parseCurrencyNumber,
   MasterSyncService,
-  MasterAuditLogEntry,
+  type MasterAuditLogEntry,
   ReportingService,
   CascadeDeleteService,
   MarginSheetsService,
-  PaguCandidate,
+  type PaguCandidate,
   PaguSheetsService,
-  PaguOrderSummary,
-  PaguRincianItem,
-  FindPaguItemResult,
+  type PaguOrderSummary,
+  type PaguRincianItem,
+  type FindPaguItemResult,
   ExpenseSheetsService,
-  ExpenseInsertionTarget,
+  type ExpenseInsertionTarget,
   calculateExpenseInsertionTarget,
 } from "./services/index.js";
 
 // Re-export all domain types and utilities for backward compatibility
 export {
   parseCurrencyNumber,
-  PaguCandidate,
-  PaguOrderSummary,
-  PaguRincianItem,
-  FindPaguItemResult,
-  ExpenseInsertionTarget,
+  type PaguCandidate,
+  type PaguOrderSummary,
+  type PaguRincianItem,
+  type FindPaguItemResult,
+  type ExpenseInsertionTarget,
   calculateExpenseInsertionTarget,
-  MasterAuditLogEntry,
+  type MasterAuditLogEntry,
 };
 
 /**
@@ -74,6 +74,13 @@ export class GoogleSheetsService {
     this.reporting,
     (id) => this.ensure5TabStructure(id)
   );
+
+  /**
+   * Returns an authenticated Google Sheets client instance.
+   */
+  async getClient(): Promise<sheets_v4.Sheets> {
+    return this.clientProvider.getClient();
+  }
 
   /**
    * Initializes the 5-Tab BGN structure on an operational spreadsheet if not already present

@@ -1,5 +1,5 @@
 import { Context, InputFile } from "grammy";
-import { BotContext } from "../types/bot-context.js";
+import type { BotContext } from "../types/bot-context.js";
 import { googleSheetsService } from "../../google/sheets.service.js";
 import { generateOfficialSppgPdf } from "../../pdf/pdf-report.service.js";
 import { escapeHtml, formatRupiah } from "../formatter.js";
