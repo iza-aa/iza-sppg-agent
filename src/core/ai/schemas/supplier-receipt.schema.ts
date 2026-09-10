@@ -6,6 +6,7 @@ export const SupplierReceiptItemSchema = z.object({
   unit: z.string().default("unit").describe("Satuan (KG, Jerigen, Ekor, Ikat, Bungkus, Karton)"),
   price: z.number().describe("Harga satuan riil dari supplier"),
   total_price: z.number().describe("Total harga belanja item ini (qty * price)"),
+  supplier_name: z.string().optional().describe("Nama supplier spesifik untuk item ini jika dokumen memiliki multi-supplier"),
 });
 
 export const SupplierReceiptSchema = z.object({

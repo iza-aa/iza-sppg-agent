@@ -20,6 +20,7 @@ ATURAN EKSTRAKSI DOKUMEN:
    - "unit": Satuan (KG, Jerigen, Ekor, Ikat, Bungkus, Karton, Liter)
    - "price": Harga satuan
    - "total_price": Total harga baris (qty * price)
+   - "supplier_name": Jika dokumen berupa tabel pemesanan/belanja dengan kolom 'Supplier' yang mencantumkan nama rekanan berbeda per baris (contoh: Toko Farhan, Annisa, Mas Pandu, Best Fruit, Hj Muliadi), catat nama supplier tersebut pada masing-masing item!
 4. Total Belanja:
    - "subtotal": Subtotal sebelum diskon/pajak
    - "discount": Nilai potongan jika ada
@@ -34,14 +35,15 @@ KEMBALIKAN HANYA FORMAT JSON VALID:
 {
   "type": "expense",
   "supplier_name": "Hj Muliadi",
-  "date": "2026-09-03",
+  "date": "2026-09-09",
   "items": [
     {
       "item_name": "Minyak Kelapa Sawit",
       "qty": 14,
       "unit": "Jerigen",
       "price": 125000,
-      "total_price": 1750000
+      "total_price": 1750000,
+      "supplier_name": "Mas Pandu"
     }
   ],
   "subtotal": 1750000,
@@ -102,6 +104,22 @@ export async function parseSupplierReceiptFromImage(
       if (!parsed.total_amount || Math.abs(calculatedSum - parsed.total_amount) > 1000) {
         parsed.total_amount = calculatedSum - (Number(parsed.discount) || 0) + (Number(parsed.tax) || 0);
       }
+    }
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (!parsed.date || !/^\d{4}-\d{2}-\d{2}$/.test(parsed.date) || parsed.date === "2026-01-01") {
+      parsed.date = todayStr;
+    }
+
+    const distinctSuppliers = Array.from(
+      new Set(
+        (parsed.items || [])
+          .map((i: any) => i.supplier_name?.trim())
+          .filter(Boolean)
+      )
+    );
+    if (distinctSuppliers.length > 1) {
+      parsed.supplier_name = `Multi-Supplier (${distinctSuppliers.length} Toko: ${distinctSuppliers.join(", ")})`;
     }
 
     return SupplierReceiptSchema.parse(parsed);

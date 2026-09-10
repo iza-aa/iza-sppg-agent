@@ -1,5 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import { env } from "../../config/env.js";
+import type { PaguOrderSummary, PaguRincianItem } from "../google/sheets.service.js";
 
 export function buildDraftConfirmationKeyboard(
   draftId: string,
@@ -56,6 +57,21 @@ export function buildPaguSelectorKeyboard(
   });
   kb.text("🚫 Belanja Tambahan (Tanpa Pagu)", `v:pagu_set:${draftId}:-`).row();
   kb.text("🔙 Kembali ke Draf", `v:sub:back:${draftId}`);
+  return kb;
+}
+
+export function buildPaguPromptKeyboard(
+  draftId: string,
+  candidates: Array<{ sppg_ref_no: string; order_date: string; item_name: string; remaining_qty: number; unit: string; supplier_name: string }>
+): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  candidates.slice(0, 5).forEach((c) => {
+    const dateLabel = c.order_date ? c.order_date.replace(/^\d{4}-/, "") : "Menu";
+    const label = `📅 PO ${c.sppg_ref_no} (${dateLabel} - Sisa ${c.remaining_qty} ${c.unit})`;
+    kb.text(label, `v:pagu_set:${draftId}:${c.sppg_ref_no}`).row();
+  });
+  kb.text("🚫 Belanja Tambahan (Non-Pagu)", `v:pagu_set:${draftId}:-`).row();
+  kb.text("❌ Batalkan Draf", `v:cancel:${draftId}`);
   return kb;
 }
 
@@ -163,10 +179,12 @@ export function buildStartQuickActionKeyboard(role: "super_admin" | "admin" | "m
     kb.text("📊 Rekap Margin", "qa:rekap")
       .text("📄 Cetak SPJ", "qa:pdf")
       .row()
-      .text("🌐 Buka Sheets", "qa:sheets")
+      .text("📋 Kelola Pagu / Rincian", "qa:pagu")
       .text("🔍 Riwayat Belanja", "qa:transaksi")
       .row()
+      .text("🌐 Buka Sheets", "qa:sheets")
       .text("🎟️ Undang Staf", "qa:invite_prompt")
+      .row()
       .text("🆔 Cek Akun", "qa:myid");
   }
 
@@ -184,4 +202,163 @@ export function buildInviteRolePickerKeyboard(): InlineKeyboard {
     .row()
     .text("❌ Batalkan", "qa:invite_cancel");
 }
+
+/**
+ * Lists active Pagu Orders for selection
+ */
+export function buildPaguOrderListKeyboard(orders: PaguOrderSummary[]): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const o of orders.slice(0, 8)) {
+    const formattedAmt = new Intl.NumberFormat("id-ID", {
+      style: "currency",
+      currency: "IDR",
+      maximumFractionDigits: 0,
+    }).format(o.totalAmount);
+    const dateLabel = o.orderDate ? o.orderDate.replace(/^\d{4}-/, "") : "Menu";
+    const idShort = o.transactionId ? o.transactionId.replace(/^SPPG\d+-/i, "") : "";
+    const tag = idShort ? `[${idShort}] ` : "";
+    kb.text(`📅 ${tag}PO ${o.orderNo} (${dateLabel} - ${formattedAmt})`, `v:pagu_ord:${o.orderNo}`).row();
+  }
+  kb.text("🔙 Kembali ke Menu Utama", "qa:start");
+  return kb;
+}
+
+/**
+ * Lists paginated ingredients in a Pagu Order
+ */
+export function buildPaguItemListKeyboard(
+  orderNo: string,
+  items: PaguRincianItem[],
+  page = 0,
+  pageSize = 6
+): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  const startIdx = page * pageSize;
+  const pageItems = items.slice(startIdx, startIdx + pageSize);
+
+  for (const it of pageItems) {
+    const formattedPrice = new Intl.NumberFormat("id-ID", {
+      style: "currency",
+      currency: "IDR",
+      maximumFractionDigits: 0,
+    }).format(it.price);
+    const label = `${it.itemIndex}. ${it.itemName} (${it.qty} ${it.unit} @ ${formattedPrice})`;
+    kb.text(label.slice(0, 38), `v:pagu_it:${orderNo}:${it.rowIndex}`).row();
+  }
+
+  // Pagination navigation row
+  const navRow: { text: string; data: string }[] = [];
+  if (page > 0) {
+    navRow.push({ text: "⬅️ Sebelumnya", data: `v:pagu_page:${orderNo}:${page - 1}` });
+  }
+  if (startIdx + pageSize < items.length) {
+    navRow.push({ text: "Berikutnya ➡️", data: `v:pagu_page:${orderNo}:${page + 1}` });
+  }
+
+  if (navRow.length > 0) {
+    navRow.forEach((btn) => kb.text(btn.text, btn.data));
+    kb.row();
+  }
+
+  kb.text("➕ Tambah Bahan Baru di PO Ini", `v:pagu_add:${orderNo}`).row();
+  kb.text("🔙 Kembali ke Daftar PO", "v:pagu_orders");
+  return kb;
+}
+
+/**
+ * Action choices for a specific Pagu item (Qty, Price, Supplier)
+ */
+export function buildPaguItemActionKeyboard(
+  orderNo: string,
+  rowIndex: number,
+  itemName: string
+): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("📝 Ubah Uraian Bahan", `v:pagu_act:${orderNo}:${rowIndex}:name`)
+    .row()
+    .text("✏️ Ubah Kuantitas", `v:pagu_act:${orderNo}:${rowIndex}:qty`)
+    .text("💰 Ubah Harga Pagu", `v:pagu_act:${orderNo}:${rowIndex}:price`)
+    .row()
+    .text("🏪 Ubah Target Rekanan", `v:pagu_act:${orderNo}:${rowIndex}:supplier`)
+    .row()
+    .text("🔙 Kembali ke Rincian Bahan", `v:pagu_ord:${orderNo}`);
+}
+
+/**
+ * Confirmation keyboard before executing Pagu item update
+ */
+export function buildPaguItemEditConfirmKeyboard(
+  orderNo: string,
+  rowIndex: number,
+  field: string,
+  newValue: string
+): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("✅ Terapkan Perubahan", `v:pagu_apply:${orderNo}:${rowIndex}:${field}:${encodeURIComponent(newValue)}`)
+    .row()
+    .text("❌ Batalkan", `v:pagu_it:${orderNo}:${rowIndex}`);
+}
+
+/**
+ * 1-Shot Conversational Pagu Modification: Immediate confirm keyboard
+ */
+export function buildPaguOneShotConfirmKeyboard(draftId: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("✅ Ya, Terapkan ke Spreadsheet", `v:p1s_ok:${draftId}`)
+    .row()
+    .text("❌ Batalkan", `v:p1s_c:${draftId}`);
+}
+
+/**
+ * 1-Shot Conversational: Smart clarification when item is not in order
+ */
+export function buildPaguClarifyAddOrReplaceKeyboard(draftId: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("➕ Tambah Sebagai Bahan Baru", `v:p1s_add:${draftId}`)
+    .row()
+    .text("🔄 Ganti Bahan yang Sudah Ada", `v:p1s_rep:${draftId}:0`)
+    .row()
+    .text("❌ Batalkan", `v:p1s_c:${draftId}`);
+}
+
+/**
+ * 1-Shot Conversational: List existing items for user to choose which one to replace
+ */
+export function buildPaguItemPickForReplaceKeyboard(
+  draftId: string,
+  items: PaguRincianItem[],
+  page = 0,
+  pageSize = 5
+): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  const startIdx = page * pageSize;
+  const pageItems = items.slice(startIdx, startIdx + pageSize);
+
+  for (const it of pageItems) {
+    const formattedPrice = new Intl.NumberFormat("id-ID", {
+      style: "currency",
+      currency: "IDR",
+      maximumFractionDigits: 0,
+    }).format(it.price);
+    const label = `${it.itemIndex}. ${it.itemName} (${it.qty} ${it.unit} @ ${formattedPrice})`;
+    kb.text(label.slice(0, 38), `v:p1s_pk:${draftId}:${it.rowIndex}`).row();
+  }
+
+  // Navigation row if pagination needed
+  const navRow: { text: string; data: string }[] = [];
+  if (page > 0) {
+    navRow.push({ text: "⬅️ Sebelumnya", data: `v:p1s_rep:${draftId}:${page - 1}` });
+  }
+  if (startIdx + pageSize < items.length) {
+    navRow.push({ text: "Berikutnya ➡️", data: `v:p1s_rep:${draftId}:${page + 1}` });
+  }
+  if (navRow.length > 0) {
+    navRow.forEach((btn) => kb.text(btn.text, btn.data));
+    kb.row();
+  }
+
+  kb.text("❌ Batalkan", `v:p1s_c:${draftId}`);
+  return kb;
+}
+
 

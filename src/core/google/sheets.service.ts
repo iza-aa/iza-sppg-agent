@@ -28,6 +28,7 @@ import {
   BGN_PALETTE,
 } from "./sheets-recipes.js";
 import { logger } from "../utils/logger.js";
+import { getSupabaseClient } from "../db/supabase.js";
 
 export function parseCurrencyNumber(val: any): number {
   if (typeof val === "number") return val;
@@ -54,6 +55,38 @@ export interface PaguCandidate {
   fulfilled_total: number;
   remaining_qty: number;
   status: string;
+}
+
+export interface PaguOrderSummary {
+  orderNo: string;
+  transactionId?: string;
+  orderDate: string;
+  itemCount: string;
+  totalAmount: number;
+  link?: string;
+  notes?: string;
+}
+
+export interface PaguRincianItem {
+  orderNo: string;
+  transactionId: string;
+  itemIndex: number;
+  rowIndex: number;
+  supplier: string;
+  itemName: string;
+  qty: number;
+  unit: string;
+  price: number;
+  totalAmount: number;
+  notes?: string;
+}
+
+export interface FindPaguItemResult {
+  order: PaguOrderSummary | null;
+  foundItem: PaguRincianItem | null;
+  allItemsInOrder: PaguRincianItem[];
+  matchingItems: PaguRincianItem[];
+  availableOrders: PaguOrderSummary[];
 }
 
 export interface MasterAuditLogEntry {
@@ -115,36 +148,48 @@ export class GoogleSheetsService {
         }
       });
 
-      // 1. Rename existing legacy tabs if needed
+      // 1. Rename existing legacy tabs if needed (highest to lowest to avoid collision)
       const renameRequests: sheets_v4.Schema$Request[] = [];
-      if (sheetByTitle.has("02_PENDAPATAN_SPPG") && !sheetByTitle.has(SHEET_NAMES.PAGU_RINGKASAN)) {
+      if ((sheetByTitle.has("06_MASTER_DATA") || sheetByTitle.has("05_MASTER_DATA")) && !sheetByTitle.has(SHEET_NAMES.MASTER_DATA)) {
+        const id = sheetByTitle.get("06_MASTER_DATA") ?? sheetByTitle.get("05_MASTER_DATA")!;
         renameRequests.push({
           updateSheetProperties: {
-            properties: { sheetId: sheetByTitle.get("02_PENDAPATAN_SPPG")!, title: SHEET_NAMES.PAGU_RINGKASAN },
+            properties: { sheetId: id, title: SHEET_NAMES.MASTER_DATA },
             fields: "title",
           },
         });
       }
-      if (sheetByTitle.has("03_PENGELUARAN_SUPPLIER") && !sheetByTitle.has(SHEET_NAMES.PENGELUARAN_SUPPLIER)) {
+      if ((sheetByTitle.has("05_REKAP_MARGIN") || sheetByTitle.has("04_REKAP_MARGIN_HARIAN")) && !sheetByTitle.has(SHEET_NAMES.PERBANDINGAN_MARGIN)) {
+        const id = sheetByTitle.get("05_REKAP_MARGIN") ?? sheetByTitle.get("04_REKAP_MARGIN_HARIAN")!;
         renameRequests.push({
           updateSheetProperties: {
-            properties: { sheetId: sheetByTitle.get("03_PENGELUARAN_SUPPLIER")!, title: SHEET_NAMES.PENGELUARAN_SUPPLIER },
+            properties: { sheetId: id, title: SHEET_NAMES.PERBANDINGAN_MARGIN },
             fields: "title",
           },
         });
       }
-      if (sheetByTitle.has("04_REKAP_MARGIN_HARIAN") && !sheetByTitle.has(SHEET_NAMES.REKAP_MARGIN)) {
+      if ((sheetByTitle.has("04_PENGELUARAN_SUPPLIER") || sheetByTitle.has("03_PENGELUARAN_SUPPLIER")) && !sheetByTitle.has(SHEET_NAMES.PAGU_PENGELUARAN)) {
+        const id = sheetByTitle.get("04_PENGELUARAN_SUPPLIER") ?? sheetByTitle.get("03_PENGELUARAN_SUPPLIER")!;
         renameRequests.push({
           updateSheetProperties: {
-            properties: { sheetId: sheetByTitle.get("04_REKAP_MARGIN_HARIAN")!, title: SHEET_NAMES.REKAP_MARGIN },
+            properties: { sheetId: id, title: SHEET_NAMES.PAGU_PENGELUARAN },
             fields: "title",
           },
         });
       }
-      if (sheetByTitle.has("05_MASTER_DATA") && !sheetByTitle.has(SHEET_NAMES.MASTER_DATA)) {
+      if (sheetByTitle.has("03_PAGU_RINCIAN") && !sheetByTitle.has(SHEET_NAMES.RINCIAN_PENDAPATAN)) {
         renameRequests.push({
           updateSheetProperties: {
-            properties: { sheetId: sheetByTitle.get("05_MASTER_DATA")!, title: SHEET_NAMES.MASTER_DATA },
+            properties: { sheetId: sheetByTitle.get("03_PAGU_RINCIAN")!, title: SHEET_NAMES.RINCIAN_PENDAPATAN },
+            fields: "title",
+          },
+        });
+      }
+      if ((sheetByTitle.has("02_PAGU_RINGKASAN") || sheetByTitle.has("02_PENDAPATAN_SPPG")) && !sheetByTitle.has(SHEET_NAMES.PAGU_PENERIMAAN)) {
+        const id = sheetByTitle.get("02_PAGU_RINGKASAN") ?? sheetByTitle.get("02_PENDAPATAN_SPPG")!;
+        renameRequests.push({
+          updateSheetProperties: {
+            properties: { sheetId: id, title: SHEET_NAMES.PAGU_PENERIMAAN },
             fields: "title",
           },
         });
@@ -155,7 +200,7 @@ export class GoogleSheetsService {
           spreadsheetId,
           requestBody: { requests: renameRequests },
         });
-        logger.info({ spreadsheetId, renamesCount: renameRequests.length }, "Migrated legacy tab titles to new 5-Tab format");
+        logger.info({ spreadsheetId, renamesCount: renameRequests.length }, "Migrated legacy tab titles to new 6-Tab format");
       }
 
       // Re-fetch titles and IDs after renaming
@@ -169,34 +214,46 @@ export class GoogleSheetsService {
 
       // Check for missing tabs
       const addRequests: sheets_v4.Schema$Request[] = [];
-      if (!currentTitles.includes(SHEET_NAMES.PAGU_RINCIAN)) {
+      if (!currentTitles.includes(SHEET_NAMES.RINCIAN_PENDAPATAN)) {
         const props: sheets_v4.Schema$SheetProperties = {
-          title: SHEET_NAMES.PAGU_RINCIAN,
+          title: SHEET_NAMES.RINCIAN_PENDAPATAN,
           index: 2,
           tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.EMBLEM_GOLD) },
           gridProperties: { rowCount: 5000, columnCount: 10, frozenRowCount: 1 },
         };
-        if (!existingSheetIds.has(SHEET_IDS.PAGU_RINCIAN)) {
-          props.sheetId = SHEET_IDS.PAGU_RINCIAN;
+        if (!existingSheetIds.has(SHEET_IDS.RINCIAN_PENDAPATAN)) {
+          props.sheetId = SHEET_IDS.RINCIAN_PENDAPATAN;
         }
         addRequests.push({ addSheet: { properties: props } });
       }
-      if (!currentTitles.includes(SHEET_NAMES.REKAP_MARGIN)) {
+      if (!currentTitles.includes(SHEET_NAMES.RINCIAN_PENGELUARAN)) {
         const props: sheets_v4.Schema$SheetProperties = {
-          title: SHEET_NAMES.REKAP_MARGIN,
+          title: SHEET_NAMES.RINCIAN_PENGELUARAN,
           index: 4,
+          tabColorStyle: { rgbColor: hexToRgbColor("#E65100") },
+          gridProperties: { rowCount: 5000, columnCount: 10, frozenRowCount: 1 },
+        };
+        if (!existingSheetIds.has(SHEET_IDS.RINCIAN_PENGELUARAN)) {
+          props.sheetId = SHEET_IDS.RINCIAN_PENGELUARAN;
+        }
+        addRequests.push({ addSheet: { properties: props } });
+      }
+      if (!currentTitles.includes(SHEET_NAMES.PERBANDINGAN_MARGIN)) {
+        const props: sheets_v4.Schema$SheetProperties = {
+          title: SHEET_NAMES.PERBANDINGAN_MARGIN,
+          index: 5,
           tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.FOREST_GREEN) },
           gridProperties: { rowCount: 5000, columnCount: 13, frozenRowCount: 1 },
         };
-        if (!existingSheetIds.has(SHEET_IDS.REKAP_MARGIN)) {
-          props.sheetId = SHEET_IDS.REKAP_MARGIN;
+        if (!existingSheetIds.has(SHEET_IDS.PERBANDINGAN_MARGIN)) {
+          props.sheetId = SHEET_IDS.PERBANDINGAN_MARGIN;
         }
         addRequests.push({ addSheet: { properties: props } });
       }
       if (!currentTitles.includes(SHEET_NAMES.MASTER_DATA)) {
         const props: sheets_v4.Schema$SheetProperties = {
           title: SHEET_NAMES.MASTER_DATA,
-          index: 5,
+          index: 6,
           tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.SLATE_GRAY) },
           hidden: true,
           gridProperties: { rowCount: 200, columnCount: 5, frozenRowCount: 1 },
@@ -234,6 +291,7 @@ export class GoogleSheetsService {
       const unitName = this.getUnitNameFromSpreadsheetId(spreadsheetId);
       await this.ensureHeadersAndFormulas(spreadsheetId, unitName, forceReset);
       await this.applyBandingToMissingSheets(spreadsheetId);
+      await this.backfillRincianPengeluaranIfEmpty(spreadsheetId);
       this.initializedSpreadsheets.add(spreadsheetId);
     } catch (err: any) {
       logger.warn({ err: err?.message || err, spreadsheetId }, "Note during 5-tab verification");
@@ -302,20 +360,22 @@ export class GoogleSheetsService {
       // 2. Clear old residual values in 01_DASHBOARD and residual header columns in tabs
       await Promise.all([
         client.spreadsheets.values.clear({ spreadsheetId, range: `'${SHEET_NAMES.DASHBOARD}'!A1:Z50` }).catch(() => {}),
-        client.spreadsheets.values.clear({ spreadsheetId, range: `'${SHEET_NAMES.PAGU_RINGKASAN}'!A1:Z1` }).catch(() => {}),
-        client.spreadsheets.values.clear({ spreadsheetId, range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A1:Z1` }).catch(() => {}),
-        client.spreadsheets.values.clear({ spreadsheetId, range: `'${SHEET_NAMES.PENGELUARAN_SUPPLIER}'!A1:Z1` }).catch(() => {}),
-        client.spreadsheets.values.clear({ spreadsheetId, range: `'${SHEET_NAMES.REKAP_MARGIN}'!A1:Z1` }).catch(() => {}),
+        client.spreadsheets.values.clear({ spreadsheetId, range: `'${SHEET_NAMES.PAGU_PENERIMAAN}'!A1:Z1` }).catch(() => {}),
+        client.spreadsheets.values.clear({ spreadsheetId, range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A1:Z1` }).catch(() => {}),
+        client.spreadsheets.values.clear({ spreadsheetId, range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!A1:Z1` }).catch(() => {}),
+        client.spreadsheets.values.clear({ spreadsheetId, range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A1:Z1` }).catch(() => {}),
+        client.spreadsheets.values.clear({ spreadsheetId, range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A1:Z1` }).catch(() => {}),
       ]);
 
       // 3. Write Values & Formulas across all tabs
       const {
         valuesDashboard,
         valuesHelper,
-        tabPaguRingkasanHeaders,
-        tabPaguRincianHeaders,
-        tabPengeluaranHeaders,
-        tabRekapMarginHeaders,
+        tabPaguPenerimaanHeaders,
+        tabRincianPendapatanHeaders,
+        tabPaguPengeluaranHeaders,
+        tabRincianPengeluaranHeaders,
+        tabPerbandinganMarginHeaders,
         tabMasterDataHeaders,
       } = getOperationalDashboardValues(unitName);
 
@@ -333,20 +393,24 @@ export class GoogleSheetsService {
               values: valuesHelper,
             },
             {
-              range: `'${SHEET_NAMES.PAGU_RINGKASAN}'!A1:J1`,
-              values: tabPaguRingkasanHeaders,
+              range: `'${SHEET_NAMES.PAGU_PENERIMAAN}'!A1:J1`,
+              values: tabPaguPenerimaanHeaders,
             },
             {
-              range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A1:J1`,
-              values: tabPaguRincianHeaders,
+              range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A1:J1`,
+              values: tabRincianPendapatanHeaders,
             },
             {
-              range: `'${SHEET_NAMES.PENGELUARAN_SUPPLIER}'!A1:J1`,
-              values: tabPengeluaranHeaders,
+              range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!A1:J1`,
+              values: tabPaguPengeluaranHeaders,
             },
             {
-              range: `'${SHEET_NAMES.REKAP_MARGIN}'!A1:M1`,
-              values: tabRekapMarginHeaders,
+              range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A1:J1`,
+              values: tabRincianPengeluaranHeaders,
+            },
+            {
+              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A1:M1`,
+              values: tabPerbandinganMarginHeaders,
             },
             {
               range: `'${SHEET_NAMES.MASTER_DATA}'!A1:C1`,
@@ -407,9 +471,144 @@ export class GoogleSheetsService {
   }
 
   /**
+   * Auto-backfills Tab 05 (05_RINCIAN_PENGELUARAN) from existing Tab 04 expenses
+   * if Tab 05 is empty (e.g. freshly created during migration)
+   */
+  async backfillRincianPengeluaranIfEmpty(spreadsheetId: string): Promise<void> {
+    const client = await this.getClient();
+    try {
+      // 1. Check if Tab 05 exists and already has data rows
+      const tab05Res = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A2:B`,
+      }).catch(() => ({ data: { values: null } }));
+
+      if (tab05Res.data.values && tab05Res.data.values.length > 0) {
+        return; // Already has data rows, do not overwrite
+      }
+
+      // 2. Read existing Tab 04 rows
+      const tab04Res = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!A2:J`,
+      }).catch(() => ({ data: { values: null } }));
+
+      const tab04Rows = tab04Res.data.values || [];
+      if (tab04Rows.length === 0) return;
+
+      // 3. Read Tab 06 (Perbandingan Margin) to see if item-level realizations already exist
+      const tab06Res = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A2:K`,
+      }).catch(() => ({ data: { values: null } }));
+      const tab06Rows = tab06Res.data.values || [];
+
+      const tab05NewRows: any[][] = [];
+      const updatedTab04Formulas: { range: string; values: any[][] }[] = [];
+
+      for (let rIdx = 0; rIdx < tab04Rows.length; rIdx++) {
+        const row = tab04Rows[rIdx];
+        const rowNo = rIdx + 2;
+        const sppgRef = String(row[0] || "").trim();
+        const trxId = String(row[1] || "").trim();
+        const supplierName = String(row[3] || "Supplier Pasar").trim();
+        const totalAmount = parseCurrencyNumber(row[5]);
+        const notes = String(row[9] || "Pencatatan Belanja").trim();
+
+        if (!trxId) continue;
+
+        // Check if there are realisasi items in Tab 06 matching this sppgRef
+        const matchedItems = sppgRef && sppgRef !== "-"
+          ? tab06Rows.filter((r) => {
+              const rSppg = String(r[0] || "").trim();
+              const realPrice = parseCurrencyNumber(r[8]);
+              const realTotal = parseCurrencyNumber(r[9]);
+              return rSppg === sppgRef && (realPrice > 0 || realTotal > 0);
+            })
+          : [];
+
+        if (matchedItems.length > 0) {
+          matchedItems.forEach((m, idx) => {
+            const itemName = String(m[3] || "Bahan Makanan").trim();
+            const qty = parseCurrencyNumber(m[4]) || 1;
+            const unit = String(m[5] || "Satuan").trim();
+            const realPrice = parseCurrencyNumber(m[8]) || (parseCurrencyNumber(m[9]) / qty);
+            const targetRowIdx = tab05NewRows.length + 2;
+            const subtotalFormula = `=F${targetRowIdx}*H${targetRowIdx}`;
+
+            tab05NewRows.push([
+              sppgRef,
+              trxId,
+              idx + 1,
+              supplierName,
+              itemName,
+              qty,
+              unit,
+              realPrice,
+              subtotalFormula,
+            ]);
+          });
+        } else {
+          // Unitemized fallback entry
+          const targetRowIdx = tab05NewRows.length + 2;
+          tab05NewRows.push([
+            sppgRef,
+            trxId,
+            1,
+            supplierName,
+            notes.includes("item") ? notes : `Belanja Bahan (${notes})`,
+            1,
+            "Paket",
+            totalAmount,
+            `=F${targetRowIdx}*H${targetRowIdx}`,
+          ]);
+        }
+
+        // Prepare dynamic formula for Tab 04 Col F
+        updatedTab04Formulas.push({
+          range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!F${rowNo}`,
+          values: [[`=IF(COUNTIF('05_RINCIAN_PENGELUARAN'!$B:$B; B${rowNo})>0; SUMIF('05_RINCIAN_PENGELUARAN'!$B:$B; B${rowNo}; '05_RINCIAN_PENGELUARAN'!$I:$I); ${totalAmount})`]],
+        });
+      }
+
+      if (tab05NewRows.length > 0) {
+        await client.spreadsheets.values.append({
+          spreadsheetId,
+          range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A2`,
+          valueInputOption: "USER_ENTERED",
+          insertDataOption: "INSERT_ROWS",
+          requestBody: { values: tab05NewRows },
+        });
+
+        // Update Tab 04 formulas
+        if (updatedTab04Formulas.length > 0) {
+          await client.spreadsheets.values.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+              valueInputOption: "USER_ENTERED",
+              data: updatedTab04Formulas,
+            },
+          });
+        }
+
+        logger.info(
+          { spreadsheetId, backfilledItems: tab05NewRows.length },
+          "Successfully auto-backfilled Tab 05 Rincian Pengeluaran from existing Tab 04 transactions"
+        );
+      }
+    } catch (err: any) {
+      logger.warn({ err: err?.message, spreadsheetId }, "Note during backfill of Tab 05");
+    }
+  }
+
+  /**
    * Configures dedicated Executive Multi-Unit Aggregator structure for Master Dashboard
    */
   async ensureMasterDashboardStructure(spreadsheetId: string, force = false): Promise<void> {
+    if (this.initializedSpreadsheets.has(spreadsheetId) && !force) {
+      return;
+    }
+
     const client = await this.getClient();
 
     try {
@@ -429,6 +628,7 @@ export class GoogleSheetsService {
           .catch(() => ({ data: { values: null } }));
 
         if (check.data.values?.[0]?.[0]?.includes("DASHBOARD PUSAT") && checkTab4.data.values?.[0]?.[0]) {
+          this.initializedSpreadsheets.add(spreadsheetId);
           return;
         }
       }
@@ -587,6 +787,7 @@ export class GoogleSheetsService {
         requestBody: { requests: stylingRequests },
       });
 
+      this.initializedSpreadsheets.add(spreadsheetId);
       logger.info({ spreadsheetId }, "Successfully configured clean Executive Master Dashboard SPPG");
     } catch (err: any) {
       logger.error({ err: err?.message || err, spreadsheetId }, "Failed ensuring Master Dashboard structure");
@@ -597,42 +798,51 @@ export class GoogleSheetsService {
    * Appends an audit trail entry directly into Master Dashboard 04_LOG_AKTIVITAS
    */
   async appendMasterAuditLog(entry: MasterAuditLogEntry): Promise<void> {
+    await this.appendMasterAuditLogsBatch([entry]);
+  }
+
+  /**
+   * Appends multiple audit trail entries in ONE single batch call to avoid rate limits
+   */
+  async appendMasterAuditLogsBatch(entries: MasterAuditLogEntry[]): Promise<void> {
+    if (!entries || entries.length === 0) return;
     const masterId = env.GOOGLE_SHEET_ID_MASTER;
     if (!masterId) return;
 
     try {
       await this.ensureMasterDashboardStructure(masterId);
 
-      const now = new Date();
-      // Format WITA (UTC+8)
-      const witaStr = entry.timestamp || new Intl.DateTimeFormat("id-ID", {
-        timeZone: "Asia/Makassar",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      }).format(now).replace(/\./g, ":");
+      const rows = entries.map((entry) => {
+        const now = new Date();
+        const witaStr = entry.timestamp || new Intl.DateTimeFormat("id-ID", {
+          timeZone: "Asia/Makassar",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        }).format(now).replace(/\./g, ":");
 
-      const row = [
-        witaStr,
-        entry.unitName,
-        entry.editor || "Editor",
-        entry.sheetTab,
-        entry.refId || "-",
-        entry.columnEdited,
-        String(entry.oldValue ?? "-"),
-        String(entry.newValue ?? "-"),
-        entry.sourceAction || "Spreadsheet Edit",
-        entry.status || "TERCATAT",
-      ];
+        return [
+          witaStr,
+          entry.unitName,
+          entry.editor || "Editor",
+          entry.sheetTab,
+          entry.refId || "-",
+          entry.columnEdited,
+          String(entry.oldValue ?? "-"),
+          String(entry.newValue ?? "-"),
+          entry.sourceAction || "Spreadsheet Edit",
+          entry.status || "TERCATAT",
+        ];
+      });
 
-      await this.appendRowsSafely(masterId, MASTER_SHEET_NAMES.LOG_AKTIVITAS, [row]);
-      logger.info({ unit: entry.unitName, tab: entry.sheetTab, col: entry.columnEdited }, "Master Audit Log recorded");
+      await this.appendRowsSafely(masterId, MASTER_SHEET_NAMES.LOG_AKTIVITAS, rows);
+      logger.info({ count: rows.length }, "Batch Master Audit Logs recorded");
     } catch (err: any) {
-      logger.warn({ err: err?.message || err }, "Failed appending to Master Audit Log");
+      logger.warn({ err: err?.message || err }, "Failed appending batch to Master Audit Log");
     }
   }
 
@@ -714,12 +924,11 @@ export class GoogleSheetsService {
       for (let i = 1; i < rows.length; i++) {
         const rowId = String(rows[i]?.[0] || "").trim().toLowerCase();
         const rowRef = String(rows[i]?.[4] || "").trim().toLowerCase();
-        if (
-          rowId === cleanTxId ||
-          rowId.includes(cleanTxId) ||
-          cleanTxId.includes(rowId) ||
-          (cleanOrderNo && (rowRef === cleanOrderNo || rowId === cleanOrderNo))
-        ) {
+        if (cleanTxId) {
+          if (rowId === cleanTxId) {
+            indicesToDelete.push(i);
+          }
+        } else if (cleanOrderNo && (rowRef === cleanOrderNo || rowId === cleanOrderNo)) {
           indicesToDelete.push(i);
         }
       }
@@ -987,11 +1196,11 @@ export class GoogleSheetsService {
 
     const unitCode = this.getUnitCodeFromSpreadsheetId(spreadsheetId);
 
-    // Count existing rows in 02_PAGU_RINGKASAN for ID generation
+    // Count existing rows in 02_PAGU_PENERIMAAN for ID generation
     const colA = await client.spreadsheets.values
       .get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.PAGU_RINGKASAN}'!A:A`,
+        range: `'${SHEET_NAMES.PAGU_PENERIMAAN}'!A:A`,
       })
       .catch(() => ({ data: { values: null } }));
     const existingCount = (colA.data?.values || []).length;
@@ -1003,31 +1212,31 @@ export class GoogleSheetsService {
     const driveLinkFormula = driveLink ? `=HYPERLINK("${driveLink}"; "Lihat Dokumen")` : "-";
     const ringkasanRowIdx = Math.max(existingCount + 1, 2);
 
-    // 1. Row for 02_PAGU_RINGKASAN (formula-driven for instant reactivity)
+    // 1. Row for 02_PAGU_PENERIMAAN (formula-driven for instant reactivity)
     const ringkasanRow = [
       order.order_no,                                             // A: No SPPG
       orderId,                                                    // B: ID Transaksi
       order.order_date,                                           // C: Tanggal Pesanan
-      `=COUNTIF('03_PAGU_RINCIAN'!$A:$A; A${ringkasanRowIdx}) & " Item"`, // D: Jumlah Item Bahan
+      `=COUNTIF('${SHEET_NAMES.RINCIAN_PENDAPATAN}'!$A:$A; A${ringkasanRowIdx}) & " Item"`, // D: Jumlah Item Bahan
       supplierCountStr,                                           // E: Jumlah Target Supplier
-      `=SUMIF('03_PAGU_RINCIAN'!$A:$A; A${ringkasanRowIdx}; '03_PAGU_RINCIAN'!$I:$I)`, // F: Total Pagu Anggaran
+      `=SUMIF('${SHEET_NAMES.RINCIAN_PENDAPATAN}'!$A:$A; A${ringkasanRowIdx}; '${SHEET_NAMES.RINCIAN_PENDAPATAN}'!$I:$I)`, // F: Total Pagu Anggaran
       driveLinkFormula,                                           // G: Link Bukti Dokumen
       rawCaption || order.notes || "-",                           // H: Pesan Asli Telegram
       order.signed_by || picName || "Kepala SPPG",               // I: PIC / Penanggung Jawab
       "-",                                                        // J: Riwayat Edit
     ];
 
-    // Query 03_PAGU_RINCIAN count for row index calculation
+    // Query 03_RINCIAN_PENDAPATAN count for row index calculation
     const rincianColA = await client.spreadsheets.values
       .get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A:A`,
+        range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A:A`,
       })
       .catch(() => ({ data: { values: null } }));
     const rincianExistingCount = (rincianColA.data?.values || []).length;
     const rincianStartRow = Math.max(rincianExistingCount + 1, 2);
 
-    // 2. Rows for 03_PAGU_RINCIAN (all items with formula on Col I)
+    // 2. Rows for 03_RINCIAN_PENDAPATAN (all items with formula on Col I)
     const rincianRows = order.items.map((item, idx) => {
       const r = rincianStartRow + idx;
       return [
@@ -1044,11 +1253,11 @@ export class GoogleSheetsService {
       ];
     });
 
-    // 3. Rows for 05_REKAP_MARGIN (Template awal pencocokan dengan status MENUNGGU INVOICE)
+    // 3. Rows for 06_PERBANDINGAN_MARGIN (Template awal pencocokan dengan status MENUNGGU INVOICE)
     const rekapColA = await client.spreadsheets.values
       .get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.REKAP_MARGIN}'!A:A`,
+        range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A:A`,
       })
       .catch(() => ({ data: { values: null } }));
     const rekapExistingCount = (rekapColA.data?.values || []).length;
@@ -1074,9 +1283,9 @@ export class GoogleSheetsService {
     });
 
     // Write to all 3 tabs
-    await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PAGU_RINGKASAN, [ringkasanRow]);
-    await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PAGU_RINCIAN, rincianRows);
-    await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.REKAP_MARGIN, rekapRows);
+    await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PAGU_PENERIMAAN, [ringkasanRow]);
+    await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.RINCIAN_PENDAPATAN, rincianRows);
+    await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PERBANDINGAN_MARGIN, rekapRows);
 
     // Forward to Master Dashboard if different spreadsheet
     if (env.GOOGLE_SHEET_ID_MASTER && spreadsheetId !== env.GOOGLE_SHEET_ID_MASTER) {
@@ -1118,16 +1327,17 @@ export class GoogleSheetsService {
     const nowIso = new Date().toISOString().split("T")[0];
     const dateStr = receipt.date || nowIso;
 
-    // Count existing rows in 04_PENGELUARAN_SUPPLIER for ID generation
+    // Count existing rows in 04_PAGU_PENGELUARAN for ID generation
     const colA = await client.spreadsheets.values
       .get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.PENGELUARAN_SUPPLIER}'!A:A`,
+        range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!A:A`,
       })
       .catch(() => ({ data: { values: null } }));
     const existingCount = (colA.data?.values || []).length;
     const counter = Math.max(existingCount, 1);
     const expenseId = this.generateTransactionId(unitCode, dateStr, counter, "expense");
+    const targetExpenseRow = Math.max(existingCount + 1, 2);
 
     const itemsSummary =
       receipt.items && receipt.items.length > 0
@@ -1135,28 +1345,69 @@ export class GoogleSheetsService {
         : "Belanja Bahan Dapur";
     const driveLinkFormula = driveLink ? `=HYPERLINK("${driveLink}"; "Lihat Nota")` : "-";
 
-    // 1. Write to 04_PENGELUARAN_SUPPLIER
+    // 1. Write Parent Row to 04_PAGU_PENGELUARAN (Formula-driven Col F linked to Tab 05)
     const expenseRow = [
       receipt.sppg_ref_no || "-",                                 // A: No SPPG Ref
       expenseId,                                                  // B: ID Transaksi
       dateStr,                                                    // C: Tanggal Transaksi
       receipt.supplier_name,                                      // D: Nama Supplier
       (receipt as any).receipt_no || "-",                         // E: No Invoice Supplier
-      receipt.total_amount,                                       // F: Total Nominal Tagihan
+      `=IF(COUNTIF('${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$B:$B; B${targetExpenseRow})>0; SUMIF('${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$B:$B; B${targetExpenseRow}; '${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$I:$I); ${receipt.total_amount})`, // F: Total Nominal Tagihan
       receipt.payment_method || "Tunai",                          // G: Metode Pembayaran
       driveLinkFormula,                                           // H: Link Bukti Nota
       picName || "PIC Dapur",                                     // I: PIC / Operator
       receipt.notes || rawCaption || itemsSummary,                // J: Catatan / Keterangan
     ];
 
-    await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PENGELUARAN_SUPPLIER, [expenseRow]);
+    await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PAGU_PENGELUARAN, [expenseRow]);
 
-    // 2. Automated Granular Matching & Partial Fulfillment Tracking in 05_REKAP_MARGIN
-    try {
-      const rekapRes = await client.spreadsheets.values.get({
+    // 2. Write Child Item Rows to 05_RINCIAN_PENGELUARAN (Mirroring Tab 03 but for Expenses)
+    const rincianExpColA = await client.spreadsheets.values
+      .get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.REKAP_MARGIN}'!A2:M`,
-      });
+        range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:A`,
+      })
+      .catch(() => ({ data: { values: null } }));
+    const rincianExpExistingCount = (rincianExpColA.data?.values || []).length;
+    const rincianExpStartRow = Math.max(rincianExpExistingCount + 1, 2);
+
+    const itemsToRecord = (receipt.items && receipt.items.length > 0)
+      ? receipt.items
+      : [{
+          item_name: receipt.notes || rawCaption || "Belanja Bahan Dapur (Unitemized)",
+          qty: 1,
+          unit: "Paket",
+          price: receipt.total_amount,
+          total_price: receipt.total_amount
+        }];
+
+    const rincianPengeluaranRows = itemsToRecord.map((item, idx) => {
+      const r = rincianExpStartRow + idx;
+      return [
+        receipt.sppg_ref_no || "-",                                 // A: No SPPG Ref
+        expenseId,                                                  // B: ID Transaksi Belanja
+        idx + 1,                                                    // C: No Urut
+        receipt.supplier_name,                                      // D: Nama Supplier
+        item.item_name,                                             // E: Uraian Bahan / Barang Belanja
+        item.qty,                                                   // F: Kuantitas
+        item.unit,                                                  // G: Satuan
+        item.price,                                                 // H: Harga Satuan Invoice
+        `=IF(OR(F${r}=""; H${r}=""); ""; F${r} * H${r})`,          // I: Total Belanja
+        (receipt as any).receipt_no || receipt.notes || "-",        // J: Keterangan / No Nota
+      ];
+    });
+
+    await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.RINCIAN_PENGELUARAN, rincianPengeluaranRows);
+
+    // 3. Automated Granular Matching & Partial Fulfillment Tracking in 06_PERBANDINGAN_MARGIN
+    if (receipt.sppg_ref_no === "-") {
+      logger.info({ expenseId }, "Expense is Belanja Tambahan (Non-Pagu, '-'). Skipping 06_PERBANDINGAN_MARGIN reconciliation.");
+    } else {
+      try {
+        const rekapRes = await client.spreadsheets.values.get({
+          spreadsheetId,
+          range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A2:M`,
+        });
       const rekapRows = rekapRes.data.values || [];
       const matchedRowIndices = new Set<number>();
       const batchUpdates: { range: string; values: any[][] }[] = [];
@@ -1188,7 +1439,6 @@ export class GoogleSheetsService {
             // SPPG Ref filter: if receipt specifies ref, it must match
             const sppgMatches =
               !receipt.sppg_ref_no ||
-              receipt.sppg_ref_no === "-" ||
               rowSppgRef === receipt.sppg_ref_no;
 
             if (!sppgMatches) continue;
@@ -1222,21 +1472,21 @@ export class GoogleSheetsService {
             if (targetQty > 0 && newAccumulatedQty < targetQty) {
               const statusText = `🟠 BELUM LENGKAP (${newAccumulatedQty}/${targetQty} ${unit})`;
               batchUpdates.push({
-                range: `'${SHEET_NAMES.REKAP_MARGIN}'!I${actualRow}:J${actualRow}`,
+                range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!I${actualRow}:J${actualRow}`,
                 values: [[item.price, newAccumulatedRealisasi]],
               });
               batchUpdates.push({
-                range: `'${SHEET_NAMES.REKAP_MARGIN}'!M${actualRow}`,
+                range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!M${actualRow}`,
                 values: [[statusText]],
               });
             } else {
               const formulaStatus = `=IF(K${actualRow}>0; "🟢 HEMAT"; IF(K${actualRow}=0; "🟢 PAS"; "🔴 OVER BUDGET"))`;
               batchUpdates.push({
-                range: `'${SHEET_NAMES.REKAP_MARGIN}'!I${actualRow}:J${actualRow}`,
+                range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!I${actualRow}:J${actualRow}`,
                 values: [[item.price, newAccumulatedRealisasi]],
               });
               batchUpdates.push({
-                range: `'${SHEET_NAMES.REKAP_MARGIN}'!M${actualRow}`,
+                range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!M${actualRow}`,
                 values: [[formulaStatus]],
               });
             }
@@ -1246,7 +1496,7 @@ export class GoogleSheetsService {
               if (rowSupplier && !rowSupplier.toLowerCase().includes(receipt.supplier_name.toLowerCase())) {
                 const combinedSupplier = `${rowSupplier} (${receipt.supplier_name})`;
                 batchUpdates.push({
-                  range: `'${SHEET_NAMES.REKAP_MARGIN}'!C${actualRow}`,
+                  range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!C${actualRow}`,
                   values: [[combinedSupplier]],
                 });
               }
@@ -1274,7 +1524,7 @@ export class GoogleSheetsService {
         });
         logger.info(
           { count: batchUpdates.length, supplier: receipt.supplier_name },
-          "Matched and updated items in 05_REKAP_MARGIN"
+          "Matched and updated items in 06_PERBANDINGAN_MARGIN"
         );
       }
 
@@ -1300,11 +1550,12 @@ export class GoogleSheetsService {
             `=IF(J${r}=""; "🟡 MENUNGGU INVOICE"; IF(K${r}>0; "🟢 HEMAT"; IF(K${r}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`,
           ];
         });
-        await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.REKAP_MARGIN, extraRows);
+        await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PERBANDINGAN_MARGIN, extraRows);
       }
     } catch (matchErr: any) {
-      logger.warn({ err: matchErr?.message || matchErr }, "Note during 05_REKAP_MARGIN matching");
+      logger.warn({ err: matchErr?.message || matchErr }, "Note during 06_PERBANDINGAN_MARGIN matching");
     }
+  }
 
     // Forward to Master Dashboard if different spreadsheet
     if (env.GOOGLE_SHEET_ID_MASTER && spreadsheetId !== env.GOOGLE_SHEET_ID_MASTER) {
@@ -1348,22 +1599,34 @@ export class GoogleSheetsService {
     const unitCode = this.getUnitCodeFromSpreadsheetId(spreadsheetId);
     const nowIso = new Date().toISOString().split("T")[0];
 
-    // 1. Read existing rows in 04_PENGELUARAN_SUPPLIER once to determine start counter
+    // 1. Read existing rows in 04_PAGU_PENGELUARAN once to determine start counter
     const colA = await client.spreadsheets.values
       .get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.PENGELUARAN_SUPPLIER}'!A:A`,
+        range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!A:A`,
       })
       .catch(() => ({ data: { values: null } }));
     let counter = Math.max((colA.data?.values || []).length, 1);
+    let targetExpenseRow = Math.max((colA.data?.values || []).length + 1, 2);
 
     const expenseRows: any[][] = [];
     const masterRows: any[][] = [];
     let grandTotalAmount = 0;
 
+    // Read existing count for 05_RINCIAN_PENGELUARAN
+    const rincianExpColA = await client.spreadsheets.values
+      .get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:A`,
+      })
+      .catch(() => ({ data: { values: null } }));
+    let rincianExpCounter = Math.max((rincianExpColA.data?.values || []).length + 1, 2);
+    const rincianPengeluaranRows: any[][] = [];
+
     for (const receipt of receipts) {
       const dateStr = receipt.date || nowIso;
       const expenseId = this.generateTransactionId(unitCode, dateStr, counter++, "expense");
+      const currentExpRow = targetExpenseRow++;
       const itemsSummary =
         receipt.items && receipt.items.length > 0
           ? receipt.items.map((i) => `${i.item_name} (${i.qty} ${i.unit})`).join(", ")
@@ -1377,12 +1640,39 @@ export class GoogleSheetsService {
         dateStr,
         receipt.supplier_name,
         (receipt as any).receipt_no || "-",
-        receipt.total_amount,
+        `=IF(COUNTIF('${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$B:$B; B${currentExpRow})>0; SUMIF('${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$B:$B; B${currentExpRow}; '${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$I:$I); ${receipt.total_amount})`,
         receipt.payment_method || "Tunai",
         driveLinkFormula,
         picName || "PIC Dapur",
         receipt.notes || rawCaption || itemsSummary,
       ]);
+
+      const itemsToRecord = (receipt.items && receipt.items.length > 0)
+        ? receipt.items
+        : [{
+            item_name: receipt.notes || rawCaption || itemsSummary || "Belanja Bahan Dapur (Unitemized)",
+            qty: 1,
+            unit: "Paket",
+            price: receipt.total_amount,
+            total_price: receipt.total_amount
+          }];
+
+      for (let idx = 0; idx < itemsToRecord.length; idx++) {
+        const item = itemsToRecord[idx];
+        const r = rincianExpCounter++;
+        rincianPengeluaranRows.push([
+          receipt.sppg_ref_no || "-",
+          expenseId,
+          idx + 1,
+          receipt.supplier_name,
+          item.item_name,
+          item.qty,
+          item.unit,
+          item.price,
+          `=IF(OR(F${r}=""; H${r}=""); ""; F${r} * H${r})`,
+          (receipt as any).receipt_no || receipt.notes || "-",
+        ]);
+      }
 
       grandTotalAmount += receipt.total_amount || 0;
 
@@ -1405,13 +1695,18 @@ export class GoogleSheetsService {
     }
 
     // Append all expense rows to Tab 04 in one single API call
-    await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PENGELUARAN_SUPPLIER, expenseRows);
+    await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PAGU_PENGELUARAN, expenseRows);
 
-    // 2. Batch update matching in Tab 05 (05_REKAP_MARGIN)
+    // Append all itemized rows to Tab 05 in one single API call
+    if (rincianPengeluaranRows.length > 0) {
+      await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.RINCIAN_PENGELUARAN, rincianPengeluaranRows);
+    }
+
+    // 2. Batch update matching in Tab 06 (06_PERBANDINGAN_MARGIN)
     try {
       const rekapRes = await client.spreadsheets.values.get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.REKAP_MARGIN}'!A2:M`,
+        range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A2:M`,
       });
       const rekapRows = (rekapRes.data.values || []).map((row) => [...row]);
       const matchedRowIndices = new Set<number>();
@@ -1472,22 +1767,22 @@ export class GoogleSheetsService {
             if (targetQty > 0 && newAccumulatedQty < targetQty) {
               const statusText = `🟠 BELUM LENGKAP (${newAccumulatedQty}/${targetQty} ${unit})`;
               batchUpdates.push({
-                range: `'${SHEET_NAMES.REKAP_MARGIN}'!I${actualRow}:J${actualRow}`,
+                range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!I${actualRow}:J${actualRow}`,
                 values: [[item.price, newAccumulatedRealisasi]],
               });
               batchUpdates.push({
-                range: `'${SHEET_NAMES.REKAP_MARGIN}'!M${actualRow}`,
+                range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!M${actualRow}`,
                 values: [[statusText]],
               });
               row[12] = statusText;
             } else {
               const formulaStatus = `=IF(K${actualRow}>0; "🟢 HEMAT"; IF(K${actualRow}=0; "🟢 PAS"; "🔴 OVER BUDGET"))`;
               batchUpdates.push({
-                range: `'${SHEET_NAMES.REKAP_MARGIN}'!I${actualRow}:J${actualRow}`,
+                range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!I${actualRow}:J${actualRow}`,
                 values: [[item.price, newAccumulatedRealisasi]],
               });
               batchUpdates.push({
-                range: `'${SHEET_NAMES.REKAP_MARGIN}'!M${actualRow}`,
+                range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!M${actualRow}`,
                 values: [[formulaStatus]],
               });
               row[12] = "PAS";
@@ -1500,7 +1795,7 @@ export class GoogleSheetsService {
               if (rowSupplier && !rowSupplier.toLowerCase().includes(receipt.supplier_name.toLowerCase())) {
                 const combinedSupplier = `${rowSupplier} (${receipt.supplier_name})`;
                 batchUpdates.push({
-                  range: `'${SHEET_NAMES.REKAP_MARGIN}'!C${actualRow}`,
+                  range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!C${actualRow}`,
                   values: [[combinedSupplier]],
                 });
                 row[2] = combinedSupplier;
@@ -1528,7 +1823,7 @@ export class GoogleSheetsService {
         });
         logger.info(
           { count: batchUpdates.length, receiptsCount: receipts.length },
-          "Batch matched and updated items in 05_REKAP_MARGIN"
+          "Batch matched and updated items in 06_PERBANDINGAN_MARGIN"
         );
       }
 
@@ -1554,10 +1849,10 @@ export class GoogleSheetsService {
             `=IF(J${r}=""; "🟡 MENUNGGU INVOICE"; IF(K${r}>0; "🟢 HEMAT"; IF(K${r}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`,
           ];
         });
-        await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.REKAP_MARGIN, extraRows);
+        await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PERBANDINGAN_MARGIN, extraRows);
       }
     } catch (matchErr: any) {
-      logger.warn({ err: matchErr?.message || matchErr }, "Note during batch 05_REKAP_MARGIN matching");
+      logger.warn({ err: matchErr?.message || matchErr }, "Note during batch 06_PERBANDINGAN_MARGIN matching");
     }
 
     // 3. Forward all to Master Dashboard in one batch
@@ -2136,6 +2431,38 @@ export class GoogleSheetsService {
       // continue
     }
 
+    // 5. Search in 05_RINCIAN_PENGELUARAN (protected child items for expenses)
+    try {
+      const rincianExpRes = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:J`,
+      });
+      const rincianExpRows = rincianExpRes.data.values || [];
+      for (let idx = 0; idx < rincianExpRows.length; idx++) {
+        const row = rincianExpRows[idx];
+        const col0 = String(row?.[0] || "");
+        const col1 = String(row?.[1] || "");
+        if (matchesId(col1) || (cleanId.length >= 4 && matchesId(col0))) {
+          return {
+            found: true,
+            id: col1 || cleanId,
+            sheetName: SHEET_NAMES.RINCIAN_PENGELUARAN,
+            rowIndex: idx + 1,
+            type: "expense",
+            date: "-",
+            supplierOrUnit: String(row[3] || "Supplier"),
+            items: String(row[4] || "Rincian Belanja"),
+            amount: parseCurrencyNumber(row[8]),
+            orderNo: col0.trim(),
+            isProtected: true,
+            notes: `Rincian Pengeluaran Item #${row[2] || idx + 1}`,
+          };
+        }
+      }
+    } catch (err) {
+      // continue
+    }
+
     // 5. Search in legacy 02_PENDAPATAN_SPPG
     try {
       const ordRes = await client.spreadsheets.values.get({
@@ -2189,6 +2516,7 @@ export class GoogleSheetsService {
     childrenSummary?: {
       rincianCount: number;
       expenseCount: number;
+      rincianPengeluaranCount?: number;
       rekapCount: number;
       resetRekapCount: number;
     };
@@ -2199,7 +2527,7 @@ export class GoogleSheetsService {
       return { found: false, canDelete: false };
     }
 
-    if (detail.sheetName === SHEET_NAMES.PAGU_RINCIAN || detail.isProtected) {
+    if (detail.sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN) {
       return {
         found: true,
         canDelete: false,
@@ -2209,26 +2537,41 @@ export class GoogleSheetsService {
         transactionId: detail.id,
         amount: detail.amount,
         items: detail.items,
-        warningMessage: `⛔ Data Terproteksi: Rincian Pagu (Tab 03) adalah data turunan dan terikat langsung dengan Pagu Induk di Tab 02. Rincian tidak dapat dihapus mandiri. Silakan kelola melalui Pagu Induk (${detail.orderNo || "Tab 02"}).`,
+        warningMessage: `⛔ Data Terproteksi: Rincian Pengeluaran (Tab 05) adalah data turunan dan terikat langsung dengan Pagu Pengeluaran di Tab 04. Rincian tidak dapat dihapus mandiri. Silakan kelola melalui Pagu Pengeluaran di Tab 04 (${detail.orderNo || "Tab 04"}).`,
+      };
+    }
+
+    if (detail.sheetName === SHEET_NAMES.RINCIAN_PENDAPATAN || detail.sheetName === SHEET_NAMES.PAGU_RINCIAN || detail.isProtected) {
+      return {
+        found: true,
+        canDelete: false,
+        isProtected: true,
+        sheetName: detail.sheetName,
+        orderNo: detail.orderNo,
+        transactionId: detail.id,
+        amount: detail.amount,
+        items: detail.items,
+        warningMessage: `⛔ Data Terproteksi: Rincian Pendapatan (Tab 03) adalah data turunan dan terikat langsung dengan Pagu Penerimaan di Tab 02. Rincian tidak dapat dihapus mandiri. Silakan kelola melalui Pagu Penerimaan (${detail.orderNo || "Tab 02"}).`,
       };
     }
 
     const client = await this.getClient();
 
-    // 1. Pagu Induk (Tab 02) -> Cascade delete children in 03, 04, 05
-    if (detail.sheetName === SHEET_NAMES.PAGU_RINGKASAN || detail.sheetName === "02_PENDAPATAN_SPPG") {
+    // 1. Pagu Induk (Tab 02) -> Cascade delete children in 03, 04, 05, 06
+    if (detail.sheetName === SHEET_NAMES.PAGU_PENERIMAAN || detail.sheetName === SHEET_NAMES.PAGU_RINGKASAN || detail.sheetName === "02_PENDAPATAN_SPPG") {
       const orderNo = detail.orderNo || "";
       const orderId = detail.id;
 
       let rincianCount = 0;
       let expenseCount = 0;
+      let rincianExpenseCount = 0;
       let rekapCount = 0;
 
       // Check Tab 03
       try {
         const rRes = await client.spreadsheets.values.get({
           spreadsheetId,
-          range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A:B`,
+          range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A:B`,
         });
         const rows = rRes.data.values || [];
         rincianCount = rows.filter((r) => {
@@ -2242,7 +2585,7 @@ export class GoogleSheetsService {
       try {
         const eRes = await client.spreadsheets.values.get({
           spreadsheetId,
-          range: `'${SHEET_NAMES.PENGELUARAN_SUPPLIER}'!A:B`,
+          range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!A:B`,
         });
         const rows = eRes.data.values || [];
         expenseCount = rows.filter((r) => {
@@ -2252,11 +2595,24 @@ export class GoogleSheetsService {
         }).length;
       } catch {}
 
-      // Check Tab 05
+      // Check Tab 05 (Rincian Pengeluaran)
+      try {
+        const reRes = await client.spreadsheets.values.get({
+          spreadsheetId,
+          range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:B`,
+        });
+        const rows = reRes.data.values || [];
+        rincianExpenseCount = rows.filter((r) => {
+          const c0 = String(r[0] || "").trim();
+          return (orderNo && c0 === orderNo) || (orderId && c0 === orderId);
+        }).length;
+      } catch {}
+
+      // Check Tab 06 (Perbandingan Margin)
       try {
         const mRes = await client.spreadsheets.values.get({
           spreadsheetId,
-          range: `'${SHEET_NAMES.REKAP_MARGIN}'!A:A`,
+          range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A:A`,
         });
         const rows = mRes.data.values || [];
         rekapCount = rows.filter((r) => {
@@ -2277,28 +2633,45 @@ export class GoogleSheetsService {
         childrenSummary: {
           rincianCount,
           expenseCount,
+          rincianPengeluaranCount: rincianExpenseCount,
           rekapCount,
           resetRekapCount: 0,
         },
-        warningMessage: `⚠️ Menghapus Pagu Induk ini akan MENGHAPUS SEMUA data turunannya:\n• Tab 03 (Rincian Bahan): ${rincianCount} item\n• Tab 04 (Pengeluaran Supplier): ${expenseCount} transaksi nota\n• Tab 05 (Rekap Margin): ${rekapCount} baris komparasi`,
+        warningMessage: `⚠️ Menghapus Pagu Induk ini akan MENGHAPUS SEMUA data turunannya:\n• Tab 03 (Rincian Pendapatan): ${rincianCount} item\n• Tab 04 (Pagu Pengeluaran): ${expenseCount} transaksi nota\n• Tab 05 (Rincian Pengeluaran): ${rincianExpenseCount} baris belanja\n• Tab 06 (Perbandingan Margin): ${rekapCount} baris komparasi`,
       };
     }
 
-    // 2. Pengeluaran Supplier (Tab 04) -> Cascade reset in 05
+    // 2. Pengeluaran Supplier (Tab 04) -> Cascade delete in 05 & reset in 06
     if (
+      detail.sheetName === SHEET_NAMES.PAGU_PENGELUARAN ||
       detail.sheetName === SHEET_NAMES.PENGELUARAN_SUPPLIER ||
       detail.sheetName === "03_PENGELUARAN_SUPPLIER"
     ) {
       const orderNo = detail.orderNo || "";
       const supplierName = detail.supplierOrUnit || "";
 
+      let rincianExpenseCount = 0;
       let resetRekapCount = 0;
       let deletedRekapCount = 0;
 
+      // Check Tab 05 child items
+      try {
+        const reRes = await client.spreadsheets.values.get({
+          spreadsheetId,
+          range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:B`,
+        });
+        const rows = reRes.data.values || [];
+        rincianExpenseCount = rows.filter((r) => {
+          const c1 = String(r[1] || "").trim();
+          return detail.id && c1 === detail.id;
+        }).length;
+      } catch {}
+
+      // Check Tab 06
       try {
         const mRes = await client.spreadsheets.values.get({
           spreadsheetId,
-          range: `'${SHEET_NAMES.REKAP_MARGIN}'!A:J`,
+          range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A:J`,
         });
         const rows = mRes.data.values || [];
         for (let i = 1; i < rows.length; i++) {
@@ -2334,10 +2707,11 @@ export class GoogleSheetsService {
         childrenSummary: {
           rincianCount: 0,
           expenseCount: 0,
+          rincianPengeluaranCount: rincianExpenseCount,
           rekapCount: deletedRekapCount,
           resetRekapCount,
         },
-        warningMessage: `ℹ️ Menghapus nota ini akan mengosongkan/mereset realisasi di Tab 05 (Rekap Margin) sebanyak ${resetRekapCount} item kembali ke status 'Menunggu Invoice'${deletedRekapCount > 0 ? ` dan menghapus ${deletedRekapCount} item belanja tambahan` : ""}.`,
+        warningMessage: `ℹ️ Menghapus nota ini akan menghapus ${rincianExpenseCount} baris rincian di Tab 05, serta mengosongkan/mereset realisasi di Tab 06 (Perbandingan Margin) sebanyak ${resetRekapCount} item kembali ke status 'Menunggu Invoice'${deletedRekapCount > 0 ? ` dan menghapus ${deletedRekapCount} item belanja tambahan` : ""}.`,
       };
     }
 
@@ -2380,12 +2754,19 @@ export class GoogleSheetsService {
       return { success: false, message: `Transaksi ${transactionId} tidak ditemukan di Google Sheets.` };
     }
 
-    // Guard: 03_PAGU_RINCIAN is protected from standalone deletion
-    if (detail.sheetName === SHEET_NAMES.PAGU_RINCIAN || detail.isProtected) {
+    // Guard: Child rincian sheets are protected from standalone deletion
+    if (
+      detail.sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN ||
+      detail.sheetName === SHEET_NAMES.RINCIAN_PENDAPATAN ||
+      detail.sheetName === SHEET_NAMES.PAGU_RINCIAN ||
+      detail.isProtected
+    ) {
+      const tabName = detail.sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN ? "Rincian Pengeluaran (Tab 05)" : "Rincian Pendapatan (Tab 03)";
+      const parentTab = detail.sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN ? "Pagu Pengeluaran di Tab 04" : `Pagu Penerimaan (${detail.orderNo || "Tab 02"})`;
       return {
         success: false,
         isProtected: true,
-        message: `⛔ Rincian Pagu (Tab 03) adalah data turunan dan terproteksi. Data ini tidak dapat dihapus mandiri karena terikat langsung dengan Pagu Induk. Jika ingin membatalkan pesanan anggaran, silakan hapus Pagu Induk (${detail.orderNo || "Tab 02"}).`,
+        message: `⛔ ${tabName} adalah data turunan dan terproteksi. Data ini tidak dapat dihapus mandiri karena terikat langsung dengan data induknya. Silakan kelola melalui ${parentTab}.`,
       };
     }
 
@@ -2401,31 +2782,39 @@ export class GoogleSheetsService {
       });
 
       // =========================================================================
-      // CASE 1: 02_PAGU_RINGKASAN (Cascade Delete 02 -> 03, 04, 05)
+      // CASE 1: 02_PAGU_PENERIMAAN (Cascade Delete 02 -> 03, 04, 05, 06)
       // =========================================================================
-      if (detail.sheetName === SHEET_NAMES.PAGU_RINGKASAN || detail.sheetName === "02_PENDAPATAN_SPPG") {
+      if (
+        detail.sheetName === SHEET_NAMES.PAGU_PENERIMAAN ||
+        detail.sheetName === SHEET_NAMES.PAGU_RINGKASAN ||
+        detail.sheetName === "02_PENDAPATAN_SPPG"
+      ) {
         const orderNo = (detail.orderNo || "").trim();
         const orderId = detail.id;
         const deleteRequests: sheets_v4.Schema$Request[] = [];
 
         let deletedRincian = 0;
         let deletedExpense = 0;
+        let deletedRincianExpense = 0;
         let deletedRekap = 0;
 
-        // 1. Tab 03 (PAGU_RINCIAN)
-        const rincianSheetId = sheetMap.get(SHEET_NAMES.PAGU_RINCIAN);
+        // 1. Tab 03 (RINCIAN_PENDAPATAN)
+        const rincianSheetId = sheetMap.get(SHEET_NAMES.RINCIAN_PENDAPATAN) ?? sheetMap.get("03_PAGU_RINCIAN");
+        const deletedItemNames = new Set<string>();
         if (typeof rincianSheetId === "number") {
           const rRes = await client.spreadsheets.values.get({
             spreadsheetId,
-            range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A:B`,
+            range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A:E`,
           }).catch(() => ({ data: { values: null } }));
           const rows = rRes.data?.values || [];
           const indicesToDelete: number[] = [];
           for (let i = 0; i < rows.length; i++) {
             const c0 = String(rows[i]?.[0] || "").trim();
             const c1 = String(rows[i]?.[1] || "").trim();
-            if ((orderNo && c0 === orderNo) || (orderId && c1 === orderId)) {
+            const itemName = String(rows[i]?.[4] || "").trim().toLowerCase();
+            if (orderId ? c1 === orderId : (orderNo && c0 === orderNo)) {
               indicesToDelete.push(i);
+              if (itemName) deletedItemNames.add(itemName);
             }
           }
           // Sort descending to prevent index shifting
@@ -2444,11 +2833,11 @@ export class GoogleSheetsService {
           deletedRincian = indicesToDelete.length;
         }
 
-        // 2. Tab 04 (PENGELUARAN_SUPPLIER)
-        const expenseSheetName = sheetMap.has(SHEET_NAMES.PENGELUARAN_SUPPLIER)
-          ? SHEET_NAMES.PENGELUARAN_SUPPLIER
-          : "03_PENGELUARAN_SUPPLIER";
-        const expenseSheetId = sheetMap.get(expenseSheetName);
+        // 2. Tab 04 (PAGU_PENGELUARAN)
+        const expenseSheetName = sheetMap.has(SHEET_NAMES.PAGU_PENGELUARAN)
+          ? SHEET_NAMES.PAGU_PENGELUARAN
+          : "04_PENGELUARAN_SUPPLIER";
+        const expenseSheetId = sheetMap.get(expenseSheetName) ?? sheetMap.get("03_PENGELUARAN_SUPPLIER");
         if (typeof expenseSheetId === "number") {
           const eRes = await client.spreadsheets.values.get({
             spreadsheetId,
@@ -2459,7 +2848,7 @@ export class GoogleSheetsService {
           for (let i = 0; i < rows.length; i++) {
             const c0 = String(rows[i]?.[0] || "").trim();
             const c1 = String(rows[i]?.[1] || "").trim();
-            if ((orderNo && c0 === orderNo) || (orderId && c1 === orderId)) {
+            if (orderId ? c1 === orderId : (orderNo && c0 === orderNo)) {
               indicesToDelete.push(i);
             }
           }
@@ -2478,22 +2867,60 @@ export class GoogleSheetsService {
           deletedExpense = indicesToDelete.length;
         }
 
-        // 3. Tab 05 (REKAP_MARGIN)
-        const rekapSheetName = sheetMap.has(SHEET_NAMES.REKAP_MARGIN)
-          ? SHEET_NAMES.REKAP_MARGIN
-          : "04_REKAP_MARGIN_HARIAN";
-        const rekapSheetId = sheetMap.get(rekapSheetName);
+        // 3. Tab 05 (RINCIAN_PENGELUARAN)
+        const rincianExpSheetId = sheetMap.get(SHEET_NAMES.RINCIAN_PENGELUARAN);
+        if (typeof rincianExpSheetId === "number") {
+          const reRes = await client.spreadsheets.values.get({
+            spreadsheetId,
+            range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:B`,
+          }).catch(() => ({ data: { values: null } }));
+          const rows = reRes.data?.values || [];
+          const indicesToDelete: number[] = [];
+          for (let i = 0; i < rows.length; i++) {
+            const c0 = String(rows[i]?.[0] || "").trim();
+            const c1 = String(rows[i]?.[1] || "").trim();
+            if (orderId ? c1 === orderId : (orderNo && c0 === orderNo)) {
+              indicesToDelete.push(i);
+            }
+          }
+          indicesToDelete.sort((a, b) => b - a).forEach((idx) => {
+            deleteRequests.push({
+              deleteDimension: {
+                range: {
+                  sheetId: rincianExpSheetId,
+                  dimension: "ROWS",
+                  startIndex: idx,
+                  endIndex: idx + 1,
+                },
+              },
+            });
+          });
+          deletedRincianExpense = indicesToDelete.length;
+        }
+
+        // 4. Tab 06 (PERBANDINGAN_MARGIN)
+        const rekapSheetName = sheetMap.has(SHEET_NAMES.PERBANDINGAN_MARGIN)
+          ? SHEET_NAMES.PERBANDINGAN_MARGIN
+          : "05_REKAP_MARGIN";
+        const rekapSheetId = sheetMap.get(rekapSheetName) ?? sheetMap.get("04_REKAP_MARGIN_HARIAN");
         if (typeof rekapSheetId === "number") {
           const mRes = await client.spreadsheets.values.get({
             spreadsheetId,
-            range: `'${rekapSheetName}'!A:A`,
+            range: `'${rekapSheetName}'!A:D`,
           }).catch(() => ({ data: { values: null } }));
           const rows = mRes.data?.values || [];
           const indicesToDelete: number[] = [];
           for (let i = 0; i < rows.length; i++) {
             const c0 = String(rows[i]?.[0] || "").trim();
+            const rekapItemName = String(rows[i]?.[3] || "").trim().toLowerCase();
             if (orderNo && c0 === orderNo) {
-              indicesToDelete.push(i);
+              if (orderId && deletedItemNames.size > 0) {
+                if (deletedItemNames.has(rekapItemName)) {
+                  indicesToDelete.push(i);
+                }
+              } else {
+                indicesToDelete.push(i);
+              }
             }
           }
           indicesToDelete.sort((a, b) => b - a).forEach((idx) => {
@@ -2511,7 +2938,7 @@ export class GoogleSheetsService {
           deletedRekap = indicesToDelete.length;
         }
 
-        // 4. Tab 02 (PAGU_RINGKASAN) - The Parent Row
+        // 5. Tab 02 (PAGU_PENERIMAAN) - The Parent Row
         const paguSheetId = sheetMap.get(detail.sheetName);
         if (typeof paguSheetId === "number") {
           const paguIndex = detail.rowIndex - 1;
@@ -2536,7 +2963,7 @@ export class GoogleSheetsService {
         }
 
         logger.info(
-          { orderNo, orderId, deletedRincian, deletedExpense, deletedRekap },
+          { orderNo, orderId, deletedRincian, deletedExpense, deletedRincianExpense, deletedRekap },
           "Executed atomic Cascade Delete for Pagu Induk"
         );
 
@@ -2546,7 +2973,7 @@ export class GoogleSheetsService {
 
         return {
           success: true,
-          message: `✅ Pagu Induk <b>${orderNo || transactionId}</b> berhasil dihapus beserta seluruh data anak:\n• Tab 03 (Pagu Rincian): ${deletedRincian} item bahan\n• Tab 04 (Pengeluaran Supplier): ${deletedExpense} transaksi nota\n• Tab 05 (Rekap Margin): ${deletedRekap} baris komparasi`,
+          message: `✅ Pagu Induk <b>${orderNo || transactionId}</b> berhasil dihapus beserta seluruh data anak:\n• Tab 03 (Rincian Pendapatan): ${deletedRincian} item bahan\n• Tab 04 (Pagu Pengeluaran): ${deletedExpense} transaksi nota\n• Tab 05 (Rincian Pengeluaran): ${deletedRincianExpense} baris belanja\n• Tab 06 (Perbandingan Margin): ${deletedRekap} baris komparasi`,
           deletedSummary: {
             paguRows: 1,
             rincianRows: deletedRincian,
@@ -2558,22 +2985,56 @@ export class GoogleSheetsService {
       }
 
       // =========================================================================
-      // CASE 2: 04_PENGELUARAN_SUPPLIER (Cascade Reset/Delete in 05)
+      // CASE 2: 04_PAGU_PENGELUARAN (Cascade Delete in 05 & Reset in 06)
       // =========================================================================
       if (
+        detail.sheetName === SHEET_NAMES.PAGU_PENGELUARAN ||
         detail.sheetName === SHEET_NAMES.PENGELUARAN_SUPPLIER ||
         detail.sheetName === "03_PENGELUARAN_SUPPLIER"
       ) {
         const orderNo = (detail.orderNo || "").trim();
+        const expenseId = (detail.id || "").trim();
         const supplierName = (detail.supplierOrUnit || "").trim().toLowerCase();
         const deleteRequests: sheets_v4.Schema$Request[] = [];
         const cellResets: Array<{ rowNum: number; originalSupplier: string }> = [];
         const rekapIndicesToDelete: number[] = [];
 
-        const rekapSheetName = sheetMap.has(SHEET_NAMES.REKAP_MARGIN)
-          ? SHEET_NAMES.REKAP_MARGIN
-          : "04_REKAP_MARGIN_HARIAN";
-        const rekapSheetId = sheetMap.get(rekapSheetName);
+        // 1. Delete child items in Tab 05 (RINCIAN_PENGELUARAN) matching expenseId (Col B)
+        let deletedRincianExpense = 0;
+        const rincianExpSheetId = sheetMap.get(SHEET_NAMES.RINCIAN_PENGELUARAN);
+        if (typeof rincianExpSheetId === "number" && expenseId) {
+          const reRes = await client.spreadsheets.values.get({
+            spreadsheetId,
+            range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:B`,
+          }).catch(() => ({ data: { values: null } }));
+          const rows = reRes.data?.values || [];
+          const indicesToDelete: number[] = [];
+          for (let i = 0; i < rows.length; i++) {
+            const c1 = String(rows[i]?.[1] || "").trim();
+            if (c1 === expenseId) {
+              indicesToDelete.push(i);
+            }
+          }
+          indicesToDelete.sort((a, b) => b - a).forEach((idx) => {
+            deleteRequests.push({
+              deleteDimension: {
+                range: {
+                  sheetId: rincianExpSheetId,
+                  dimension: "ROWS",
+                  startIndex: idx,
+                  endIndex: idx + 1,
+                },
+              },
+            });
+          });
+          deletedRincianExpense = indicesToDelete.length;
+        }
+
+        // 2. Reset or delete rows in Tab 06 (PERBANDINGAN_MARGIN)
+        const rekapSheetName = sheetMap.has(SHEET_NAMES.PERBANDINGAN_MARGIN)
+          ? SHEET_NAMES.PERBANDINGAN_MARGIN
+          : "05_REKAP_MARGIN";
+        const rekapSheetId = sheetMap.get(rekapSheetName) ?? sheetMap.get("04_REKAP_MARGIN_HARIAN");
 
         if (typeof rekapSheetId === "number") {
           const mRes = await client.spreadsheets.values.get({
@@ -2603,7 +3064,7 @@ export class GoogleSheetsService {
           }
         }
 
-        // 1. Reset cells in Tab 05 FIRST (before any rows shift)
+        // Reset cells in Tab 06 FIRST (before any rows shift)
         if (cellResets.length > 0) {
           const resetData = cellResets.flatMap((item) => {
             const rowNum = item.rowNum;
@@ -2635,7 +3096,7 @@ export class GoogleSheetsService {
           });
         }
 
-        // 2. Add delete requests for extra rows in Tab 05 (sorted descending)
+        // Add delete requests for extra rows in Tab 06 (sorted descending)
         if (typeof rekapSheetId === "number" && rekapIndicesToDelete.length > 0) {
           rekapIndicesToDelete.sort((a, b) => b - a).forEach((idx) => {
             deleteRequests.push({
@@ -2675,8 +3136,8 @@ export class GoogleSheetsService {
         }
 
         logger.info(
-          { transactionId, supplierName, cellResets: cellResets.length, deletedRekap: rekapIndicesToDelete.length },
-          "Deleted expense and cascade-reset 05_REKAP_MARGIN"
+          { transactionId, supplierName, deletedRincianExpense, cellResets: cellResets.length, deletedRekap: rekapIndicesToDelete.length },
+          "Deleted expense and cascade-reset 06_PERBANDINGAN_MARGIN"
         );
 
         if (env.GOOGLE_SHEET_ID_MASTER && spreadsheetId !== env.GOOGLE_SHEET_ID_MASTER) {
@@ -2685,7 +3146,7 @@ export class GoogleSheetsService {
 
         return {
           success: true,
-          message: `✅ Transaksi supplier <code>${transactionId}</code> berhasil dihapus dari Google Sheets. Realisasi di Tab 05 (Rekap Margin) telah di-reset (${cellResets.length} item kembali ke status Menunggu Invoice${rekapIndicesToDelete.length > 0 ? `, ${rekapIndicesToDelete.length} item tambahan dihapus` : ""}).`,
+          message: `✅ Nota Pengeluaran <code>${transactionId}</code> berhasil dihapus dari Google Sheets. Rincian di Tab 05 (${deletedRincianExpense} baris) telah dihapus, dan Tab 06 (Perbandingan Margin) telah di-reset (${cellResets.length} item kembali ke status Menunggu Invoice${rekapIndicesToDelete.length > 0 ? `, ${rekapIndicesToDelete.length} item tambahan dihapus` : ""}).`,
           deletedSummary: {
             paguRows: 0,
             rincianRows: 0,
@@ -2876,6 +3337,858 @@ export class GoogleSheetsService {
       return { success: false, message: `Gagal memperbarui transaksi: ${err?.message || err}` };
     }
   }
+
+  /**
+   * Retrieves active SPPG Pagu Orders from 02_PAGU_RINGKASAN
+   */
+  async getPaguOrders(spreadsheetId: string): Promise<PaguOrderSummary[]> {
+    await this.ensure5TabStructure(spreadsheetId);
+    const client = await this.getClient();
+    try {
+      const res = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.PAGU_RINGKASAN}'!A2:H`,
+      });
+      const rows = res.data.values || [];
+      const orders: PaguOrderSummary[] = [];
+      for (const row of rows) {
+        const orderNo = String(row[0] || "").trim();
+        if (!orderNo || orderNo.startsWith("#") || orderNo.toLowerCase().includes("total")) continue;
+        orders.push({
+          orderNo,
+          transactionId: String(row[1] || "").trim(),
+          orderDate: String(row[2] || "").trim() || String(row[1] || "").trim(),
+          itemCount: String(row[3] || "").trim() || "-",
+          totalAmount: parseCurrencyNumber(row[5]),
+          link: String(row[6] || "").trim(),
+          notes: String(row[8] || "").trim() || String(row[7] || "").trim(),
+        });
+      }
+      return orders;
+    } catch (err: any) {
+      logger.error({ err: err?.message, spreadsheetId }, "Failed to get Pagu orders list");
+      return [];
+    }
+  }
+
+  /**
+   * Retrieves all detail ingredient items for a specific Pagu Order from 03_PAGU_RINCIAN
+   */
+  async getPaguOrderItems(spreadsheetId: string, orderNo: string): Promise<PaguRincianItem[]> {
+    await this.ensure5TabStructure(spreadsheetId);
+    const client = await this.getClient();
+    try {
+      const res = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A2:J`,
+      });
+      const rows = res.data.values || [];
+      const items: PaguRincianItem[] = [];
+      const cleanOrderNo = orderNo.trim();
+
+      for (let idx = 0; idx < rows.length; idx++) {
+        const row = rows[idx];
+        const rowOrderNo = String(row[0] || "").trim();
+        if (rowOrderNo === cleanOrderNo) {
+          const qty = parseCurrencyNumber(row[5]);
+          const price = parseCurrencyNumber(row[7]);
+          const totalAmount = parseCurrencyNumber(row[8]) || qty * price;
+          items.push({
+            orderNo: rowOrderNo,
+            transactionId: String(row[1] || "").trim(),
+            itemIndex: parseInt(String(row[2] || "0"), 10) || items.length + 1,
+            rowIndex: idx + 2, // header is row 1
+            supplier: String(row[3] || "").trim(),
+            itemName: String(row[4] || "").trim(),
+            qty,
+            unit: String(row[6] || "").trim(),
+            price,
+            totalAmount,
+            notes: String(row[9] || "").trim(),
+          });
+        }
+      }
+      return items;
+    } catch (err: any) {
+      logger.error({ err: err?.message, spreadsheetId, orderNo }, "Failed to get Pagu order items");
+      return [];
+    }
+  }
+
+  /**
+   * Retrieves a single Pagu item by row index from 03_PAGU_RINCIAN
+   */
+  async getPaguItemByRow(spreadsheetId: string, itemRowIndex: number): Promise<PaguRincianItem | null> {
+    await this.ensure5TabStructure(spreadsheetId);
+    const client = await this.getClient();
+    try {
+      const res = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A${itemRowIndex}:J${itemRowIndex}`,
+      });
+      const row = res.data.values?.[0];
+      if (!row || !row[0]) return null;
+
+      const qty = parseCurrencyNumber(row[5]);
+      const price = parseCurrencyNumber(row[7]);
+      const totalAmount = parseCurrencyNumber(row[8]) || qty * price;
+
+      return {
+        orderNo: String(row[0] || "").trim(),
+        transactionId: String(row[1] || "").trim(),
+        itemIndex: parseInt(String(row[2] || "0"), 10) || 1,
+        rowIndex: itemRowIndex,
+        supplier: String(row[3] || "").trim(),
+        itemName: String(row[4] || "").trim(),
+        qty,
+        unit: String(row[6] || "").trim(),
+        price,
+        totalAmount,
+        notes: String(row[9] || "").trim(),
+      };
+    } catch (err: any) {
+      logger.error({ err: err?.message, spreadsheetId, itemRowIndex }, "Failed to get Pagu item by row");
+      return null;
+    }
+  }
+
+  /**
+   * Updates an item's details in 03_PAGU_RINCIAN and cascades the update to 05_REKAP_MARGIN
+   */
+  async updatePaguItemDetail(
+    spreadsheetId: string,
+    orderNo: string,
+    itemRowIndex: number,
+    updates: {
+      qty?: number;
+      price?: number;
+      supplier?: string;
+      itemName?: string;
+      unit?: string;
+    },
+    updatedBy = "Admin"
+  ): Promise<{ success: boolean; message: string; updatedItem?: PaguRincianItem }> {
+    const currentItem = await this.getPaguItemByRow(spreadsheetId, itemRowIndex);
+    if (!currentItem) {
+      return { success: false, message: `Baris rincian bahan #${itemRowIndex} tidak ditemukan di Tab 03.` };
+    }
+
+    if (currentItem.orderNo !== orderNo.trim()) {
+      return { success: false, message: `Nomor PO tidak cocok dengan data di baris #${itemRowIndex}.` };
+    }
+
+    const client = await this.getClient();
+
+    try {
+      const batchUpdates: { range: string; values: any[][] }[] = [];
+      const origItemName = currentItem.itemName;
+
+      // 1. Prepare updates for 03_PAGU_RINCIAN
+      if (updates.supplier !== undefined) {
+        batchUpdates.push({
+          range: `'${SHEET_NAMES.PAGU_RINCIAN}'!D${itemRowIndex}`,
+          values: [[updates.supplier]],
+        });
+      }
+      if (updates.itemName !== undefined) {
+        batchUpdates.push({
+          range: `'${SHEET_NAMES.PAGU_RINCIAN}'!E${itemRowIndex}`,
+          values: [[updates.itemName]],
+        });
+      }
+      if (updates.qty !== undefined) {
+        batchUpdates.push({
+          range: `'${SHEET_NAMES.PAGU_RINCIAN}'!F${itemRowIndex}`,
+          values: [[updates.qty]],
+        });
+      }
+      if (updates.unit !== undefined) {
+        batchUpdates.push({
+          range: `'${SHEET_NAMES.PAGU_RINCIAN}'!G${itemRowIndex}`,
+          values: [[updates.unit]],
+        });
+      }
+      if (updates.price !== undefined) {
+        batchUpdates.push({
+          range: `'${SHEET_NAMES.PAGU_RINCIAN}'!H${itemRowIndex}`,
+          values: [[updates.price]],
+        });
+      }
+
+      // Execute Tab 03 updates
+      if (batchUpdates.length > 0) {
+        await client.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            valueInputOption: "USER_ENTERED",
+            data: batchUpdates,
+          },
+        });
+      }
+
+      // 2. Cascade updates to 05_REKAP_MARGIN
+      try {
+        const rekapRes = await client.spreadsheets.values.get({
+          spreadsheetId,
+          range: `'${SHEET_NAMES.REKAP_MARGIN}'!A2:G`,
+        });
+        const rekapRows = rekapRes.data.values || [];
+        const cleanOrder = orderNo.trim();
+        const cleanOrigName = origItemName.toLowerCase().trim();
+        const rekapBatchUpdates: { range: string; values: any[][] }[] = [];
+
+        for (let idx = 0; idx < rekapRows.length; idx++) {
+          const r = rekapRows[idx];
+          const rOrder = String(r[0] || "").trim();
+          const rItem = String(r[3] || "").toLowerCase().trim();
+
+          if (rOrder === cleanOrder && (rItem === cleanOrigName || (updates.itemName && rItem === updates.itemName.toLowerCase().trim()))) {
+            const rekapRowNum = idx + 2; // header is row 1
+            if (updates.supplier !== undefined) {
+              rekapBatchUpdates.push({
+                range: `'${SHEET_NAMES.REKAP_MARGIN}'!C${rekapRowNum}`,
+                values: [[updates.supplier]],
+              });
+            }
+            if (updates.itemName !== undefined) {
+              rekapBatchUpdates.push({
+                range: `'${SHEET_NAMES.REKAP_MARGIN}'!D${rekapRowNum}`,
+                values: [[updates.itemName]],
+              });
+            }
+            if (updates.qty !== undefined) {
+              rekapBatchUpdates.push({
+                range: `'${SHEET_NAMES.REKAP_MARGIN}'!E${rekapRowNum}`,
+                values: [[updates.qty]],
+              });
+            }
+            if (updates.unit !== undefined) {
+              rekapBatchUpdates.push({
+                range: `'${SHEET_NAMES.REKAP_MARGIN}'!F${rekapRowNum}`,
+                values: [[updates.unit]],
+              });
+            }
+            if (updates.price !== undefined) {
+              rekapBatchUpdates.push({
+                range: `'${SHEET_NAMES.REKAP_MARGIN}'!G${rekapRowNum}`,
+                values: [[updates.price]],
+              });
+            }
+            break;
+          }
+        }
+
+        if (rekapBatchUpdates.length > 0) {
+          await client.spreadsheets.values.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+              valueInputOption: "USER_ENTERED",
+              data: rekapBatchUpdates,
+            },
+          });
+          logger.info({ orderNo, itemName: origItemName }, "Cascaded Pagu item update to 05_REKAP_MARGIN");
+        }
+      } catch (rekapErr: any) {
+        logger.warn({ err: rekapErr?.message }, "Non-critical error cascading to 05_REKAP_MARGIN");
+      }
+
+      // 3. Update Supabase if available
+      try {
+        const supabase = getSupabaseClient();
+        const newQty = updates.qty !== undefined ? updates.qty : currentItem.qty;
+        const newPrice = updates.price !== undefined ? updates.price : currentItem.price;
+        const newName = updates.itemName !== undefined ? updates.itemName : currentItem.itemName;
+        await supabase
+          .from("sppg_order_items")
+          .update({
+            item_name: newName,
+            qty: newQty,
+            price: newPrice,
+            total_price: newQty * newPrice,
+          })
+          .eq("item_name", origItemName);
+      } catch (_) {}
+
+      // 4. Record audit log
+      const unitName = this.getUnitNameFromSpreadsheetId(spreadsheetId);
+      const auditEntries: MasterAuditLogEntry[] = [];
+      if (updates.qty !== undefined) {
+        auditEntries.push({
+          unitName,
+          editor: `${updatedBy} (Pagu Editor)`,
+          sheetTab: SHEET_NAMES.PAGU_RINCIAN,
+          refId: orderNo,
+          columnEdited: `Kuantitas (F) - ${origItemName}`,
+          oldValue: currentItem.qty,
+          newValue: updates.qty,
+          sourceAction: "Pagu Detail Update",
+        });
+      }
+      if (updates.price !== undefined) {
+        auditEntries.push({
+          unitName,
+          editor: `${updatedBy} (Pagu Editor)`,
+          sheetTab: SHEET_NAMES.PAGU_RINCIAN,
+          refId: orderNo,
+          columnEdited: `Harga Pagu (H) - ${origItemName}`,
+          oldValue: currentItem.price,
+          newValue: updates.price,
+          sourceAction: "Pagu Detail Update",
+        });
+      }
+      if (updates.supplier !== undefined) {
+        auditEntries.push({
+          unitName,
+          editor: `${updatedBy} (Pagu Editor)`,
+          sheetTab: SHEET_NAMES.PAGU_RINCIAN,
+          refId: orderNo,
+          columnEdited: `Target Rekanan (D) - ${origItemName}`,
+          oldValue: currentItem.supplier,
+          newValue: updates.supplier,
+          sourceAction: "Pagu Detail Update",
+        });
+      }
+      if (auditEntries.length > 0) {
+        await this.appendMasterAuditLogsBatch(auditEntries).catch(() => {});
+      }
+
+      const updatedItem: PaguRincianItem = {
+        ...currentItem,
+        supplier: updates.supplier !== undefined ? updates.supplier : currentItem.supplier,
+        itemName: updates.itemName !== undefined ? updates.itemName : currentItem.itemName,
+        qty: updates.qty !== undefined ? updates.qty : currentItem.qty,
+        unit: updates.unit !== undefined ? updates.unit : currentItem.unit,
+        price: updates.price !== undefined ? updates.price : currentItem.price,
+        totalAmount:
+          (updates.qty !== undefined ? updates.qty : currentItem.qty) *
+          (updates.price !== undefined ? updates.price : currentItem.price),
+      };
+
+      return {
+        success: true,
+        message: `Rincian bahan "${updatedItem.itemName}" berhasil diperbarui di Tab 03 & Tab 05.`,
+        updatedItem,
+      };
+    } catch (err: any) {
+      logger.error({ err: err?.message, spreadsheetId, orderNo, itemRowIndex }, "Failed to update Pagu item detail");
+      return { success: false, message: `Gagal memperbarui rincian bahan: ${err?.message || err}` };
+    }
+  }
+
+  /**
+   * Cascades direct Google Sheets cell edit from 03_RINCIAN_PENDAPATAN to 06_PERBANDINGAN_MARGIN
+   * Used by DeltaSyncDaemon when someone edits directly in Google Sheets.
+   */
+  async cascadePaguRincianChangeToRekapMargin(
+    spreadsheetId: string,
+    orderNo: string,
+    origItemName: string,
+    colIndex: number,
+    newValue: any
+  ): Promise<boolean> {
+    const client = await this.getClient();
+    try {
+      const rekapRes = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A2:G`,
+      });
+      const rekapRows = rekapRes.data.values || [];
+      const cleanOrder = orderNo.trim();
+      const cleanOrigName = origItemName.toLowerCase().trim();
+
+      // Column mapping from Tab 03 (colIndex 0-based) to Tab 06 (letter)
+      // colIndex 3 (Col D Tab 03: Target Supplier) -> Col C Tab 06
+      // colIndex 4 (Col E Tab 03: Uraian Bahan)    -> Col D Tab 06
+      // colIndex 5 (Col F Tab 03: Kuantitas)       -> Col E Tab 06
+      // colIndex 6 (Col G Tab 03: Satuan)          -> Col F Tab 06
+      // colIndex 7 (Col H Tab 03: Harga Pagu)      -> Col G Tab 06
+      let targetColLetter = "";
+      if (colIndex === 3) targetColLetter = "C";
+      else if (colIndex === 4) targetColLetter = "D";
+      else if (colIndex === 5) targetColLetter = "E";
+      else if (colIndex === 6) targetColLetter = "F";
+      else if (colIndex === 7) targetColLetter = "G";
+      else return false;
+
+      for (let idx = 0; idx < rekapRows.length; idx++) {
+        const r = rekapRows[idx];
+        const rOrder = String(r[0] || "").trim();
+        const rItem = String(r[3] || "").toLowerCase().trim();
+
+        if (rOrder === cleanOrder && (rItem === cleanOrigName || cleanOrigName.includes(rItem) || rItem.includes(cleanOrigName))) {
+          const rekapRowNum = idx + 2;
+          await client.spreadsheets.values.update({
+            spreadsheetId,
+            range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!${targetColLetter}${rekapRowNum}`,
+            valueInputOption: "USER_ENTERED",
+            requestBody: { values: [[newValue]] },
+          });
+          logger.info(
+            { orderNo, origItemName, targetColLetter, rekapRowNum, newValue },
+            "Cascade-synced direct edit from Tab 03 to Tab 06"
+          );
+          return true;
+        }
+      }
+      return false;
+    } catch (err: any) {
+      logger.warn({ err: err?.message, orderNo, origItemName }, "Error in cascadePaguRincianChangeToRekapMargin");
+      return false;
+    }
+  }
+
+  /**
+   * Cascades direct Google Sheets cell edit from 05_RINCIAN_PENGELUARAN to 06_PERBANDINGAN_MARGIN
+   * Used by DeltaSyncDaemon when someone edits directly in Google Sheets.
+   */
+  async cascadeRincianPengeluaranChangeToRekapMargin(
+    spreadsheetId: string,
+    orderNo: string,
+    origItemName: string,
+    colIndex: number,
+    newValue: any
+  ): Promise<boolean> {
+    const client = await this.getClient();
+    try {
+      const rekapRes = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A2:J`,
+      });
+      const rekapRows = rekapRes.data.values || [];
+      const cleanOrder = orderNo.trim();
+      const cleanOrigName = origItemName.toLowerCase().trim();
+
+      // Column mapping from Tab 05 (colIndex 0-based) to Tab 06 (letter)
+      // colIndex 3 (Col D Tab 05: Nama Supplier)                -> Col C Tab 06
+      // colIndex 4 (Col E Tab 05: Uraian Bahan / Barang)       -> Col D Tab 06
+      // colIndex 7 (Col H Tab 05: Harga Satuan Invoice)        -> Col I Tab 06
+      // colIndex 8 (Col I Tab 05: Total Belanja)               -> Col J Tab 06
+      let targetColLetter = "";
+      if (colIndex === 3) targetColLetter = "C";
+      else if (colIndex === 4) targetColLetter = "D";
+      else if (colIndex === 7) targetColLetter = "I";
+      else if (colIndex === 8) targetColLetter = "J";
+      else return false;
+
+      for (let idx = 0; idx < rekapRows.length; idx++) {
+        const r = rekapRows[idx];
+        const rOrder = String(r[0] || "").trim();
+        const rItem = String(r[3] || "").toLowerCase().trim();
+
+        if (
+          (!cleanOrder || cleanOrder === "-" || rOrder === cleanOrder) &&
+          (rItem === cleanOrigName || cleanOrigName.includes(rItem) || rItem.includes(cleanOrigName))
+        ) {
+          const rekapRowNum = idx + 2;
+          await client.spreadsheets.values.update({
+            spreadsheetId,
+            range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!${targetColLetter}${rekapRowNum}`,
+            valueInputOption: "USER_ENTERED",
+            requestBody: { values: [[newValue]] },
+          });
+          logger.info(
+            { orderNo, origItemName, targetColLetter, rekapRowNum, newValue },
+            "Cascade-synced direct edit from Tab 05 to Tab 06"
+          );
+          return true;
+        }
+      }
+      return false;
+    } catch (err: any) {
+      logger.warn({ err: err?.message, orderNo, origItemName }, "Error in cascadeRincianPengeluaranChangeToRekapMargin");
+      return false;
+    }
+  }
+
+  /**
+   * Intelligently queries Pagu items by orderRef (IH001, 03/31/08/26) and itemName
+   */
+  async findPaguItemByQuery(
+    spreadsheetId: string,
+    orderRef?: string,
+    itemName?: string
+  ): Promise<FindPaguItemResult> {
+    await this.ensure5TabStructure(spreadsheetId);
+    const availableOrders = await this.getPaguOrders(spreadsheetId);
+
+    let matchedOrder: PaguOrderSummary | null = null;
+    if (orderRef) {
+      const cleanRef = orderRef.trim().toLowerCase();
+      matchedOrder =
+        availableOrders.find((o) => {
+          const tId = (o.transactionId || "").toLowerCase();
+          const oNo = o.orderNo.toLowerCase();
+          return tId.includes(cleanRef) || oNo === cleanRef || cleanRef.includes(oNo);
+        }) || null;
+    }
+
+    // If orderRef was not specified or matched, but only 1 order exists
+    if (!matchedOrder && !orderRef && availableOrders.length === 1) {
+      matchedOrder = availableOrders[0];
+    }
+
+    if (matchedOrder) {
+      const allItemsInOrder = await this.getPaguOrderItems(spreadsheetId, matchedOrder.orderNo);
+
+      if (itemName) {
+        const cleanItem = itemName.toLowerCase().trim();
+        // 1. Exact match
+        let matchingItems = allItemsInOrder.filter(
+          (it) => it.itemName.toLowerCase().trim() === cleanItem
+        );
+        // 2. Substring match
+        if (matchingItems.length === 0) {
+          matchingItems = allItemsInOrder.filter((it) => {
+            const itName = it.itemName.toLowerCase().trim();
+            return itName.includes(cleanItem) || cleanItem.includes(itName);
+          });
+        }
+        const foundItem = matchingItems.length === 1 ? matchingItems[0] : null;
+
+        return {
+          order: matchedOrder,
+          foundItem,
+          allItemsInOrder,
+          matchingItems,
+          availableOrders,
+        };
+      }
+
+      return {
+        order: matchedOrder,
+        foundItem: null,
+        allItemsInOrder,
+        matchingItems: [],
+        availableOrders,
+      };
+    }
+
+    // If order is not identified but itemName is provided, search across all items in Tab 03
+    if (itemName) {
+      const client = await this.getClient();
+      const res = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A2:J`,
+      });
+      const rows = res.data.values || [];
+      const cleanItem = itemName.toLowerCase().trim();
+      const matches: PaguRincianItem[] = [];
+
+      for (let idx = 0; idx < rows.length; idx++) {
+        const row = rows[idx];
+        const rItem = String(row[4] || "").toLowerCase().trim();
+        if (rItem === cleanItem || rItem.includes(cleanItem) || cleanItem.includes(rItem)) {
+          const qty = parseCurrencyNumber(row[5]);
+          const price = parseCurrencyNumber(row[7]);
+          matches.push({
+            orderNo: String(row[0] || "").trim(),
+            transactionId: String(row[1] || "").trim(),
+            itemIndex: parseInt(String(row[2] || "0"), 10) || matches.length + 1,
+            rowIndex: idx + 2,
+            supplier: String(row[3] || "").trim(),
+            itemName: String(row[4] || "").trim(),
+            qty,
+            unit: String(row[6] || "").trim(),
+            price,
+            totalAmount: parseCurrencyNumber(row[8]) || qty * price,
+            notes: String(row[9] || "").trim(),
+          });
+        }
+      }
+
+      if (matches.length === 1) {
+        const single = matches[0];
+        const order = availableOrders.find((o) => o.orderNo === single.orderNo) || null;
+        const allItemsInOrder = await this.getPaguOrderItems(spreadsheetId, single.orderNo);
+        return {
+          order,
+          foundItem: single,
+          allItemsInOrder,
+          matchingItems: [single],
+          availableOrders,
+        };
+      }
+
+      return {
+        order: null,
+        foundItem: null,
+        allItemsInOrder: [],
+        matchingItems: matches,
+        availableOrders,
+      };
+    }
+
+    return {
+      order: null,
+      foundItem: null,
+      allItemsInOrder: [],
+      matchingItems: [],
+      availableOrders,
+    };
+  }
+
+  /**
+   * Adds a new Pagu item to an existing PO by inserting a row right after the last item of that PO
+   * in Tab 03_PAGU_RINCIAN and Tab 05_REKAP_MARGIN, shifting any rows below down.
+   */
+  async addPaguItemToOrder(
+    spreadsheetId: string,
+    orderNo: string,
+    item: {
+      supplier?: string;
+      itemName: string;
+      qty: number;
+      unit?: string;
+      price: number;
+      notes?: string;
+    },
+    addedBy = "Telegram User"
+  ): Promise<{ success: boolean; message: string; addedItem?: PaguRincianItem }> {
+    await this.ensure5TabStructure(spreadsheetId);
+    const client = await this.getClient();
+    try {
+      const orders = await this.getPaguOrders(spreadsheetId);
+      const cleanOrderNo = orderNo.trim();
+      const order = orders.find(
+        (o) => o.orderNo.toLowerCase() === cleanOrderNo.toLowerCase()
+      );
+      const transactionId = order?.transactionId || `PO-${cleanOrderNo}`;
+      const orderDate = order?.orderDate || new Date().toISOString().split("T")[0];
+
+      // 1. Get numeric sheetIds for Tab 03 and Tab 06
+      const meta = await client.spreadsheets.get({ spreadsheetId });
+      const sheetMap = new Map<string, number>();
+      meta.data.sheets?.forEach((s) => {
+        if (s.properties?.title && typeof s.properties?.sheetId === "number") {
+          sheetMap.set(s.properties.title, s.properties.sheetId);
+        }
+      });
+      const rincianSheetId = sheetMap.get(SHEET_NAMES.RINCIAN_PENDAPATAN) ?? SHEET_IDS.RINCIAN_PENDAPATAN;
+      const rekapSheetId = sheetMap.get(SHEET_NAMES.PERBANDINGAN_MARGIN) ?? SHEET_IDS.PERBANDINGAN_MARGIN;
+
+      // 2. Find the last row of cleanOrderNo in 03_RINCIAN_PENDAPATAN
+      const rincianRes = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A:C`,
+      });
+      const rincianRows = rincianRes.data.values || [];
+      let lastRincianRowIndex = -1;
+      let lastItemIndex = 0;
+
+      for (let i = 0; i < rincianRows.length; i++) {
+        const row = rincianRows[i];
+        if (String(row[0] || "").trim().toLowerCase() === cleanOrderNo.toLowerCase()) {
+          lastRincianRowIndex = i + 1; // 1-based
+          const parsedIdx = parseInt(String(row[2] || "0"), 10);
+          if (!isNaN(parsedIdx) && parsedIdx > lastItemIndex) {
+            lastItemIndex = parsedIdx;
+          }
+        }
+      }
+
+      const nextItemIndex = lastItemIndex + 1;
+      const unit = item.unit || "satuan";
+      const supplier = item.supplier || "Lainnya";
+      const notes = item.notes || "-";
+
+      let targetRincianRowIdx: number;
+
+      if (lastRincianRowIndex > 0) {
+        // Insert dimension right after the last item of this PO (0-based startIndex = lastRincianRowIndex)
+        targetRincianRowIdx = lastRincianRowIndex + 1;
+        await client.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [
+              {
+                insertDimension: {
+                  range: {
+                    sheetId: rincianSheetId,
+                    dimension: "ROWS",
+                    startIndex: lastRincianRowIndex,
+                    endIndex: lastRincianRowIndex + 1,
+                  },
+                  inheritFromBefore: true,
+                },
+              },
+            ],
+          },
+        });
+
+        // Write values to the newly inserted row in Tab 03
+        await client.spreadsheets.values.update({
+          spreadsheetId,
+          range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A${targetRincianRowIdx}:J${targetRincianRowIdx}`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: {
+            values: [
+              [
+                cleanOrderNo,
+                transactionId,
+                nextItemIndex,
+                supplier,
+                item.itemName,
+                item.qty,
+                unit,
+                item.price,
+                `=IF(OR(F${targetRincianRowIdx}=""; H${targetRincianRowIdx}=""); ""; F${targetRincianRowIdx} * H${targetRincianRowIdx})`,
+                notes,
+              ],
+            ],
+          },
+        });
+      } else {
+        // Fallback: append at the end if order had no existing rows
+        const fallbackCount = rincianRows.length;
+        targetRincianRowIdx = Math.max(fallbackCount + 1, 2);
+        const rincianRow = [
+          cleanOrderNo,
+          transactionId,
+          nextItemIndex,
+          supplier,
+          item.itemName,
+          item.qty,
+          unit,
+          item.price,
+          `=IF(OR(F${targetRincianRowIdx}=""; H${targetRincianRowIdx}=""); ""; F${targetRincianRowIdx} * H${targetRincianRowIdx})`,
+          notes,
+        ];
+        await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.RINCIAN_PENDAPATAN, [rincianRow]);
+      }
+
+      // 3. Find the last row of cleanOrderNo in 06_PERBANDINGAN_MARGIN and insert row similarly
+      const rekapRes = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A:A`,
+      });
+      const rekapRows = rekapRes.data.values || [];
+      let lastRekapRowIndex = -1;
+
+      for (let i = 0; i < rekapRows.length; i++) {
+        const row = rekapRows[i];
+        if (String(row[0] || "").trim().toLowerCase() === cleanOrderNo.toLowerCase()) {
+          lastRekapRowIndex = i + 1; // 1-based
+        }
+      }
+
+      let targetRekapRowIdx: number;
+
+      if (lastRekapRowIndex > 0) {
+        targetRekapRowIdx = lastRekapRowIndex + 1;
+        await client.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [
+              {
+                insertDimension: {
+                  range: {
+                    sheetId: rekapSheetId,
+                    dimension: "ROWS",
+                    startIndex: lastRekapRowIndex,
+                    endIndex: lastRekapRowIndex + 1,
+                  },
+                  inheritFromBefore: true,
+                },
+              },
+            ],
+          },
+        });
+
+        await client.spreadsheets.values.update({
+          spreadsheetId,
+          range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A${targetRekapRowIdx}:M${targetRekapRowIdx}`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: {
+            values: [
+              [
+                cleanOrderNo,
+                orderDate,
+                supplier,
+                item.itemName,
+                item.qty,
+                unit,
+                item.price,
+                `=IF(OR(E${targetRekapRowIdx}=""; G${targetRekapRowIdx}=""); ""; E${targetRekapRowIdx} * G${targetRekapRowIdx})`,
+                "",
+                "",
+                `=IF(J${targetRekapRowIdx}=""; ""; H${targetRekapRowIdx}-J${targetRekapRowIdx})`,
+                `=IF(OR(H${targetRekapRowIdx}=""; J${targetRekapRowIdx}=""); ""; IFERROR(K${targetRekapRowIdx}/H${targetRekapRowIdx}; 0))`,
+                `=IF(J${targetRekapRowIdx}=""; "🟡 MENUNGGU INVOICE"; IF(K${targetRekapRowIdx}>0; "🟢 HEMAT"; IF(K${targetRekapRowIdx}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`,
+              ],
+            ],
+          },
+        });
+      } else {
+        const fallbackRekapCount = rekapRows.length;
+        targetRekapRowIdx = Math.max(fallbackRekapCount + 1, 2);
+        const rekapRow = [
+          cleanOrderNo,
+          orderDate,
+          supplier,
+          item.itemName,
+          item.qty,
+          unit,
+          item.price,
+          `=IF(OR(E${targetRekapRowIdx}=""; G${targetRekapRowIdx}=""); ""; E${targetRekapRowIdx} * G${targetRekapRowIdx})`,
+          "",
+          "",
+          `=IF(J${targetRekapRowIdx}=""; ""; H${targetRekapRowIdx}-J${targetRekapRowIdx})`,
+          `=IF(OR(H${targetRekapRowIdx}=""; J${targetRekapRowIdx}=""); ""; IFERROR(K${targetRekapRowIdx}/H${targetRekapRowIdx}; 0))`,
+          `=IF(J${targetRekapRowIdx}=""; "🟡 MENUNGGU INVOICE"; IF(K${targetRekapRowIdx}>0; "🟢 HEMAT"; IF(K${targetRekapRowIdx}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`,
+        ];
+        await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PERBANDINGAN_MARGIN, [rekapRow]);
+      }
+
+      // 4. Record Master Audit Log
+      const unitName = this.getUnitNameFromSpreadsheetId(spreadsheetId);
+      await this.appendMasterAuditLogsBatch([
+        {
+          unitName,
+          editor: `${addedBy} (Pagu Adder)`,
+          sheetTab: SHEET_NAMES.RINCIAN_PENDAPATAN,
+          refId: cleanOrderNo,
+          columnEdited: `Sisip Bahan Baru di PO ${cleanOrderNo} (Baris ${targetRincianRowIdx}) - ${item.itemName}`,
+          oldValue: "-",
+          newValue: `${item.qty} ${unit} @ Rp ${item.price}`,
+          sourceAction: "Pagu Detail Add (Insert Row)",
+        },
+      ]).catch(() => {});
+
+      // 5. Update Master Dashboard Total if available
+      if (env.GOOGLE_SHEET_ID_MASTER && spreadsheetId !== env.GOOGLE_SHEET_ID_MASTER) {
+        try {
+          const itemsInOrder = await this.getPaguOrderItems(spreadsheetId, cleanOrderNo);
+          const newTotal = itemsInOrder.reduce((acc, it) => acc + it.totalAmount, 0);
+          await this.updateMasterTransactionRow(cleanOrderNo, { total_amount: newTotal });
+        } catch (_) {}
+      }
+
+      const addedItem: PaguRincianItem = {
+        orderNo: cleanOrderNo,
+        transactionId,
+        itemIndex: nextItemIndex,
+        rowIndex: targetRincianRowIdx,
+        supplier,
+        itemName: item.itemName,
+        qty: item.qty,
+        unit,
+        price: item.price,
+        totalAmount: item.qty * item.price,
+        notes,
+      };
+
+      return {
+        success: true,
+        message: `Bahan "${item.itemName}" berhasil disisipkan di baris ke-${targetRincianRowIdx} (Tab 03) dan baris ke-${targetRekapRowIdx} (Tab 06). Baris di bawahnya telah bergeser turun secara otomatis.`,
+        addedItem,
+      };
+    } catch (err: any) {
+      logger.error({ err: err?.message, spreadsheetId, orderNo, item }, "Failed to insert Pagu item to order");
+      return { success: false, message: `Gagal menambahkan bahan baru: ${err?.message || err}` };
+    }
+  }
+
+  insertPaguItemToOrder = this.addPaguItemToOrder;
 }
 
 export const googleSheetsService = new GoogleSheetsService();

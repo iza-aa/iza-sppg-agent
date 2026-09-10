@@ -13,14 +13,14 @@ export const SppgOrderItemSchema = z.object({
 
 export const SppgOrderSchema = z.object({
   type: z.literal("income").default("income").describe("Selalu bernilai 'income' karena ini pagu pendapatan hak tagih vendor"),
-  sppg_unit: z.string().describe("Nama unit SPPG (contoh: SPPG Patila, Luwu Utara)"),
-  order_no: z.string().describe("Nomor surat nota pesanan (contoh: 05/02/09/26)"),
-  order_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Tanggal pesanan format YYYY-MM-DD"),
-  arrival_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Tanggal bahan tiba/digunakan format YYYY-MM-DD"),
+  sppg_unit: z.string().default("SPPG Patila, Luwu Utara").describe("Nama unit SPPG (contoh: SPPG Patila, Luwu Utara)"),
+  order_no: z.string().default("PO-AUTO").describe("Nomor surat nota pesanan (contoh: 05/02/09/26)"),
+  order_date: z.string().default(() => new Date().toISOString().slice(0, 10)).describe("Tanggal pesanan format YYYY-MM-DD"),
+  arrival_date: z.string().default(() => new Date().toISOString().slice(0, 10)).describe("Tanggal bahan tiba/digunakan format YYYY-MM-DD"),
   items: z.array(SppgOrderItemSchema).describe("Daftar seluruh 20+ bahan makanan yang dipesan"),
   total_amount: z.number().describe("Total plafon anggaran pesanan dalam Rupiah (contoh: 29581000)"),
-  signed_by: z.string().optional().describe("Nama pejabat penandatangan / Ka. SPPG"),
-  notes: z.string().optional().describe("Catatan atau ketentuan khusus dari SPPG"),
+  signed_by: z.string().optional().default("-").describe("Nama pejabat penandatangan / Ka. SPPG"),
+  notes: z.string().optional().default("-").describe("Catatan atau ketentuan khusus dari SPPG"),
 });
 
 export type SppgOrderItem = z.infer<typeof SppgOrderItemSchema>;

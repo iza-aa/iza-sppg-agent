@@ -1,6 +1,7 @@
 import { agyConnector } from "./agy-connector.js";
 import { staticConversationalReply } from "./static-fallback.js";
 import { parseTransactionFromText, ParsedTextTransaction } from "./parsers/text-transaction.parser.js";
+import { parsePaguModificationFromText, PaguModificationRequest } from "./parsers/pagu-modification.parser.js";
 import { cleanMarkdownToTelegramHtml } from "../telegram/formatter.js";
 import { logger } from "../utils/logger.js";
 
@@ -13,6 +14,7 @@ export type MetaAgentIntent =
   | { type: "DETAIL_TRANSACTION"; transactionId: string }
   | { type: "DELETE_TRANSACTION"; transactionId: string }
   | { type: "EDIT_TRANSACTION"; transactionId: string; newAmount?: number; newSupplier?: string }
+  | { type: "PAGU_MODIFICATION"; request: PaguModificationRequest }
   | { type: "INVITE"; name: string; role: "super_admin" | "admin" | "member" }
   | { type: "RECORD_TRANSACTION"; parsed: ParsedTextTransaction }
   | { type: "GENERAL_CHAT"; reply: string };
@@ -100,7 +102,8 @@ export class MetaAgent {
       return { type: "DETAIL_TRANSACTION", transactionId: standaloneCodeMatch[0] };
     }
     const isExplicitRecord = /\b(catat|simpan|input|masukkan|rekam|tulis)\b/i.test(text);
-    if (specificIdInText && !isExplicitRecord) {
+    const isExplicitAction = /\b(ubah|ngubah|mengubah|ganti|mengganti|edit|revisi|koreksi|hapus|delete|batal(?:kan)?|tambah|nambah|menambah|tambahkan|menambahkan|masukkan|input|sisip|sisipkan)\b/i.test(text);
+    if (specificIdInText && !isExplicitRecord && !isExplicitAction) {
       return { type: "DETAIL_TRANSACTION", transactionId: specificIdInText[1] };
     }
 
@@ -108,6 +111,22 @@ export class MetaAgent {
     const deleteMatch = text.match(/\b(?:hapus|delete|batal(?:kan)?)\s+(?:transaksi\s+|nota\s+)?([A-Za-z0-9_-]{3,35})\b/i);
     if (deleteMatch) {
       return { type: "DELETE_TRANSACTION", transactionId: deleteMatch[1] };
+    }
+
+    const hasPaguActionVerb = /\b(ubah|ngubah|mengubah|ganti|mengganti|edit|revisi|koreksi|tambah|nambah|menambah|tambahkan|menambahkan|masukkan|input|sisip|sisipkan)\b/i.test(lower);
+    const isPaguModificationText =
+      hasPaguActionVerb && (
+        /\b(pagu|rincian|kuantitas|qty|harga|satuan|bahan|item)\b/i.test(lower) ||
+        /\b(?:SPPG\d*[-_])?(?:IH|II)\d+/i.test(lower) ||
+        /\b\d{2}\/\d{2}\/\d{2}\/\d{2}\b/.test(lower) ||
+        /\bpo\b/i.test(lower)
+      );
+
+    if (isPaguModificationText) {
+      const paguMod = await parsePaguModificationFromText(text);
+      if (paguMod) {
+        return { type: "PAGU_MODIFICATION", request: paguMod };
+      }
     }
 
     // Edit Transaction: e.g. "edit EI002 nominal 500000" or "ubah EI002 jadi 500rb"

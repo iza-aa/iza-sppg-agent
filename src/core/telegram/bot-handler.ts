@@ -1,4 +1,4 @@
-import { Bot, Context, InputFile } from "grammy";
+import { Bot, Context, InputFile, InlineKeyboard } from "grammy";
 import crypto from "node:crypto";
 import { SPPGUnitConfig } from "../../config/sppg.config.js";
 import { getSupabaseClient } from "../db/supabase.js";
@@ -6,6 +6,7 @@ import { UserRepository } from "../db/repositories/user.repository.js";
 import { PendingActionRepository } from "../db/repositories/pending-action.repository.js";
 import { parseSppgOrderFromImage } from "../ai/parsers/sppg-order.parser.js";
 import { parseSupplierReceiptFromImage } from "../ai/parsers/supplier-receipt.parser.js";
+import { staticParsePaguModification } from "../ai/parsers/pagu-modification.parser.js";
 import { metaAgent } from "../ai/meta-agent.js";
 import { googleDriveService } from "../google/drive.service.js";
 import { googleSheetsService } from "../google/sheets.service.js";
@@ -16,6 +17,7 @@ import {
   buildBackToDraftKeyboard,
   buildEditSubmenuKeyboard,
   buildPaguSelectorKeyboard,
+  buildPaguPromptKeyboard,
   buildCancelInputKeyboard,
   buildRekapActionKeyboard,
   buildMultiSheetSelectorKeyboard,
@@ -25,6 +27,13 @@ import {
   buildEditConfirmKeyboard,
   buildStartQuickActionKeyboard,
   buildInviteRolePickerKeyboard,
+  buildPaguOrderListKeyboard,
+  buildPaguItemListKeyboard,
+  buildPaguItemActionKeyboard,
+  buildPaguItemEditConfirmKeyboard,
+  buildPaguOneShotConfirmKeyboard,
+  buildPaguClarifyAddOrReplaceKeyboard,
+  buildPaguItemPickForReplaceKeyboard,
 } from "./keyboards.js";
 import {
   escapeHtml,
@@ -43,6 +52,74 @@ import { parseVoiceNote } from "../document-parser/voice.parser.js";
 import { parsePdfDocument } from "../document-parser/pdf.parser.js";
 import { logger } from "../utils/logger.js";
 
+export interface PaguOneShotDraft {
+  draftId: string;
+  spreadsheetId: string;
+  orderNo: string;
+  orderLabel?: string;
+  action: "UPDATE" | "ADD";
+  itemRowIndex?: number;
+  origItemName?: string;
+  supplier?: string;
+  itemName: string;
+  qty: number;
+  unit: string;
+  price: number;
+  oldQty?: number;
+  oldPrice?: number;
+  oldSupplier?: string;
+  updatedBy: string;
+  createdAt: number;
+}
+
+const pendingPaguModifications = new Map<string, PaguOneShotDraft>();
+
+function renderPaguOneShotCard(draft: PaguOneShotDraft, unitName: string): string {
+  const newSubtotal = draft.qty * draft.price;
+  if (draft.action === "UPDATE") {
+    const oldSubtotal = (draft.oldQty || 0) * (draft.oldPrice || 0);
+    const subtotalDiff = newSubtotal - oldSubtotal;
+    const diffSign = subtotalDiff > 0 ? `+${formatRupiah(subtotalDiff)}` : `${formatRupiah(subtotalDiff)}`;
+    return [
+      `📋 <b>KONFIRMASI PERUBAHAN PAGU BAHAN (1-SHOT)</b>`,
+      `Unit: <b>${escapeHtml(unitName)}</b>`,
+      `------------------------------------------`,
+      `• <b>Surat Pesanan:</b> <code>${escapeHtml(draft.orderLabel || draft.orderNo)}</code>`,
+      `• <b>Bahan:</b> <b>${escapeHtml(draft.itemName)}</b>`,
+      `------------------------------------------`,
+      `<b>DATA LAMA:</b>`,
+      `• Kuantitas: ${draft.oldQty || "-"} ${escapeHtml(draft.unit)} @ ${formatRupiah(draft.oldPrice || 0)}`,
+      `• Subtotal: ${formatRupiah(oldSubtotal)}`,
+      draft.oldSupplier ? `• Rekanan: ${escapeHtml(draft.oldSupplier)}` : "",
+      ``,
+      `<b>DATA BARU:</b>`,
+      `• Kuantitas: <b>${draft.qty} ${escapeHtml(draft.unit)}</b> @ <b>${formatRupiah(draft.price)}</b>`,
+      `• Subtotal: <b>${formatRupiah(newSubtotal)}</b> <i>(${diffSign})</i>`,
+      draft.supplier ? `• Rekanan: <b>${escapeHtml(draft.supplier)}</b>` : "",
+      `------------------------------------------`,
+      `🔄 <i>Tab 03_RINCIAN_PENDAPATAN dan Tab 06_PERBANDINGAN_MARGIN akan otomatis disinkronkan.</i>`,
+      `Apakah perubahan ini sudah sesuai dan siap ditulis ke spreadsheet?`,
+    ].filter(Boolean).join("\n");
+  } else {
+    return [
+      `📋 <b>KONFIRMASI PENAMBAHAN BAHAN BARU KE PAGU</b>`,
+      `Unit: <b>${escapeHtml(unitName)}</b>`,
+      `------------------------------------------`,
+      `• <b>Surat Pesanan:</b> <code>${escapeHtml(draft.orderLabel || draft.orderNo)}</code>`,
+      `• <b>Bahan Baru:</b> <b>${escapeHtml(draft.itemName)}</b>`,
+      `• <b>Kuantitas:</b> <b>${draft.qty} ${escapeHtml(draft.unit)}</b>`,
+      `• <b>Harga Satuan:</b> <b>${formatRupiah(draft.price)}</b>`,
+      `• <b>Total Pagu Bahan:</b> <b>${formatRupiah(newSubtotal)}</b>`,
+      draft.supplier ? `• <b>Target Rekanan:</b> <b>${escapeHtml(draft.supplier)}</b>` : `• <b>Target Rekanan:</b> Lainnya`,
+      `------------------------------------------`,
+      `📍 <i>Bahan baru akan disisipkan di posisi paling bawah pesanan ini (baris pesanan lain di bawahnya bergeser otomatis).</i>`,
+      `📈 <i>Tab 03_RINCIAN_PENDAPATAN dan Tab 06_PERBANDINGAN_MARGIN akan disinkronkan, serta total anggaran Tab 02 bertambah.</i>`,
+      ``,
+      `Apakah Anda ingin menulis bahan baru ini ke spreadsheet?`,
+    ].filter(Boolean).join("\n");
+  }
+}
+
 interface UserInteractionState {
   activeDraftId?: string;
   activeDraftMsgId?: number;
@@ -50,6 +127,16 @@ interface UserInteractionState {
   editingField?: "nominal" | "name" | "pagu" | null;
   editingTransactionId?: string;
   promptMsgId?: number;
+  editingPagu?: {
+    orderNo: string;
+    rowIndex: number;
+    field: "qty" | "price" | "supplier" | "name";
+    itemName: string;
+    unit: string;
+  } | null;
+  addingPaguItemToOrder?: {
+    orderNo: string;
+  } | null;
 }
 
 export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
@@ -648,11 +735,65 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     });
   }
 
+  async function sendPaguOrders(ctx: Context) {
+    if (await isCallerMember(ctx.from?.id)) {
+      return notifyMemberRestricted(ctx, "kelola pagu anggaran dapur");
+    }
+
+    await withTyping(ctx, async () => {
+      const orders = await googleSheetsService.getPaguOrders(unitConfig.spreadsheetId);
+      if (orders.length === 0) {
+        await ctx.reply(
+          `📋 <b>KELOLA PAGU / RINCIAN BAHAN</b>\n` +
+          `Unit: <b>${escapeHtml(unitConfig.name)}</b>\n\n` +
+          `ℹ️ Belum ada data Surat Pesanan (PO) di Tab 02_PAGU_PENERIMAAN. Silakan upload nota pesanan atau input anggaran terlebih dahulu.`,
+          { parse_mode: "HTML" }
+        );
+        return;
+      }
+
+      const orderListText = [
+        `📋 <b>KELOLA PAGU & RINCIAN BAHAN (Tab 03)</b>`,
+        `Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
+        `------------------------------------------`,
+        `Pilih Surat Pesanan (PO) yang ingin Anda periksa atau ubah rincian kuantitas/harga bahannya:`,
+      ].join("\n");
+
+      await ctx.reply(orderListText, {
+        parse_mode: "HTML",
+        reply_markup: buildPaguOrderListKeyboard(orders),
+      });
+    });
+  }
+
   bot.command("sheets", sendSheets);
   bot.command("rekap", sendRekap);
   bot.command("pdf", (ctx) => sendPdf(ctx));
   bot.command("spj", (ctx) => sendPdf(ctx));
   bot.command("transaksi", async (ctx) => sendRecentTransactions(ctx, 8));
+  bot.command("pagu", sendPaguOrders);
+  bot.command("editpagu", sendPaguOrders);
+
+  // Helper to determine the appropriate confirmation keyboard:
+  // If ambiguous (multiple unfulfilled Pagu candidates and user hasn't selected yet),
+  // prompt directly with candidate selection buttons (hiding the Save button).
+  function getDraftConfirmationReplyMarkup(
+    draftId: string,
+    actionType: "SPPG_ORDER" | "SUPPLIER_EXPENSE",
+    payload: any,
+    itemsCount?: number,
+    hasMultiplePagu?: boolean
+  ) {
+    if (
+      actionType === "SUPPLIER_EXPENSE" &&
+      payload?.paguSelectionRequired === true &&
+      Array.isArray(payload?.paguCandidates) &&
+      payload.paguCandidates.length > 1
+    ) {
+      return buildPaguPromptKeyboard(draftId, payload.paguCandidates);
+    }
+    return buildDraftConfirmationKeyboard(draftId, actionType, itemsCount, hasMultiplePagu);
+  }
 
   // Helper to match and enrich receipt with active unfulfilled Pagu candidates
   async function enrichReceiptWithPaguContext(
@@ -662,15 +803,52 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     const firstItem = receipt?.items?.[0];
     if (!firstItem?.item_name) return false;
     try {
+      // 1. If explicitly marked as Non-Pagu / Belanja Tambahan
+      if (receipt.sppg_ref_no === "-") {
+        receipt.paguSelectionRequired = false;
+        receipt.paguContext = {
+          sppg_ref_no: "-",
+          order_date: "-",
+          pagu_supplier: "-",
+          item_name: firstItem.item_name,
+          target_qty: 0,
+          unit: firstItem.unit || "",
+          fulfilled_qty: 0,
+          current_qty: firstItem.qty,
+          remaining_qty: 0,
+          candidates_count: 0,
+        };
+        return false;
+      }
+
       const candidates = await googleSheetsService.getPaguCandidatesForCommodity(
         spreadsheetId,
         firstItem.item_name
       );
-      if (candidates.length > 0) {
-        if (!receipt.sppg_ref_no || receipt.sppg_ref_no === "-") {
-          receipt.sppg_ref_no = candidates[0].sppg_ref_no;
-        }
+
+      // 2. No active unfulfilled candidates found in 06_PERBANDINGAN_MARGIN
+      if (candidates.length === 0) {
+        receipt.sppg_ref_no = "-";
+        receipt.paguSelectionRequired = false;
+        receipt.paguContext = {
+          sppg_ref_no: "-",
+          order_date: "-",
+          pagu_supplier: "-",
+          item_name: firstItem.item_name,
+          target_qty: 0,
+          unit: firstItem.unit || "",
+          fulfilled_qty: 0,
+          current_qty: firstItem.qty,
+          remaining_qty: 0,
+          candidates_count: 0,
+        };
+        return false;
+      }
+
+      // 3. If receipt already specifies an explicit PO number (from caption, OCR, or user button tap)
+      if (receipt.sppg_ref_no && receipt.sppg_ref_no !== "-") {
         const matched = candidates.find((c) => c.sppg_ref_no === receipt.sppg_ref_no) || candidates[0];
+        receipt.paguSelectionRequired = false;
         receipt.paguContext = {
           sppg_ref_no: matched.sppg_ref_no,
           order_date: matched.order_date,
@@ -685,6 +863,33 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
         };
         return candidates.length > 1;
       }
+
+      // 4. Receipt does NOT specify an SPPG Ref:
+      if (candidates.length === 1) {
+        // Unambiguous: exactly 1 unfulfilled candidate
+        receipt.sppg_ref_no = candidates[0].sppg_ref_no;
+        receipt.paguSelectionRequired = false;
+        receipt.paguContext = {
+          sppg_ref_no: candidates[0].sppg_ref_no,
+          order_date: candidates[0].order_date,
+          pagu_supplier: candidates[0].supplier_name,
+          item_name: candidates[0].item_name,
+          target_qty: candidates[0].target_qty,
+          unit: candidates[0].unit,
+          fulfilled_qty: candidates[0].fulfilled_qty,
+          current_qty: firstItem.qty,
+          remaining_qty: candidates[0].remaining_qty,
+          candidates_count: 1,
+        };
+        return false;
+      }
+
+      // 5. Ambiguous: Multiple unfulfilled candidates found! DO NOT GUESS!
+      // Require explicit user selection before allowing save.
+      receipt.paguSelectionRequired = true;
+      receipt.paguCandidates = candidates;
+      receipt.sppg_ref_no = ""; // Keep empty until user chooses
+      return true;
     } catch (err) {
       logger.warn({ err }, "Could not enrich receipt with Pagu context");
     }
@@ -815,7 +1020,7 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
 
       const sentMsg = await ctx.reply(cardText, {
         parse_mode: "HTML",
-        reply_markup: buildDraftConfirmationKeyboard(draftId, actionType, itemsCount, hasMultiplePagu),
+        reply_markup: getDraftConfirmationReplyMarkup(draftId, actionType, payload, itemsCount, hasMultiplePagu),
       });
 
       state.activeDraftMsgId = sentMsg.message_id;
@@ -896,7 +1101,7 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
           `🎙️ <i>"${escapeHtml(result.transcription)}"</i>\n\n${cardText}`,
           {
             parse_mode: "HTML",
-            reply_markup: buildDraftConfirmationKeyboard(draftId, result.transaction.type, itemsCount, hasMultiplePagu),
+            reply_markup: getDraftConfirmationReplyMarkup(draftId, result.transaction.type, result.transaction.data, itemsCount, hasMultiplePagu),
           }
         );
         state.activeDraftMsgId = sentMsg.message_id;
@@ -995,7 +1200,7 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
             parsed.transactions,
             ctx.from?.first_name || "Admin"
           );
-          await ctx.reply(`✅ <b>Berhasil Menyimpan ${parsed.transactions.length} Transaksi ke Tab 04_PENGELUARAN_SUPPLIER!</b>`, { parse_mode: "HTML" });
+          await ctx.reply(`✅ <b>Berhasil Menyimpan ${parsed.transactions.length} Transaksi ke Tab 04_PAGU_PENGELUARAN & Tab 05_RINCIAN_PENGELUARAN!</b>`, { parse_mode: "HTML" });
         } catch (parseErr: any) {
           logger.error({ parseErr }, "Spreadsheet parsing error");
           await ctx.reply(`❌ Gagal membaca file spreadsheet: ${escapeHtml(parseErr?.message || parseErr)}`, { parse_mode: "HTML" });
@@ -1076,7 +1281,7 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
         const itemsCount = parsedPdf.type === "SPPG_ORDER" ? (parsedPdf.data as any)?.items?.length || 0 : undefined;
         const sentMsg = await ctx.reply(cardText, {
           parse_mode: "HTML",
-          reply_markup: buildDraftConfirmationKeyboard(draftId, parsedPdf.type, itemsCount, hasMultiplePagu),
+          reply_markup: getDraftConfirmationReplyMarkup(draftId, parsedPdf.type, parsedPdf.data, itemsCount, hasMultiplePagu),
         });
         state.activeDraftMsgId = sentMsg.message_id;
       });
@@ -1114,6 +1319,18 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
       });
     }
 
+    if (
+      draft.action_type === "SUPPLIER_EXPENSE" &&
+      draft.payload?.paguSelectionRequired === true &&
+      Array.isArray(draft.payload?.paguCandidates) &&
+      draft.payload.paguCandidates.length > 1
+    ) {
+      return ctx.answerCallbackQuery({
+        text: "⚠️ Mohon sentuh salah satu pilihan anggaran menu terlebih dahulu!",
+        show_alert: true,
+      });
+    }
+
     const locked = await pendingRepo.acquireLock(draftId);
     if (!locked) {
       return ctx.answerCallbackQuery({
@@ -1144,13 +1361,48 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
           recorderName
         );
       } else {
-        await googleSheetsService.recordSupplierExpense(
-          unitConfig.spreadsheetId,
-          draft.payload,
-          draft.media_url || "",
-          recorderName,
-          draft.payload?.notes || ""
-        );
+        const items = draft.payload?.items || [];
+        const supplierGroups = new Map<string, any[]>();
+        for (const it of items) {
+          const sName = it.supplier_name?.trim() || it.supplier_target?.trim();
+          if (sName) {
+            if (!supplierGroups.has(sName)) {
+              supplierGroups.set(sName, []);
+            }
+            supplierGroups.get(sName)!.push(it);
+          }
+        }
+
+        if (supplierGroups.size > 1) {
+          // Multi-supplier detected: split into individual transactions per supplier
+          const batchTransactions: any[] = [];
+          for (const [suppName, groupItems] of supplierGroups.entries()) {
+            const groupTotal = groupItems.reduce(
+              (acc: number, it: any) => acc + (Number(it.total_price) || (Number(it.qty) * Number(it.price))),
+              0
+            );
+            batchTransactions.push({
+              ...draft.payload,
+              supplier_name: suppName,
+              items: groupItems,
+              total_amount: groupTotal,
+              subtotal: groupTotal,
+            });
+          }
+          await googleSheetsService.recordSupplierExpenseBatch(
+            unitConfig.spreadsheetId,
+            batchTransactions,
+            recorderName
+          );
+        } else {
+          await googleSheetsService.recordSupplierExpense(
+            unitConfig.spreadsheetId,
+            draft.payload,
+            draft.media_url || "",
+            recorderName,
+            draft.payload?.notes || ""
+          );
+        }
       }
 
       await pendingRepo.updateStatus(draftId, "SAVED");
@@ -1229,7 +1481,7 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     await ctx.answerCallbackQuery();
     await safeEditMessageText(ctx, draftCard, {
       parse_mode: "HTML",
-      reply_markup: buildDraftConfirmationKeyboard(draftId, draft.action_type, itemsCount),
+      reply_markup: getDraftConfirmationReplyMarkup(draftId, draft.action_type, draft.payload, itemsCount),
     });
   });
 
@@ -1325,12 +1577,13 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
       return ctx.answerCallbackQuery({ text: "⚠️ Draf sudah tidak aktif.", show_alert: true });
     }
 
-    draft.payload.sppg_ref_no = targetPagu === "-" ? "" : targetPagu;
+    draft.payload.sppg_ref_no = targetPagu;
+    draft.payload.paguSelectionRequired = false;
     await enrichReceiptWithPaguContext(unitConfig.spreadsheetId, draft.payload);
 
     await pendingRepo.updatePayload(draftId, draft.payload);
     await ctx.answerCallbackQuery({
-      text: targetPagu === "-" ? "Alokasi diubah ke Belanja Tambahan" : `Alokasi diubah ke Pagu ${targetPagu}`
+      text: targetPagu === "-" ? "Alokasi diset ke Belanja Tambahan (Non-Pagu)" : `Alokasi diset ke PO ${targetPagu}`
     });
 
     const cardText = renderSupplierExpenseDraftCard(draft.payload, draftId, "PENDING", draft.media_url);
@@ -1441,15 +1694,25 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     }
 
     if (preview.isProtected) {
+      const isTab05 = preview.sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN;
+      const tabDesc = isTab05 ? "Rincian Pengeluaran (Tab 05)" : "Rincian Pendapatan (Tab 03)";
+      const parentHint = isTab05
+        ? `silakan kelola atau hapus Faktur/Nota Induk di Tab 04 (${escapeHtml(preview.orderNo || "Tab 04_PAGU_PENGELUARAN")}).`
+        : `silakan kelola atau hapus Pagu Induk di Tab 02 (${escapeHtml(preview.orderNo || "Tab 02_PAGU_PENERIMAAN")}).`;
+
       return safeEditMessageText(
         ctx,
-        `⛔ <b>Akses Ditolak: Data Terproteksi</b>\n------------------------------------------\nTransaksi <code>${escapeHtml(trxId)}</code> merupakan <b>Rincian Pagu (Tab 03)</b>.\n\nData rincian bahan tidak dapat dihapus mandiri karena terikat mutlak dengan Pagu Induk.\n\n💡 <i>Jika ingin membatalkan pesanan anggaran, silakan kelola atau hapus Pagu Induk (${escapeHtml(preview.orderNo || "Tab 02")}).</i>`,
+        `⛔ <b>Akses Ditolak: Data Terproteksi</b>\n------------------------------------------\nTransaksi <code>${escapeHtml(trxId)}</code> merupakan <b>${tabDesc}</b>.\n\nData rincian bahan/belanja tidak dapat dihapus mandiri karena terikat mutlak dengan data induknya.\n\n💡 <i>Jika ingin membatalkan, ${parentHint}</i>`,
         { parse_mode: "HTML" }
       );
     }
 
     let confirmationBody = "";
-    if (preview.sheetName === SHEET_NAMES.PAGU_RINGKASAN || preview.sheetName === "02_PENDAPATAN_SPPG") {
+    if (
+      preview.sheetName === SHEET_NAMES.PAGU_PENERIMAAN ||
+      preview.sheetName === SHEET_NAMES.PAGU_RINGKASAN ||
+      preview.sheetName === "02_PENDAPATAN_SPPG"
+    ) {
       confirmationBody =
         `🚨 <b>KONFIRMASI CASCADE DELETE (PAGU INDUK)</b>\n------------------------------------------\n` +
         `• No SPPG: <code>${escapeHtml(preview.orderNo || "-")}</code>\n` +
@@ -1458,11 +1721,13 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
         `• Unit: <b>${escapeHtml(unitConfig.name)}</b>\n\n` +
         `⚠️ <b>PERINGATAN INTEGRITAS RELASIONAL:</b>\n` +
         `Menghapus Pagu Induk ini akan <b>MENGHAPUS SEMUA data turunannya</b>:\n` +
-        `• <b>Tab 03 (Pagu Rincian):</b> ${preview.childrenSummary?.rincianCount || 0} item rincian bahan\n` +
-        `• <b>Tab 04 (Pengeluaran):</b> ${preview.childrenSummary?.expenseCount || 0} transaksi nota supplier\n` +
-        `• <b>Tab 05 (Rekap Margin):</b> ${preview.childrenSummary?.rekapCount || 0} baris komparasi margin\n\n` +
+        `• <b>Tab 03 (Rincian Pendapatan):</b> ${preview.childrenSummary?.rincianCount || 0} item rincian pagu\n` +
+        `• <b>Tab 04 (Pagu Pengeluaran):</b> ${preview.childrenSummary?.expenseCount || 0} transaksi nota supplier\n` +
+        `• <b>Tab 05 (Rincian Pengeluaran):</b> ${preview.childrenSummary?.rincianPengeluaranCount || 0} baris belanja supplier\n` +
+        `• <b>Tab 06 (Perbandingan Margin):</b> ${preview.childrenSummary?.rekapCount || 0} baris komparasi margin\n\n` +
         `<i>⚠️ Tindakan ini permanen dan tidak dapat dibatalkan. Lanjutkan?</i>`;
     } else if (
+      preview.sheetName === SHEET_NAMES.PAGU_PENGELUARAN ||
       preview.sheetName === SHEET_NAMES.PENGELUARAN_SUPPLIER ||
       preview.sheetName === "03_PENGELUARAN_SUPPLIER"
     ) {
@@ -1473,7 +1738,8 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
         `• Total Tagihan: <b>${formatRupiah(preview.amount || 0)}</b>\n` +
         `• Unit: <b>${escapeHtml(unitConfig.name)}</b>\n\n` +
         `ℹ️ <b>Catatan Cascading:</b>\n` +
-        `Realisasi belanja di <b>Tab 05 (Rekap Margin)</b> akan otomatis di-reset (${preview.childrenSummary?.resetRekapCount || 0} item kembali ke status 🟡 MENUNGGU INVOICE${preview.childrenSummary?.rekapCount ? ` dan ${preview.childrenSummary.rekapCount} item belanja tambahan dihapus` : ""}).\n\n` +
+        `• <b>Tab 05 (Rincian Pengeluaran):</b> ${preview.childrenSummary?.rincianPengeluaranCount || 0} baris rincian belanja akan dihapus.\n` +
+        `• <b>Tab 06 (Perbandingan Margin):</b> Realisasi belanja akan otomatis di-reset (${preview.childrenSummary?.resetRekapCount || 0} item kembali ke status 🟡 MENUNGGU INVOICE${preview.childrenSummary?.rekapCount ? ` dan ${preview.childrenSummary.rekapCount} item belanja tambahan dihapus` : ""}).\n\n` +
         `<i>Apakah Anda yakin ingin menghapus nota belanja ini?</i>`;
     } else {
       confirmationBody =
@@ -1564,7 +1830,7 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     if (result.success) {
       await safeEditMessageText(
         ctx,
-        `✅ <b>Berhasil Memperbarui Transaksi!</b>\n\n• ID: <code>${escapeHtml(trxId)}</code>\n• Nominal Baru: <b>${formatRupiah(newAmount)}</b>\n• Unit: <b>${escapeHtml(unitConfig.name)}</b>\n\nData telah disinkronkan ke Google Sheets (termasuk penyelarasan otomatis pada Tab 05 Rekap Margin).`,
+        `✅ <b>Berhasil Memperbarui Transaksi!</b>\n\n• ID: <code>${escapeHtml(trxId)}</code>\n• Nominal Baru: <b>${formatRupiah(newAmount)}</b>\n• Unit: <b>${escapeHtml(unitConfig.name)}</b>\n\nData telah disinkronkan ke Google Sheets (termasuk penyelarasan otomatis pada Tab 06 Perbandingan Margin).`,
         { parse_mode: "HTML" }
       );
     } else {
@@ -1574,6 +1840,494 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
         { parse_mode: "HTML" }
       );
     }
+  });
+
+  // ============================================================================
+  // PAGU RINCIAN (TAB 03) INTERACTIVE HANDLERS (v:pagu_*)
+  // ============================================================================
+
+  bot.callbackQuery("v:pagu_orders", async (ctx) => {
+    const userId = ctx.from?.id;
+    if (await isCallerMember(userId)) {
+      await ctx.answerCallbackQuery({ text: "⛔ Akses Dibatasi: Hanya Admin/Super Admin.", show_alert: true });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    const orders = await googleSheetsService.getPaguOrders(unitConfig.spreadsheetId);
+    const orderListText = [
+      `📋 <b>KELOLA PAGU & RINCIAN BAHAN (Tab 03)</b>`,
+      `Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
+      `------------------------------------------`,
+      `Pilih Surat Pesanan (PO) yang ingin Anda periksa atau ubah rincian kuantitas/harga bahannya:`,
+    ].join("\n");
+
+    await safeEditMessageText(ctx, orderListText, {
+      parse_mode: "HTML",
+      reply_markup: buildPaguOrderListKeyboard(orders),
+    });
+  });
+
+  bot.callbackQuery(/^v:pagu_ord:(.+)$/, async (ctx) => {
+    const userId = ctx.from?.id;
+    if (await isCallerMember(userId)) {
+      await ctx.answerCallbackQuery({ text: "⛔ Akses Dibatasi", show_alert: true });
+      return;
+    }
+    const orderNo = ctx.match[1];
+    await ctx.answerCallbackQuery({ text: `📋 Memuat PO ${orderNo}...` });
+
+    const items = await googleSheetsService.getPaguOrderItems(unitConfig.spreadsheetId, orderNo);
+    if (items.length === 0) {
+      await safeEditMessageText(
+        ctx,
+        `⚠️ Tidak ditemukan rincian bahan untuk PO <code>${escapeHtml(orderNo)}</code> di Tab 03_RINCIAN_PENDAPATAN.`,
+        {
+          parse_mode: "HTML",
+          reply_markup: new InlineKeyboard().text("🔙 Kembali ke Daftar PO", "v:pagu_orders"),
+        }
+      );
+      return;
+    }
+
+    const orders = await googleSheetsService.getPaguOrders(unitConfig.spreadsheetId);
+    const orderInfo = orders.find((o) => o.orderNo === orderNo);
+    const totalPagu = items.reduce((sum, it) => sum + (it.totalAmount || 0), 0);
+
+    const headerText = [
+      `📋 <b>RINCIAN BAHAN SURAT PESANAN (PO)</b>`,
+      `Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
+      `------------------------------------------`,
+      `• <b>No PO:</b> <code>${escapeHtml(orderNo)}</code>`,
+      `• <b>Tanggal:</b> <code>${escapeHtml(orderInfo?.orderDate || "-")}</code>`,
+      `• <b>Menu:</b> <i>${escapeHtml(orderInfo?.notes || "-")}</i>`,
+      `• <b>Total Pagu:</b> <b>${formatRupiah(totalPagu)}</b> (${items.length} bahan)`,
+      `------------------------------------------`,
+      `Silakan pilih bahan di bawah untuk melihat detail atau mengubah kuantitas/harga:`,
+    ].join("\n");
+
+    await safeEditMessageText(ctx, headerText, {
+      parse_mode: "HTML",
+      reply_markup: buildPaguItemListKeyboard(orderNo, items, 0, 6),
+    });
+  });
+
+  bot.callbackQuery(/^v:pagu_page:(.+):(\d+)$/, async (ctx) => {
+    const userId = ctx.from?.id;
+    if (await isCallerMember(userId)) {
+      await ctx.answerCallbackQuery({ text: "⛔ Akses Dibatasi", show_alert: true });
+      return;
+    }
+    const orderNo = ctx.match[1];
+    const page = parseInt(ctx.match[2], 10) || 0;
+    await ctx.answerCallbackQuery();
+
+    const items = await googleSheetsService.getPaguOrderItems(unitConfig.spreadsheetId, orderNo);
+    const orders = await googleSheetsService.getPaguOrders(unitConfig.spreadsheetId);
+    const orderInfo = orders.find((o) => o.orderNo === orderNo);
+    const totalPagu = items.reduce((sum, it) => sum + (it.totalAmount || 0), 0);
+
+    const headerText = [
+      `📋 <b>RINCIAN BAHAN SURAT PESANAN (PO)</b>`,
+      `Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
+      `------------------------------------------`,
+      `• <b>No PO:</b> <code>${escapeHtml(orderNo)}</code>`,
+      `• <b>Tanggal:</b> <code>${escapeHtml(orderInfo?.orderDate || "-")}</code>`,
+      `• <b>Menu:</b> <i>${escapeHtml(orderInfo?.notes || "-")}</i>`,
+      `• <b>Total Pagu:</b> <b>${formatRupiah(totalPagu)}</b> (${items.length} bahan)`,
+      `------------------------------------------`,
+      `Halaman <b>${page + 1}</b> - Pilih bahan untuk mengubah data:`,
+    ].join("\n");
+
+    await safeEditMessageText(ctx, headerText, {
+      parse_mode: "HTML",
+      reply_markup: buildPaguItemListKeyboard(orderNo, items, page, 6),
+    });
+  });
+
+  bot.callbackQuery(/^v:pagu_it:(.+):(\d+)$/, async (ctx) => {
+    const userId = ctx.from?.id;
+    if (await isCallerMember(userId)) {
+      await ctx.answerCallbackQuery({ text: "⛔ Akses Dibatasi", show_alert: true });
+      return;
+    }
+    const orderNo = ctx.match[1];
+    const rowIndex = parseInt(ctx.match[2], 10);
+    await ctx.answerCallbackQuery();
+
+    const item = await googleSheetsService.getPaguItemByRow(unitConfig.spreadsheetId, rowIndex);
+    if (!item) {
+      await safeEditMessageText(ctx, "⚠️ Rincian bahan tidak ditemukan di Google Sheets.", {
+        parse_mode: "HTML",
+        reply_markup: new InlineKeyboard().text("🔙 Kembali ke PO", `v:pagu_ord:${orderNo}`),
+      });
+      return;
+    }
+
+    const detailText = [
+      `🍗 <b>DETAIL BAHAN PAGU (Tab 03 Baris ${rowIndex})</b>`,
+      `Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
+      `No PO: <code>${escapeHtml(orderNo)}</code>`,
+      `------------------------------------------`,
+      `• <b>Nama Bahan:</b> <b>${escapeHtml(item.itemName)}</b>`,
+      `• <b>Target Rekanan:</b> ${escapeHtml(item.supplier || "-")}`,
+      `• <b>Kuantitas:</b> <b>${item.qty} ${escapeHtml(item.unit)}</b>`,
+      `• <b>Harga Pagu Satuan:</b> <b>${formatRupiah(item.price)}</b>`,
+      `• <b>Total Subtotal Pagu:</b> <b>${formatRupiah(item.totalAmount)}</b>`,
+      `------------------------------------------`,
+      `Pilih data yang ingin Anda ubah:`,
+    ].join("\n");
+
+    await safeEditMessageText(ctx, detailText, {
+      parse_mode: "HTML",
+      reply_markup: buildPaguItemActionKeyboard(orderNo, rowIndex, item.itemName),
+    });
+  });
+
+  bot.callbackQuery(/^v:pagu_act:(.+):(\d+):(qty|price|supplier|name)$/, async (ctx) => {
+    const userId = ctx.from?.id;
+    if (await isCallerMember(userId)) {
+      await ctx.answerCallbackQuery({ text: "⛔ Akses Dibatasi", show_alert: true });
+      return;
+    }
+    const orderNo = ctx.match[1];
+    const rowIndex = parseInt(ctx.match[2], 10);
+    const field = ctx.match[3] as "qty" | "price" | "supplier" | "name";
+
+    const item = await googleSheetsService.getPaguItemByRow(unitConfig.spreadsheetId, rowIndex);
+    if (!item) {
+      await ctx.answerCallbackQuery({ text: "⚠️ Bahan tidak ditemukan.", show_alert: true });
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+    const state = getState(userId!);
+    state.editingPagu = {
+      orderNo,
+      rowIndex,
+      field,
+      itemName: item.itemName,
+      unit: item.unit,
+    };
+
+    let promptGuide = "";
+    if (field === "name") {
+      promptGuide = `Nama bahan saat ini: <b>${escapeHtml(item.itemName)}</b>\n\n` +
+        `Ketik nama / uraian bahan baru (contoh: <code>Ayam Broiler 2.3 kg</code>):`;
+    } else if (field === "qty") {
+      promptGuide = `Kuantitas saat ini: <b>${item.qty} ${escapeHtml(item.unit)}</b>\n\n` +
+        `Ketik angka kuantitas baru (contoh: <code>120</code> atau <code>25.5</code>):`;
+    } else if (field === "price") {
+      promptGuide = `Harga pagu saat ini: <b>${formatRupiah(item.price)}</b>\n\n` +
+        `Ketik harga pagu baru per ${escapeHtml(item.unit)} (contoh: <code>32000</code> atau <code>32.000</code>):`;
+    } else {
+      promptGuide = `Target rekanan saat ini: <b>${escapeHtml(item.supplier || "-")}</b>\n\n` +
+        `Ketik nama rekanan / supplier baru:`;
+    }
+
+    const fieldLabel = field === "name" ? "URAIAN BAHAN" : field === "qty" ? "KUANTITAS" : field === "price" ? "HARGA PAGU" : "TARGET REKANAN";
+    const promptText = [
+      `✏️ <b>UBAH ${fieldLabel}</b>`,
+      `Bahan: <b>${escapeHtml(item.itemName)}</b> (PO: <code>${escapeHtml(orderNo)}</code>)`,
+      `------------------------------------------`,
+      promptGuide,
+    ].join("\n");
+
+    const promptMsg = await ctx.reply(promptText, {
+      parse_mode: "HTML",
+      reply_markup: new InlineKeyboard().text("❌ Batalkan", `v:pagu_it:${orderNo}:${rowIndex}`),
+    });
+    state.promptMsgId = promptMsg.message_id;
+  });
+
+  bot.callbackQuery(/^v:pagu_apply:(.+):(\d+):(qty|price|supplier|name):(.+)$/, async (ctx) => {
+    const userId = ctx.from?.id;
+    if (await isCallerMember(userId)) {
+      await ctx.answerCallbackQuery({ text: "⛔ Akses Dibatasi", show_alert: true });
+      return;
+    }
+    const orderNo = ctx.match[1];
+    const rowIndex = parseInt(ctx.match[2], 10);
+    const field = ctx.match[3] as "qty" | "price" | "supplier" | "name";
+    const rawVal = decodeURIComponent(ctx.match[4]);
+
+    await ctx.answerCallbackQuery({ text: "⏳ Menyimpan perubahan ke Google Sheets..." });
+    await safeEditMessageText(ctx, "⏳ <i>Sedang menyimpan dan menyelaraskan ke Tab 03 & Tab 06...</i>", { parse_mode: "HTML" });
+
+    const updates: { qty?: number; price?: number; supplier?: string; itemName?: string } = {};
+    if (field === "name") {
+      updates.itemName = rawVal;
+    } else if (field === "qty") {
+      updates.qty = parseFloat(rawVal);
+    } else if (field === "price") {
+      updates.price = parseInt(rawVal, 10);
+    } else if (field === "supplier") {
+      updates.supplier = rawVal;
+    }
+
+    const updaterName = ctx.from ? `${ctx.from.first_name || ""} ${ctx.from.last_name || ""}`.trim() : "Admin";
+
+    const result = await googleSheetsService.updatePaguItemDetail(
+      unitConfig.spreadsheetId,
+      orderNo,
+      rowIndex,
+      updates,
+      updaterName
+    );
+
+    if (!result.success) {
+      await safeEditMessageText(ctx, `❌ Gagal memperbarui data: ${escapeHtml(result.message || "Terjadi kesalahan")}`, {
+        parse_mode: "HTML",
+        reply_markup: new InlineKeyboard().text("🔙 Kembali", `v:pagu_it:${orderNo}:${rowIndex}`),
+      });
+      return;
+    }
+
+    const successCard = [
+      `✅ <b>PAGU BERHASIL DIUPDATE & DISELARASKAN!</b>`,
+      `Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
+      `No PO: <code>${escapeHtml(orderNo)}</code>`,
+      `------------------------------------------`,
+      `• <b>Bahan:</b> <b>${escapeHtml(result.updatedItem?.itemName || "-")}</b>`,
+      `• <b>Target Rekanan:</b> ${escapeHtml(result.updatedItem?.supplier || "-")}`,
+      `• <b>Kuantitas:</b> <b>${result.updatedItem?.qty} ${escapeHtml(result.updatedItem?.unit || "")}</b>`,
+      `• <b>Harga Pagu:</b> <b>${formatRupiah(result.updatedItem?.price || 0)}</b>`,
+      `• <b>Subtotal Baru:</b> <b>${formatRupiah(result.updatedItem?.totalAmount || 0)}</b>`,
+      `------------------------------------------`,
+      `🔄 <i>Perubahan otomatis disinkronkan ke Tab 03_RINCIAN_PENDAPATAN dan Tab 06_PERBANDINGAN_MARGIN.</i>`,
+    ].join("\n");
+
+    const kb = new InlineKeyboard()
+      .text("🔍 Detail Bahan", `v:pagu_it:${orderNo}:${rowIndex}`)
+      .text("📋 Rincian PO", `v:pagu_ord:${orderNo}`)
+      .row()
+      .text("🏠 Menu Utama", "qa:start");
+
+    await safeEditMessageText(ctx, successCard, {
+      parse_mode: "HTML",
+      reply_markup: kb,
+    });
+  });
+
+  // Prompt user to add new item to specific order
+  bot.callbackQuery(/^v:pagu_add:(.+)$/, async (ctx) => {
+    const userId = ctx.from?.id;
+    if (await isCallerMember(userId)) {
+      await ctx.answerCallbackQuery({ text: "⛔ Akses Dibatasi", show_alert: true });
+      return;
+    }
+    const orderNo = ctx.match[1];
+    await ctx.answerCallbackQuery();
+    const state = getState(userId!);
+    state.addingPaguItemToOrder = { orderNo };
+
+    const promptText = [
+      `➕ <b>TAMBAH BAHAN BARU KE SURAT PESANAN</b>`,
+      `Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
+      `Surat Pesanan: <code>PO ${escapeHtml(orderNo)}</code>`,
+      `------------------------------------------`,
+      `Silakan ketik rincian bahan baru yang ingin ditambahkan.`,
+      `Contoh:`,
+      `• <code>Wortel 20 kg harga 15rb rekanan CV Sayur Segar</code>`,
+      `• <code>Minyak Goreng 10 liter @ 22000</code>`,
+      `------------------------------------------`,
+      `📍 <i>Bahan baru akan otomatis disisipkan di baris paling bawah untuk PO ini, dan baris PO lain di bawahnya akan bergeser ke bawah.</i>`,
+    ].join("\n");
+
+    const promptMsg = await ctx.reply(promptText, {
+      parse_mode: "HTML",
+      reply_markup: new InlineKeyboard().text("❌ Batalkan", `v:pagu_ord:${orderNo}`),
+    });
+    state.promptMsgId = promptMsg.message_id;
+  });
+
+  // ============================================================================
+  // PAGU 1-SHOT MODIFICATION CALLBACKS (v:p1s_*)
+  // ============================================================================
+
+  // Apply / Save to Spreadsheet
+  bot.callbackQuery(/^v:p1s_ok:(.+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const draft = pendingPaguModifications.get(draftId);
+
+    if (!draft) {
+      await ctx.answerCallbackQuery({ text: "Sesi konfirmasi telah kadaluarsa.", show_alert: true });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: "Sedang menyimpan ke spreadsheet..." });
+
+    try {
+      if (draft.action === "UPDATE") {
+        const result = await googleSheetsService.updatePaguItemDetail(
+          draft.spreadsheetId,
+          draft.orderNo,
+          draft.itemRowIndex!,
+          {
+            itemName: draft.itemName,
+            qty: draft.qty,
+            unit: draft.unit,
+            price: draft.price,
+            supplier: draft.supplier,
+          },
+          draft.updatedBy
+        );
+
+        if (!result.success) {
+          await safeEditMessageText(ctx, `❌ Gagal memperbarui Google Sheets: ${escapeHtml(result.message)}`, {
+            parse_mode: "HTML",
+          });
+          return;
+        }
+      } else {
+        const result = await googleSheetsService.addPaguItemToOrder(
+          draft.spreadsheetId,
+          draft.orderNo,
+          {
+            itemName: draft.itemName,
+            qty: draft.qty,
+            unit: draft.unit,
+            price: draft.price,
+            supplier: draft.supplier,
+          },
+          draft.updatedBy
+        );
+
+        if (!result.success) {
+          await safeEditMessageText(ctx, `❌ Gagal menambahkan ke Google Sheets: ${escapeHtml(result.message)}`, {
+            parse_mode: "HTML",
+          });
+          return;
+        }
+      }
+
+      pendingPaguModifications.delete(draftId);
+
+      const title = draft.action === "ADD"
+        ? `✅ <b>BAHAN BARU BERHASIL DITAMBAHKAN KE PAGU!</b>`
+        : `✅ <b>PERUBAHAN PAGU BERHASIL DISIMPAN!</b>`;
+      const syncNote = draft.action === "ADD"
+        ? `🔄 <i>Bahan baru telah disisipkan ke Tab 03 & Tab 06. Urutan ID bahan lain bergeser ke bawah dengan rapi, dan total anggaran Tab 02 otomatis bertambah.</i>`
+        : `🔄 <i>Tab 03_RINCIAN_PENDAPATAN dan Tab 06_PERBANDINGAN_MARGIN telah diperbarui dan otomatis tersinkronisasi.</i>`;
+
+      const successCard = [
+        title,
+        `Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
+        `------------------------------------------`,
+        `• <b>Surat Pesanan:</b> <code>${escapeHtml(draft.orderLabel || draft.orderNo)}</code>`,
+        `• <b>Bahan:</b> <b>${escapeHtml(draft.itemName)}</b>`,
+        `• <b>Kuantitas:</b> <b>${draft.qty} ${escapeHtml(draft.unit)}</b>`,
+        `• <b>Harga Satuan:</b> <b>${formatRupiah(draft.price)}</b>`,
+        `• <b>Total Pagu Bahan:</b> <b>${formatRupiah(draft.qty * draft.price)}</b>`,
+        draft.supplier ? `• <b>Target Rekanan:</b> <b>${escapeHtml(draft.supplier)}</b>` : "",
+        `------------------------------------------`,
+        syncNote,
+      ].filter(Boolean).join("\n");
+
+      const kb = new InlineKeyboard()
+        .text("📋 Rincian PO", `v:pagu_ord:${draft.orderNo}`)
+        .row()
+        .text("🏠 Menu Utama", "qa:start");
+
+      await safeEditMessageText(ctx, successCard, {
+        parse_mode: "HTML",
+        reply_markup: kb,
+      });
+    } catch (err: any) {
+      logger.error({ err: err?.message, draftId }, "Error applying 1-shot pagu change");
+      await safeEditMessageText(ctx, `❌ Terjadi kesalahan: ${escapeHtml(err?.message || err)}`, {
+        parse_mode: "HTML",
+      });
+    }
+  });
+
+  // Cancel 1-Shot Pagu Action
+  bot.callbackQuery(/^v:p1s_c:(.+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    pendingPaguModifications.delete(draftId);
+    await ctx.answerCallbackQuery({ text: "Dibatalkan." });
+    await safeEditMessageText(ctx, `❌ <i>Pengubahan pagu telah dibatalkan.</i>`, {
+      parse_mode: "HTML",
+      reply_markup: new InlineKeyboard().text("🏠 Menu Utama", "qa:start"),
+    });
+  });
+
+  // User chose to Add as New Item (when item didn't exist in PO)
+  bot.callbackQuery(/^v:p1s_add:(.+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const draft = pendingPaguModifications.get(draftId);
+    if (!draft) {
+      await ctx.answerCallbackQuery({ text: "Sesi telah kadaluarsa.", show_alert: true });
+      return;
+    }
+
+    draft.action = "ADD";
+    await ctx.answerCallbackQuery({ text: "Menyiapkan penambahan bahan baru..." });
+
+    const card = renderPaguOneShotCard(draft, unitConfig.name);
+    await safeEditMessageText(ctx, card, {
+      parse_mode: "HTML",
+      reply_markup: buildPaguOneShotConfirmKeyboard(draftId),
+    });
+  });
+
+  // User chose to Replace an existing item in PO -> list existing items
+  bot.callbackQuery(/^v:p1s_rep:(.+):(\d+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const page = parseInt(ctx.match[2], 10) || 0;
+    const draft = pendingPaguModifications.get(draftId);
+    if (!draft) {
+      await ctx.answerCallbackQuery({ text: "Sesi telah kadaluarsa.", show_alert: true });
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+    const items = await googleSheetsService.getPaguOrderItems(draft.spreadsheetId, draft.orderNo);
+
+    const promptText = [
+      `🔄 <b>PILIH BAHAN YANG AKAN DIGANTIKAN</b>`,
+      `Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
+      `Surat Pesanan: <code>${escapeHtml(draft.orderLabel || draft.orderNo)}</code>`,
+      `------------------------------------------`,
+      `Pilih salah satu bahan lama yang ingin digantikan oleh <b>${escapeHtml(draft.itemName)}</b>:`,
+    ].join("\n");
+
+    await safeEditMessageText(ctx, promptText, {
+      parse_mode: "HTML",
+      reply_markup: buildPaguItemPickForReplaceKeyboard(draftId, items, page),
+    });
+  });
+
+  // User selected specific existing item to replace
+  bot.callbackQuery(/^v:p1s_pk:(.+):(\d+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const rowIndex = parseInt(ctx.match[2], 10);
+    const draft = pendingPaguModifications.get(draftId);
+    if (!draft) {
+      await ctx.answerCallbackQuery({ text: "Sesi telah kadaluarsa.", show_alert: true });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: "Bahan dipilih." });
+    const oldItem = await googleSheetsService.getPaguItemByRow(draft.spreadsheetId, rowIndex);
+    if (!oldItem) {
+      await safeEditMessageText(ctx, `❌ Gagal mengambil data bahan lama di baris ${rowIndex}.`, {
+        parse_mode: "HTML",
+      });
+      return;
+    }
+
+    draft.action = "UPDATE";
+    draft.itemRowIndex = oldItem.rowIndex;
+    draft.origItemName = oldItem.itemName;
+    draft.oldQty = oldItem.qty;
+    draft.oldPrice = oldItem.price;
+    draft.oldSupplier = oldItem.supplier;
+
+    const card = renderPaguOneShotCard(draft, unitConfig.name);
+    await safeEditMessageText(ctx, card, {
+      parse_mode: "HTML",
+      reply_markup: buildPaguOneShotConfirmKeyboard(draftId),
+    });
   });
 
   // ============================================================================
@@ -1597,6 +2351,37 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     }
 
     switch (action) {
+      case "pagu": {
+        if (isMember) {
+          await ctx.answerCallbackQuery({ text: "⛔ Akses Dibatasi: Kelola pagu hanya untuk Admin.", show_alert: true });
+          await notifyMemberRestricted(ctx, "Kelola Pagu Anggaran");
+          return;
+        }
+        await ctx.answerCallbackQuery({ text: "📋 Memuat Rincian Pagu..." });
+        await sendPaguOrders(ctx);
+        break;
+      }
+
+      case "start":
+      case "menu": {
+        await ctx.answerCallbackQuery();
+        const user = userId ? await userRepo.getUser(userId) : null;
+        const userRole = user?.role === "member" ? "member" : "admin";
+        const sentMsg = await ctx.reply(
+          `⚡ <b>PINTASAN MENU OPERASIONAL (${escapeHtml(unitConfig.name)})</b>\n\n` +
+          `Silakan ketuk pintasan di bawah ini atau langsung kirim pesan teks, foto struk, maupun rekaman suara:`,
+          {
+            parse_mode: "HTML",
+            reply_markup: buildStartQuickActionKeyboard(userRole),
+          }
+        );
+        if (userId) {
+          const state = getState(userId);
+          state.activeQuickActionMsgId = sentMsg.message_id;
+        }
+        break;
+      }
+
       case "rekap": {
         if (isMember) {
           await ctx.answerCallbackQuery({ text: "⛔ Akses Dibatasi: Rekap margin hanya untuk Admin.", show_alert: true });
@@ -1775,6 +2560,82 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
       return;
     }
 
+    // Instant Pagu Trigger via text "pagu", "edit pagu", "ubah pagu", "edit pagu II005", etc.
+    const paguMatch = text.match(/^(?:\/pagu|\/editpagu|(?:edit|ubah|kelola|lihat|buka)\s+pagu|pagu)(?:\s+([A-Za-z0-9\/\-_]+))?$/i);
+    if (paguMatch && !state.editingPagu && !state.editingField && !state.editingTransactionId) {
+      if (await isCallerMember(userId)) {
+        await notifyMemberRestricted(ctx, "kelola pagu anggaran dapur");
+        return;
+      }
+
+      const explicitTarget = paguMatch[1]?.trim();
+      const orders = await googleSheetsService.getPaguOrders(unitConfig.spreadsheetId);
+
+      if (orders.length === 0) {
+        await ctx.reply(
+          `📋 <b>KELOLA PAGU / RINCIAN BAHAN</b>\n` +
+          `Unit: <b>${escapeHtml(unitConfig.name)}</b>\n\n` +
+          `ℹ️ Belum ada data Surat Pesanan (PO) di Tab 02_PAGU_PENERIMAAN. Silakan upload nota pesanan terlebih dahulu.`,
+          { parse_mode: "HTML" }
+        );
+        return;
+      }
+
+      if (explicitTarget) {
+        const cleanTarget = explicitTarget.toLowerCase();
+        const matchedOrder = orders.find((o) =>
+          o.orderNo.toLowerCase().includes(cleanTarget) ||
+          (o.transactionId && o.transactionId.toLowerCase().includes(cleanTarget))
+        );
+
+        if (matchedOrder) {
+          const items = await googleSheetsService.getPaguOrderItems(unitConfig.spreadsheetId, matchedOrder.orderNo);
+          const totalPagu = items.reduce((sum, it) => sum + (it.totalAmount || 0), 0);
+          const headerText = [
+            `📋 <b>RINCIAN BAHAN SURAT PESANAN (PO)</b>`,
+            `Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
+            `------------------------------------------`,
+            `• <b>No PO:</b> <code>${escapeHtml(matchedOrder.orderNo)}</code>`,
+            `• <b>ID:</b> <code>${escapeHtml(matchedOrder.transactionId || "-")}</code>`,
+            `• <b>Tanggal:</b> <code>${escapeHtml(matchedOrder.orderDate || "-")}</code>`,
+            `• <b>Total Pagu:</b> <b>${formatRupiah(totalPagu)}</b> (${items.length} bahan)`,
+            `------------------------------------------`,
+            `Silakan pilih bahan di bawah untuk melihat detail atau mengubah kuantitas/harga:`,
+          ].join("\n");
+
+          await ctx.reply(headerText, {
+            parse_mode: "HTML",
+            reply_markup: buildPaguItemListKeyboard(matchedOrder.orderNo, items, 0, 6),
+          });
+          return;
+        } else {
+          await ctx.reply(
+            `⚠️ Surat Pesanan / Pagu dengan kode atau nomor <code>${escapeHtml(explicitTarget)}</code> tidak ditemukan.\n\n` +
+            `Silakan pilih dari daftar PO aktif di bawah ini:`,
+            {
+              parse_mode: "HTML",
+              reply_markup: buildPaguOrderListKeyboard(orders),
+            }
+          );
+          return;
+        }
+      }
+
+      // If user just typed "edit pagu" or "pagu" without ID
+      const orderListText = [
+        `📋 <b>KELOLA PAGU & RINCIAN BAHAN (Tab 03)</b>`,
+        `Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
+        `------------------------------------------`,
+        `Mau edit pagu Surat Pesanan (PO) yang mana? Silakan pilih dari daftar di bawah:`,
+      ].join("\n");
+
+      await ctx.reply(orderListText, {
+        parse_mode: "HTML",
+        reply_markup: buildPaguOrderListKeyboard(orders),
+      });
+      return;
+    }
+
     // 1. If currently editing existing transaction in Google Sheets (Pintu 3 Guardrail)
     if (state.editingTransactionId) {
       if (await isCallerMember(userId)) {
@@ -1816,6 +2677,146 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
       const confirmMsg = await ctx.reply(confirmCard, {
         parse_mode: "HTML",
         reply_markup: buildEditConfirmKeyboard(trxId, cleanNum),
+      });
+      state.activeDraftMsgId = confirmMsg.message_id;
+      return;
+    }
+
+    // 1b. If currently editing Pagu Item Detail in Tab 03 (Ayah edit kuantitas/harga/supplier)
+    if (state.editingPagu) {
+      if (await isCallerMember(userId)) {
+        state.editingPagu = null;
+        await ctx.reply(
+          "⛔ <b>Akses Dibatasi</b>\n\nPengubahan rincian pagu hanya dapat dilakukan oleh Admin atau Super Admin.",
+          { parse_mode: "HTML" }
+        );
+        return;
+      }
+
+      const { orderNo, rowIndex, field, itemName, unit } = state.editingPagu;
+      state.editingPagu = null;
+
+      // Auto-cleanup user input & prompt message
+      await ctx.deleteMessage().catch(() => {});
+      if (state.promptMsgId) {
+        await ctx.api.deleteMessage(chatId, state.promptMsgId).catch(() => {});
+        state.promptMsgId = undefined;
+      }
+
+      let parsedValue: string = text;
+      let displayValue: string = text;
+      let fieldNameDisplay = "";
+
+      if (field === "qty") {
+        fieldNameDisplay = "Kuantitas";
+        const cleanNum = parseFloat(text.replace(/,/g, ".").replace(/[^\d.]/g, ""));
+        if (isNaN(cleanNum) || cleanNum <= 0) {
+          await ctx.reply("⚠️ Kuantitas tidak valid. Pembaruan pagu dibatalkan.", { parse_mode: "HTML" });
+          return;
+        }
+        parsedValue = cleanNum.toString();
+        displayValue = `${cleanNum} ${unit || ""}`.trim();
+      } else if (field === "price") {
+        fieldNameDisplay = "Harga Pagu Satuan";
+        const cleanNum = parseInt(text.replace(/[^\d]/g, ""), 10);
+        if (isNaN(cleanNum) || cleanNum <= 0) {
+          await ctx.reply("⚠️ Harga pagu tidak valid. Pembaruan pagu dibatalkan.", { parse_mode: "HTML" });
+          return;
+        }
+        parsedValue = cleanNum.toString();
+        displayValue = formatRupiah(cleanNum);
+      } else if (field === "supplier") {
+        fieldNameDisplay = "Target Rekanan / Toko";
+        if (!text || text.length < 2) {
+          await ctx.reply("⚠️ Nama rekanan tidak valid. Pembaruan pagu dibatalkan.", { parse_mode: "HTML" });
+          return;
+        }
+        parsedValue = text;
+        displayValue = text;
+      } else if (field === "name") {
+        fieldNameDisplay = "Uraian / Nama Bahan";
+        if (!text || text.length < 2) {
+          await ctx.reply("⚠️ Nama bahan tidak valid. Pembaruan pagu dibatalkan.", { parse_mode: "HTML" });
+          return;
+        }
+        parsedValue = text;
+        displayValue = text;
+      }
+
+      // Show confirmation card before applying changes to Google Sheets
+      const confirmCard = [
+        `⚠️ <b>KONFIRMASI PERUBAHAN PAGU RINCIAN (Tab 03)</b>`,
+        `Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
+        `No PO: <code>${escapeHtml(orderNo)}</code>`,
+        `------------------------------------------`,
+        `• <b>Bahan:</b> <b>${escapeHtml(itemName)}</b>`,
+        `• <b>Field Diubah:</b> ${fieldNameDisplay}`,
+        `• <b>Nilai Baru:</b> <b>${escapeHtml(displayValue)}</b>`,
+        `------------------------------------------`,
+        `Perubahan ini akan memperbarui <b>Tab 03_RINCIAN_PENDAPATAN</b> dan menyelaraskan otomatis <b>Tab 06_PERBANDINGAN_MARGIN</b>. Lanjutkan?`,
+      ].join("\n");
+
+      const confirmMsg = await ctx.reply(confirmCard, {
+        parse_mode: "HTML",
+        reply_markup: buildPaguItemEditConfirmKeyboard(orderNo, rowIndex, field, parsedValue),
+      });
+      state.activeDraftMsgId = confirmMsg.message_id;
+      return;
+    }
+
+    // 1c. If currently adding a new Pagu Item to an Order (Ayah klik "➕ Tambah Bahan Baru di PO Ini")
+    if (state.addingPaguItemToOrder) {
+      if (await isCallerMember(userId)) {
+        state.addingPaguItemToOrder = null;
+        await ctx.reply(
+          "⛔ <b>Akses Dibatasi</b>\n\nPenambahan rincian pagu hanya dapat dilakukan oleh Admin atau Super Admin.",
+          { parse_mode: "HTML" }
+        );
+        return;
+      }
+
+      const { orderNo } = state.addingPaguItemToOrder;
+      state.addingPaguItemToOrder = null;
+
+      // Auto-cleanup user input & prompt message
+      await ctx.deleteMessage().catch(() => {});
+      if (state.promptMsgId) {
+        await ctx.api.deleteMessage(chatId, state.promptMsgId).catch(() => {});
+        state.promptMsgId = undefined;
+      }
+
+      // Parse user's text using staticParsePaguModification
+      const parsed = staticParsePaguModification(text) || staticParsePaguModification("tambah bahan " + text);
+      const itemName = parsed?.newItemName || parsed?.targetItemName || text.trim();
+      const qty = parsed?.qty && parsed.qty > 0 ? parsed.qty : 1;
+      const unit = parsed?.unit || "satuan";
+      const price = parsed?.price && parsed.price > 0 ? parsed.price : 0;
+      const supplier = parsed?.supplier || undefined;
+
+      const callerName = ctx.from?.first_name || (userId === 7546537134 ? "Heizaaa" : "Admin");
+
+      const draftId = `p1s_${Math.random().toString(36).slice(2, 9)}`;
+      const draft: PaguOneShotDraft = {
+        draftId,
+        spreadsheetId: unitConfig.spreadsheetId,
+        orderNo,
+        orderLabel: `PO ${orderNo}`,
+        action: "ADD",
+        itemName,
+        qty,
+        unit,
+        price,
+        supplier,
+        updatedBy: callerName,
+        createdAt: Date.now(),
+      };
+
+      pendingPaguModifications.set(draftId, draft);
+
+      const cardText = renderPaguOneShotCard(draft, unitConfig.name);
+      const confirmMsg = await ctx.reply(cardText, {
+        parse_mode: "HTML",
+        reply_markup: buildPaguOneShotConfirmKeyboard(draftId),
       });
       state.activeDraftMsgId = confirmMsg.message_id;
       return;
@@ -1871,7 +2872,7 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
 
         await ctx.api.editMessageText(chatId, state.activeDraftMsgId, updatedCard, {
           parse_mode: "HTML",
-          reply_markup: buildDraftConfirmationKeyboard(draft.id, draft.action_type, itemsCount, hasMultiple),
+          reply_markup: getDraftConfirmationReplyMarkup(draft.id, draft.action_type, draft.payload, itemsCount, hasMultiple),
         });
       }
       return;
@@ -1930,15 +2931,25 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
             }
 
             if (preview.isProtected) {
+              const isTab05 = preview.sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN;
+              const tabDesc = isTab05 ? "Rincian Pengeluaran (Tab 05)" : "Rincian Pendapatan (Tab 03)";
+              const parentHint = isTab05
+                ? `silakan hapus Faktur/Nota Induk di Tab 04 (${escapeHtml(preview.orderNo || "Tab 04_PAGU_PENGELUARAN")}).`
+                : `silakan hapus Pagu Induk di Tab 02 (${escapeHtml(preview.orderNo || "Tab 02_PAGU_PENERIMAAN")}).`;
+
               await ctx.reply(
-                `⛔ <b>Akses Ditolak: Data Terproteksi</b>\n------------------------------------------\nTransaksi <code>${escapeHtml(intent.transactionId)}</code> merupakan <b>Rincian Pagu (Tab 03)</b>.\n\nData rincian bahan tidak dapat dihapus mandiri karena terikat mutlak dengan Pagu Induk.\n\n💡 <i>Jika ingin membatalkan pesanan anggaran, silakan hapus Pagu Induk di Tab 02 (${escapeHtml(preview.orderNo || "02_PAGU_RINGKASAN")}).</i>`,
+                `⛔ <b>Akses Ditolak: Data Terproteksi</b>\n------------------------------------------\nTransaksi <code>${escapeHtml(intent.transactionId)}</code> merupakan <b>${tabDesc}</b>.\n\nData rincian bahan/belanja tidak dapat dihapus mandiri karena terikat mutlak dengan data induknya.\n\n💡 <i>Jika ingin membatalkan, ${parentHint}</i>`,
                 { parse_mode: "HTML" }
               );
               break;
             }
 
             let confirmationBody = "";
-            if (preview.sheetName === SHEET_NAMES.PAGU_RINGKASAN || preview.sheetName === "02_PENDAPATAN_SPPG") {
+            if (
+              preview.sheetName === SHEET_NAMES.PAGU_PENERIMAAN ||
+              preview.sheetName === SHEET_NAMES.PAGU_RINGKASAN ||
+              preview.sheetName === "02_PENDAPATAN_SPPG"
+            ) {
               confirmationBody =
                 `🚨 <b>KONFIRMASI CASCADE DELETE (PAGU INDUK)</b>\n------------------------------------------\n` +
                 `• No SPPG: <code>${escapeHtml(preview.orderNo || "-")}</code>\n` +
@@ -1947,11 +2958,13 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
                 `• Unit: <b>${escapeHtml(unitConfig.name)}</b>\n\n` +
                 `⚠️ <b>PERINGATAN INTEGRITAS RELASIONAL:</b>\n` +
                 `Menghapus Pagu Induk ini akan <b>MENGHAPUS PERMANEN seluruh data anak</b>:\n` +
-                `• <b>Tab 03 (Pagu Rincian):</b> ${preview.childrenSummary?.rincianCount || 0} item rincian bahan\n` +
-                `• <b>Tab 04 (Pengeluaran):</b> ${preview.childrenSummary?.expenseCount || 0} transaksi nota supplier\n` +
-                `• <b>Tab 05 (Rekap Margin):</b> ${preview.childrenSummary?.rekapCount || 0} baris komparasi margin\n\n` +
+                `• <b>Tab 03 (Rincian Pendapatan):</b> ${preview.childrenSummary?.rincianCount || 0} item rincian pagu\n` +
+                `• <b>Tab 04 (Pagu Pengeluaran):</b> ${preview.childrenSummary?.expenseCount || 0} transaksi nota supplier\n` +
+                `• <b>Tab 05 (Rincian Pengeluaran):</b> ${preview.childrenSummary?.rincianPengeluaranCount || 0} baris belanja supplier\n` +
+                `• <b>Tab 06 (Perbandingan Margin):</b> ${preview.childrenSummary?.rekapCount || 0} baris komparasi margin\n\n` +
                 `<i>⚠️ Tindakan ini permanen dan tidak dapat dibatalkan. Lanjutkan?</i>`;
             } else if (
+              preview.sheetName === SHEET_NAMES.PAGU_PENGELUARAN ||
               preview.sheetName === SHEET_NAMES.PENGELUARAN_SUPPLIER ||
               preview.sheetName === "03_PENGELUARAN_SUPPLIER"
             ) {
@@ -1962,7 +2975,8 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
                 `• Nominal: <b>${formatRupiah(preview.amount || 0)}</b>\n` +
                 `• Unit: <b>${escapeHtml(unitConfig.name)}</b>\n\n` +
                 `ℹ️ <b>Catatan Cascading:</b>\n` +
-                `Realisasi belanja di <b>Tab 05 (Rekap Margin)</b> akan otomatis di-reset (${preview.childrenSummary?.resetRekapCount || 0} item kembali ke status 🟡 MENUNGGU INVOICE${preview.childrenSummary?.rekapCount ? ` dan ${preview.childrenSummary.rekapCount} item belanja tambahan dihapus` : ""}).\n\n` +
+                `• <b>Tab 05 (Rincian Pengeluaran):</b> ${preview.childrenSummary?.rincianPengeluaranCount || 0} baris rincian belanja akan dihapus.\n` +
+                `• <b>Tab 06 (Perbandingan Margin):</b> Realisasi belanja akan otomatis di-reset (${preview.childrenSummary?.resetRekapCount || 0} item kembali ke status 🟡 MENUNGGU INVOICE${preview.childrenSummary?.rekapCount ? ` dan ${preview.childrenSummary.rekapCount} item belanja tambahan dihapus` : ""}).\n\n` +
                 `<i>Apakah Anda yakin ingin menghapus nota belanja ini?</i>`;
             } else {
               confirmationBody =
@@ -1976,6 +2990,166 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
               reply_markup: buildDeleteConfirmKeyboard(intent.transactionId),
             });
             state.activeDraftMsgId = confirmMsg.message_id;
+            break;
+          }
+
+          case "PAGU_MODIFICATION": {
+            if (await isCallerMember(userId)) {
+              await notifyMemberRestricted(ctx, "pengubahan rincian pagu");
+              break;
+            }
+
+            const req = intent.request;
+            const targetName = req.newItemName || req.targetItemName || "";
+            const queryRes = await googleSheetsService.findPaguItemByQuery(
+              unitConfig.spreadsheetId,
+              req.orderRef || undefined,
+              targetName
+            );
+
+            // 1. If no orders exist at all
+            if (queryRes.availableOrders.length === 0) {
+              await ctx.reply(
+                `❌ <b>Tidak Ada Pagu Aktif</b>\n\nBelum ada Surat Pesanan / Pagu Anggaran aktif yang terdaftar di Tab 02_PAGU_PENERIMAAN unit <b>${escapeHtml(unitConfig.name)}</b>.`,
+                { parse_mode: "HTML" }
+              );
+              break;
+            }
+
+            // 2. If order cannot be resolved and multiple orders exist
+            if (!queryRes.order) {
+              await ctx.reply(
+                `🔍 <b>Pilih Surat Pesanan (PO)</b>\n\nSistem menemukan beberapa PO aktif. Mohon pilih PO mana yang ingin Anda ubah:`,
+                {
+                  parse_mode: "HTML",
+                  reply_markup: buildPaguOrderListKeyboard(queryRes.availableOrders),
+                }
+              );
+              break;
+            }
+
+            const currentOrder = queryRes.order;
+            const orderLabel = `PO ${currentOrder.orderNo}${currentOrder.transactionId ? ` (${currentOrder.transactionId})` : ""}`;
+
+            // Case 0: Explicit intention to ADD a new item to PO
+            if (req.actionIntent === "ADD") {
+              const draftId = `p1s_${Math.random().toString(36).slice(2, 9)}`;
+              const draft: PaguOneShotDraft = {
+                draftId,
+                spreadsheetId: unitConfig.spreadsheetId,
+                orderNo: currentOrder.orderNo,
+                orderLabel,
+                action: "ADD",
+                itemName: targetName || "Bahan Baru",
+                qty: (req.qty !== undefined && req.qty !== null) ? req.qty : 1,
+                unit: req.unit || "satuan",
+                price: (req.price !== undefined && req.price !== null) ? req.price : 0,
+                supplier: req.supplier || undefined,
+                updatedBy: callerName,
+                createdAt: Date.now(),
+              };
+
+              pendingPaguModifications.set(draftId, draft);
+
+              const cardText = renderPaguOneShotCard(draft, unitConfig.name);
+              const confirmMsg = await ctx.reply(cardText, {
+                parse_mode: "HTML",
+                reply_markup: buildPaguOneShotConfirmKeyboard(draftId),
+              });
+              state.activeDraftMsgId = confirmMsg.message_id;
+              break;
+            }
+
+            // 3. Case A: Target item found in this order
+            if (queryRes.foundItem) {
+              const item = queryRes.foundItem;
+              const newQty = (req.qty !== undefined && req.qty !== null) ? req.qty : item.qty;
+              const newPrice = (req.price !== undefined && req.price !== null) ? req.price : item.price;
+              const newUnit = req.unit || item.unit;
+              const newSupplier = req.supplier || item.supplier;
+              const finalItemName = req.newItemName && req.newItemName.toLowerCase() !== item.itemName.toLowerCase()
+                ? req.newItemName
+                : item.itemName;
+
+              const draftId = `p1s_${Math.random().toString(36).slice(2, 9)}`;
+              const draft: PaguOneShotDraft = {
+                draftId,
+                spreadsheetId: unitConfig.spreadsheetId,
+                orderNo: currentOrder.orderNo,
+                orderLabel,
+                action: "UPDATE",
+                itemRowIndex: item.rowIndex,
+                origItemName: item.itemName,
+                itemName: finalItemName,
+                qty: newQty,
+                unit: newUnit,
+                price: newPrice,
+                supplier: newSupplier,
+                oldQty: item.qty,
+                oldPrice: item.price,
+                oldSupplier: item.supplier,
+                updatedBy: callerName,
+                createdAt: Date.now(),
+              };
+
+              pendingPaguModifications.set(draftId, draft);
+
+              const cardText = renderPaguOneShotCard(draft, unitConfig.name);
+              const confirmMsg = await ctx.reply(cardText, {
+                parse_mode: "HTML",
+                reply_markup: buildPaguOneShotConfirmKeyboard(draftId),
+              });
+              state.activeDraftMsgId = confirmMsg.message_id;
+              break;
+            }
+
+            // 4. Case B: Target item is specified, but NOT in this order (e.g. "ubah IH001 jadi Wortel...")
+            if (targetName) {
+              const draftId = `p1s_${Math.random().toString(36).slice(2, 9)}`;
+              const draft: PaguOneShotDraft = {
+                draftId,
+                spreadsheetId: unitConfig.spreadsheetId,
+                orderNo: currentOrder.orderNo,
+                orderLabel,
+                action: "ADD",
+                itemName: targetName,
+                qty: (req.qty !== undefined && req.qty !== null) ? req.qty : 1,
+                unit: req.unit || "satuan",
+                price: (req.price !== undefined && req.price !== null) ? req.price : 0,
+                supplier: req.supplier || undefined,
+                updatedBy: callerName,
+                createdAt: Date.now(),
+              };
+
+              pendingPaguModifications.set(draftId, draft);
+
+              const clarifyMsg = [
+                `❓ <b>Bahan Belum Terdaftar di Pesanan</b>`,
+                `Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
+                `------------------------------------------`,
+                `Bahan <b>${escapeHtml(targetName)}</b> belum ada pada <code>${escapeHtml(orderLabel)}</code> (saat ini memiliki ${queryRes.allItemsInOrder.length} bahan).`,
+                ``,
+                `Apakah Anda ingin:`,
+                `1️⃣ <b>Menambahkan sebagai bahan baru</b> di pesanan ini, atau`,
+                `2️⃣ <b>Mengganti salah satu bahan yang sudah ada</b>?`,
+              ].join("\n");
+
+              const clarifyPrompt = await ctx.reply(clarifyMsg, {
+                parse_mode: "HTML",
+                reply_markup: buildPaguClarifyAddOrReplaceKeyboard(draftId),
+              });
+              state.activeDraftMsgId = clarifyPrompt.message_id;
+              break;
+            }
+
+            // 5. Case C: Order is identified, but user did not specify which item (e.g. "ubah pagu IH001")
+            await ctx.reply(
+              `📋 <b>Daftar Bahan pada ${escapeHtml(orderLabel)}</b>\n\nSilakan pilih bahan yang ingin diubah:`,
+              {
+                parse_mode: "HTML",
+                reply_markup: buildPaguItemListKeyboard(currentOrder.orderNo, queryRes.allItemsInOrder),
+              }
+            );
             break;
           }
 
@@ -2055,7 +3229,7 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
 
             const sentMsg = await ctx.reply(cardText, {
               parse_mode: "HTML",
-              reply_markup: buildDraftConfirmationKeyboard(draftId, intent.parsed.type, itemsCount, hasMultiplePagu),
+              reply_markup: getDraftConfirmationReplyMarkup(draftId, intent.parsed.type, intent.parsed.data, itemsCount, hasMultiplePagu),
             });
 
             state.activeDraftMsgId = sentMsg.message_id;

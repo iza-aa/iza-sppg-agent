@@ -43,6 +43,18 @@ const TAB_COLUMN_MAP: Record<string, string[]> = {
     "PIC / Operator (I)",
     "Catatan / Keterangan (J)",
   ],
+  [SHEET_NAMES.RINCIAN_PENGELUARAN]: [
+    "No SPPG Ref (A)",
+    "ID Transaksi Belanja (B)",
+    "No Urut (C)",
+    "Nama Supplier (D)",
+    "Uraian Bahan / Barang Belanja (E)",
+    "Kuantitas (F)",
+    "Satuan (G)",
+    "Harga Satuan Invoice (H)",
+    "Total Belanja (I)",
+    "Keterangan / No Nota (J)",
+  ],
   [SHEET_NAMES.PAGU_RINGKASAN]: [
     "No SPPG (A)",
     "ID Transaksi (B)",
@@ -168,10 +180,11 @@ export class DeltaSyncDaemon {
     const tabsToScan = targetSheetName
       ? [targetSheetName]
       : [
-          SHEET_NAMES.PAGU_RINCIAN,
-          SHEET_NAMES.PENGELUARAN_SUPPLIER,
-          SHEET_NAMES.PAGU_RINGKASAN,
-          SHEET_NAMES.REKAP_MARGIN,
+          SHEET_NAMES.RINCIAN_PENDAPATAN,
+          SHEET_NAMES.PAGU_PENGELUARAN,
+          SHEET_NAMES.RINCIAN_PENGELUARAN,
+          SHEET_NAMES.PAGU_PENERIMAAN,
+          SHEET_NAMES.PERBANDINGAN_MARGIN,
         ];
 
     let unitSnapshots = this.snapshots.get(spreadsheetId);
@@ -228,6 +241,8 @@ export class DeltaSyncDaemon {
     const colLabels = TAB_COLUMN_MAP[sheetName] || [];
     const maxRows = Math.max(prevRows.length, currentRows.length);
     const supabase = getSupabaseClient();
+    const pendingMasterLogs: any[] = [];
+    const pendingDbLogs: any[] = [];
 
     for (let rIdx = 0; rIdx < maxRows; rIdx++) {
       const prevRow = prevRows[rIdx] || [];
@@ -237,8 +252,54 @@ export class DeltaSyncDaemon {
       if (prevRow.length === 0 && currRow.length === 0) continue;
 
       const refId = currRow[0] || currRow[1] || prevRow[0] || prevRow[1] || `Baris ${rIdx + 2}`;
-      const maxCols = Math.max(prevRow.length, currRow.length);
 
+      // CASE: Entirely new row added
+      if (prevRow.length === 0 && currRow.length > 0) {
+        const rowSummary = currRow.filter(Boolean).slice(0, 5).join(" | ");
+        logger.info(
+          { unit: unit.name, sheetName, row: rIdx + 2, rowSummary },
+          "⚡ [Delta Sync Daemon] New row insertion detected!"
+        );
+
+        pendingMasterLogs.push({
+          unitName: unit.name,
+          editor: editorName,
+          sheetTab: sheetName,
+          refId: String(refId),
+          columnEdited: "Tambah Baris Baru",
+          oldValue: "(kosong)",
+          newValue: rowSummary || "(data baru)",
+          sourceAction: "Spreadsheet Direct Edit",
+          status: "TERVERIFIKASI",
+        });
+
+        pendingDbLogs.push({
+          unit_name: unit.name,
+          editor: editorName,
+          sheet_tab: sheetName,
+          ref_id: String(refId),
+          column_edited: "Tambah Baris Baru",
+          old_value: "(kosong)",
+          new_value: rowSummary || "(data baru)",
+          source_action: "Spreadsheet Direct Edit",
+          status: "TERVERIFIKASI",
+        });
+
+        // Trigger cascading reconciliations for new row if applicable
+        if (sheetName === SHEET_NAMES.PENGELUARAN_SUPPLIER && currRow[5]) {
+          const newAmount = parseNum(currRow[5]);
+          const expenseId = currRow[1] || currRow[0];
+          if (expenseId && newAmount >= 0) {
+            await this.sheetsService.updateMasterTransactionRow(expenseId, {
+              total_amount: newAmount,
+            });
+          }
+        }
+        continue;
+      }
+
+      // CASE: Existing row modified cell-by-cell
+      const maxCols = Math.max(prevRow.length, currRow.length);
       for (let cIdx = 0; cIdx < maxCols; cIdx++) {
         const oldVal = prevRow[cIdx] ?? "";
         const newVal = currRow[cIdx] ?? "";
@@ -262,8 +323,7 @@ export class DeltaSyncDaemon {
             "⚡ [Delta Sync Daemon] Spreadsheet edit detected!"
           );
 
-          // 1. Record to Master Dashboard 04_LOG_AKTIVITAS
-          await this.sheetsService.appendMasterAuditLog({
+          pendingMasterLogs.push({
             unitName: unit.name,
             editor: editorName,
             sheetTab: sheetName,
@@ -275,26 +335,21 @@ export class DeltaSyncDaemon {
             status: "TERVERIFIKASI",
           });
 
-          // 2. Record to Supabase sppg_audit_logs table (safe insert)
-          try {
-            await supabase.from("sppg_audit_logs").insert({
-              unit_name: unit.name,
-              editor: editorName,
-              sheet_tab: sheetName,
-              ref_id: String(refId),
-              column_edited: colName,
-              old_value: String(oldVal),
-              new_value: String(newVal),
-              source_action: "Spreadsheet Direct Edit",
-              status: "TERVERIFIKASI",
-            });
-          } catch (dbErr: any) {
-            logger.debug({ err: dbErr?.message }, "[Delta Sync] Non-critical DB log note");
-          }
+          pendingDbLogs.push({
+            unit_name: unit.name,
+            editor: editorName,
+            sheet_tab: sheetName,
+            ref_id: String(refId),
+            column_edited: colName,
+            old_value: String(oldVal),
+            new_value: String(newVal),
+            source_action: "Spreadsheet Direct Edit",
+            status: "TERVERIFIKASI",
+          });
 
-          // 3. Automated Cascading Reconciliations
-          // CASE A: Total Nominal Tagihan in 04_PENGELUARAN_SUPPLIER (Col F / index 5) changed
-          if (sheetName === SHEET_NAMES.PENGELUARAN_SUPPLIER && cIdx === 5) {
+          // Automated Cascading Reconciliations
+          // CASE A: Total Nominal Tagihan in 04_PAGU_PENGELUARAN (Col F / index 5) changed
+          if (sheetName === SHEET_NAMES.PAGU_PENGELUARAN && cIdx === 5) {
             const newAmount = parseNum(newVal);
             const expenseId = currRow[1] || currRow[0];
             if (expenseId && newAmount >= 0) {
@@ -302,7 +357,6 @@ export class DeltaSyncDaemon {
                 total_amount: newAmount,
               });
 
-              // Update Supabase supplier expenses if exists
               try {
                 await supabase
                   .from("sppg_supplier_expenses")
@@ -312,8 +366,8 @@ export class DeltaSyncDaemon {
             }
           }
 
-          // CASE B: Total Pagu Anggaran in 02_PAGU_RINGKASAN (Col F / index 5) changed
-          if (sheetName === SHEET_NAMES.PAGU_RINGKASAN && cIdx === 5) {
+          // CASE B: Total Pagu Anggaran in 02_PAGU_PENERIMAAN (Col F / index 5) changed
+          if (sheetName === SHEET_NAMES.PAGU_PENERIMAAN && cIdx === 5) {
             const newPaguAmount = parseNum(newVal);
             const orderNo = currRow[0];
             if (orderNo && newPaguAmount >= 0) {
@@ -321,7 +375,6 @@ export class DeltaSyncDaemon {
                 total_amount: newPaguAmount,
               });
 
-              // Update Supabase order total
               try {
                 await supabase
                   .from("sppg_orders")
@@ -331,23 +384,76 @@ export class DeltaSyncDaemon {
             }
           }
 
-          // CASE C: Item price or qty in 03_PAGU_RINCIAN changed
-          if (sheetName === SHEET_NAMES.PAGU_RINCIAN && (cIdx === 5 || cIdx === 7)) {
-            const orderNo = currRow[0];
-            const itemName = currRow[4];
-            if (orderNo && itemName) {
+          // CASE C: Item in 03_RINCIAN_PENDAPATAN changed (Supplier, Item Name, Qty, Unit, Price)
+          if (sheetName === SHEET_NAMES.RINCIAN_PENDAPATAN && [3, 4, 5, 6, 7].includes(cIdx)) {
+            const orderNo = String(currRow[0] || "").trim();
+            const prevItemName = String(prevRow[4] || "").trim();
+            const currItemName = String(currRow[4] || "").trim();
+            const itemNameForSearch = prevItemName || currItemName;
+
+            if (orderNo && itemNameForSearch) {
+              // 1. Cascade update to Tab 06_PERBANDINGAN_MARGIN
+              await this.sheetsService.cascadePaguRincianChangeToRekapMargin(
+                unit.spreadsheetId,
+                orderNo,
+                itemNameForSearch,
+                cIdx,
+                currRow[cIdx]
+              ).catch((err: any) => {
+                logger.warn({ err: err?.message }, "[Delta Sync] Error cascading Tab 03 change to Tab 06");
+              });
+
+              // 2. Update Supabase sppg_order_items if price, qty, or name changed
               try {
                 const qty = parseNum(currRow[5]);
                 const price = parseNum(currRow[7]);
                 const total = qty * price;
                 await supabase
                   .from("sppg_order_items")
-                  .update({ qty, price, total_price: total })
-                  .eq("item_name", itemName);
+                  .update({
+                    item_name: currItemName,
+                    qty,
+                    price,
+                    total_price: total,
+                  })
+                  .eq("item_name", itemNameForSearch);
               } catch (_) {}
             }
           }
+
+          // CASE D: Item in 05_RINCIAN_PENGELUARAN changed (Supplier, Item Name, Price, Total)
+          if (sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN && [3, 4, 7, 8].includes(cIdx)) {
+            const orderNo = String(currRow[0] || "").trim();
+            const prevItemName = String(prevRow[4] || "").trim();
+            const currItemName = String(currRow[4] || "").trim();
+            const itemNameForSearch = prevItemName || currItemName;
+
+            if (itemNameForSearch) {
+              // Cascade update to Tab 06_PERBANDINGAN_MARGIN
+              await this.sheetsService.cascadeRincianPengeluaranChangeToRekapMargin(
+                unit.spreadsheetId,
+                orderNo,
+                itemNameForSearch,
+                cIdx,
+                currRow[cIdx]
+              ).catch((err: any) => {
+                logger.warn({ err: err?.message }, "[Delta Sync] Error cascading Tab 05 change to Tab 06");
+              });
+            }
+          }
         }
+      }
+    }
+
+    // Flush batch logs in 1 call to prevent Google Sheets 429 quota exhaustion
+    if (pendingMasterLogs.length > 0) {
+      await this.sheetsService.appendMasterAuditLogsBatch(pendingMasterLogs);
+    }
+    if (pendingDbLogs.length > 0) {
+      try {
+        await supabase.from("sppg_audit_logs").insert(pendingDbLogs);
+      } catch (dbErr: any) {
+        logger.debug({ err: dbErr?.message }, "[Delta Sync] Non-critical DB log note");
       }
     }
   }

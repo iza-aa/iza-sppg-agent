@@ -23,7 +23,7 @@ export function renderSppgOrderDraftCard(
 ): string {
   const statusBadge =
     status === "SAVED"
-      ? "✅ <b>STATUS: TERSIMPAN KE TAB 02_PAGU_RINGKASAN, 03_RINCIAN & 05_REKAP</b>"
+      ? "✅ <b>STATUS: TERSIMPAN KE TAB 02_PAGU_PENERIMAAN, 03_RINCIAN & 06_PERBANDINGAN</b>"
       : status === "CANCELLED"
       ? "❌ <b>STATUS: DRAF DIBATALKAN</b>"
       : "⏳ <b>STATUS: MENUNGGU KONFIRMASI</b>";
@@ -68,7 +68,7 @@ export function renderSppgOrderItemsDetail(order: SppgOrder): string {
     `------------------------------------------`,
     itemsList,
     `------------------------------------------`,
-    `<i>💡 Data rincian ini akan dicatat ke Tab 03_PAGU_RINCIAN dan dicocokkan otomatis di Tab 05_REKAP_MARGIN.</i>`,
+    `<i>💡 Data rincian ini akan dicatat ke Tab 03_RINCIAN_PENDAPATAN dan dicocokkan otomatis di Tab 06_PERBANDINGAN_MARGIN.</i>`,
   ].join("\n");
 }
 
@@ -91,16 +91,52 @@ export function renderSupplierExpenseDraftCard(
   status: PendingActionStatus,
   driveLink?: string
 ): string {
+  // Multi-supplier grouping check
+  const supplierGroups = new Map<string, { count: number; total: number }>();
+  for (const it of expense.items || []) {
+    const sName = (it as any).supplier_name?.trim() || (it as any).supplier_target?.trim();
+    if (sName) {
+      if (!supplierGroups.has(sName)) {
+        supplierGroups.set(sName, { count: 0, total: 0 });
+      }
+      const g = supplierGroups.get(sName)!;
+      g.count += 1;
+      g.total += Number(it.total_price) || (Number(it.qty) * Number(it.price));
+    }
+  }
+  const isMultiSupplier = supplierGroups.size > 1;
+
+  const isSelectionRequired = (expense as any).paguSelectionRequired === true;
+  const candidatesCount = (expense as any).paguCandidates?.length || 0;
+  const firstItemName = expense.items?.[0]?.item_name || "Bahan";
+
   const statusBadge =
     status === "SAVED"
-      ? "✅ <b>STATUS: TERSIMPAN KE TAB 04_PENGELUARAN_SUPPLIER & REKAP MARGIN</b>"
+      ? (isMultiSupplier
+          ? `✅ <b>STATUS: TERSIMPAN KE TAB 04 (${supplierGroups.size} TRANSAKSI PER TOKO), TAB 05 & 06</b>`
+          : "✅ <b>STATUS: TERSIMPAN KE TAB 04_PAGU_PENGELUARAN, 05_RINCIAN & 06_PERBANDINGAN</b>")
       : status === "CANCELLED"
       ? "❌ <b>STATUS: DRAF DIBATALKAN</b>"
+      : isSelectionRequired
+      ? "⏳ <b>STATUS: MENUNGGU PILIHAN ANGGARAN MENU</b>"
       : "⏳ <b>STATUS: MENUNGGU KONFIRMASI</b>";
+
+  let supplierSection = `🏪 <b>Nama Supplier / Toko</b>: <b>${escapeHtml(expense.supplier_name)}</b>`;
+  if (isMultiSupplier) {
+    const suppLines: string[] = [];
+    let idx = 1;
+    for (const [sName, data] of supplierGroups.entries()) {
+      suppLines.push(`  ${idx++}. <b>${escapeHtml(sName)}</b>: ${formatRupiah(data.total)} (<i>${data.count} bahan</i>)`);
+    }
+    supplierSection = `🏪 <b>Rincian Rekanan (${supplierGroups.size} Toko Multi-Supplier):</b>\n${suppLines.join("\n")}`;
+  }
 
   const itemsText = expense.items
     .slice(0, 4)
-    .map((i) => `• ${escapeHtml(i.item_name)} (${i.qty} ${escapeHtml(i.unit)} @ ${formatRupiah(i.price)})`)
+    .map((i) => {
+      const sTag = (i as any).supplier_name ? ` [${escapeHtml((i as any).supplier_name)}]` : "";
+      return `• ${escapeHtml(i.item_name)} (${i.qty} ${escapeHtml(i.unit)} @ ${formatRupiah(i.price)})${sTag}`;
+    })
     .join("\n");
 
   const driveSection = driveLink
@@ -111,7 +147,10 @@ export function renderSupplierExpenseDraftCard(
   let allocSection = "";
   let statusPaguLine = "";
 
-  if (ctx && ctx.sppg_ref_no && ctx.sppg_ref_no !== "-") {
+  if (isSelectionRequired) {
+    allocSection = `❓ <b>Alokasi Anggaran: ⚠️ BELUM DIPILIH</b>\n` +
+      `<i>Ditemukan ${candidatesCount} rencana menu aktif untuk bahan "${escapeHtml(firstItemName)}". Silakan pilih alokasi menu pada tombol di bawah:</i>`;
+  } else if (ctx && ctx.sppg_ref_no && ctx.sppg_ref_no !== "-") {
     const supplierInfo = ctx.pagu_supplier ? ` (${escapeHtml(ctx.pagu_supplier)})` : "";
     allocSection = `📄 <b>Alokasi Anggaran</b>: <code>${escapeHtml(ctx.sppg_ref_no)}</code>${supplierInfo}`;
     if (ctx.target_qty && ctx.target_qty > 0) {
@@ -131,15 +170,15 @@ export function renderSupplierExpenseDraftCard(
   }
 
   return [
-    `🧾 <b>DRAF BELANJA SUPPLIER</b>`,
-    `🏪 <b>Nama Supplier / Toko</b>: <b>${escapeHtml(expense.supplier_name)}</b>`,
+    isMultiSupplier ? `🧾 <b>DRAF BELANJA MULTI-SUPPLIER</b>` : `🧾 <b>DRAF BELANJA SUPPLIER</b>`,
+    supplierSection,
     `📅 <b>Tanggal Nota</b>: ${expense.date}`,
     allocSection + statusPaguLine,
     `💵 <b>TOTAL BELANJA: ${formatRupiah(expense.total_amount)}</b>`,
     `💳 Metode: ${escapeHtml(expense.payment_method)}`,
     driveSection,
     `------------------------------------------`,
-    `<b>Barang Belanja:</b>\n${itemsText || "• Belanja Bahan Pangan"}`,
+    `<b>Barang Belanja:</b>\n${itemsText || "• Belanja Bahan Pangan"}${expense.items.length > 4 ? `\n<i>... dan ${expense.items.length - 4} bahan lainnya</i>` : ""}`,
     `------------------------------------------`,
     statusBadge,
   ].join("\n");

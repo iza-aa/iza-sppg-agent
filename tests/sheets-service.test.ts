@@ -92,20 +92,29 @@ describe("Google Sheets 5-Tab Engine", () => {
     expect(meiExpense).toBe("SPPG0126-EE001");
   });
 
-  it("should verify 5-Tab constants in sheets-recipes", async () => {
+  it("should verify 6-Tab operational constants in sheets-recipes", async () => {
     const { SHEET_NAMES, SHEET_IDS } = await import("../src/core/google/sheets-recipes.js");
     expect(SHEET_NAMES.DASHBOARD).toBe("01_DASHBOARD");
-    expect(SHEET_NAMES.PAGU_RINGKASAN).toBe("02_PAGU_RINGKASAN");
-    expect(SHEET_NAMES.PAGU_RINCIAN).toBe("03_PAGU_RINCIAN");
-    expect(SHEET_NAMES.PENGELUARAN_SUPPLIER).toBe("04_PENGELUARAN_SUPPLIER");
-    expect(SHEET_NAMES.REKAP_MARGIN).toBe("05_REKAP_MARGIN");
-    expect(SHEET_NAMES.MASTER_DATA).toBe("06_MASTER_DATA");
+    expect(SHEET_NAMES.PAGU_PENERIMAAN).toBe("02_PAGU_PENERIMAAN");
+    expect(SHEET_NAMES.RINCIAN_PENDAPATAN).toBe("03_RINCIAN_PENDAPATAN");
+    expect(SHEET_NAMES.PAGU_PENGELUARAN).toBe("04_PAGU_PENGELUARAN");
+    expect(SHEET_NAMES.RINCIAN_PENGELUARAN).toBe("05_RINCIAN_PENGELUARAN");
+    expect(SHEET_NAMES.PERBANDINGAN_MARGIN).toBe("06_PERBANDINGAN_MARGIN");
+    expect(SHEET_NAMES.MASTER_DATA).toBe("07_MASTER_DATA");
 
-    expect(SHEET_IDS.PAGU_RINGKASAN).toBe(1002);
-    expect(SHEET_IDS.PAGU_RINCIAN).toBe(1003);
-    expect(SHEET_IDS.PENGELUARAN_SUPPLIER).toBe(1004);
-    expect(SHEET_IDS.REKAP_MARGIN).toBe(1005);
-    expect(SHEET_IDS.MASTER_DATA).toBe(1006);
+    // Backward compatibility aliases
+    expect(SHEET_NAMES.PAGU_RINGKASAN).toBe("02_PAGU_PENERIMAAN");
+    expect(SHEET_NAMES.PAGU_RINCIAN).toBe("03_RINCIAN_PENDAPATAN");
+    expect(SHEET_NAMES.PENGELUARAN_SUPPLIER).toBe("04_PAGU_PENGELUARAN");
+    expect(SHEET_NAMES.REKAP_MARGIN).toBe("06_PERBANDINGAN_MARGIN");
+
+    expect(SHEET_IDS.DASHBOARD).toBe(1001);
+    expect(SHEET_IDS.PAGU_PENERIMAAN).toBe(1002);
+    expect(SHEET_IDS.RINCIAN_PENDAPATAN).toBe(1003);
+    expect(SHEET_IDS.PAGU_PENGELUARAN).toBe(1004);
+    expect(SHEET_IDS.RINCIAN_PENGELUARAN).toBe(1005);
+    expect(SHEET_IDS.PERBANDINGAN_MARGIN).toBe(1006);
+    expect(SHEET_IDS.MASTER_DATA).toBe(1007);
   });
 
   it("should verify Telegram UI drill-down card and keyboard", async () => {
@@ -161,21 +170,34 @@ describe("Google Sheets 5-Tab Engine", () => {
     }
   });
 
-  it("should protect Tab 03 (03_PAGU_RINCIAN) from standalone deletion", async () => {
+  it("should protect Tab 03 (03_RINCIAN_PENDAPATAN) and Tab 05 (05_RINCIAN_PENGELUARAN) from standalone deletion", async () => {
     const { SHEET_NAMES } = await import("../src/core/google/sheets-recipes.js");
 
     // Mock detail object representing a row found in Tab 03
-    const mockDetail = {
+    const mockDetail03 = {
       found: true,
       id: "SPPG0126-II001",
-      sheetName: SHEET_NAMES.PAGU_RINCIAN,
+      sheetName: SHEET_NAMES.RINCIAN_PENDAPATAN,
       orderNo: "05/02/09/26",
       isProtected: true,
       rowIndex: 5,
     };
 
-    expect(mockDetail.isProtected).toBe(true);
-    expect(mockDetail.sheetName).toBe("03_PAGU_RINCIAN");
+    expect(mockDetail03.isProtected).toBe(true);
+    expect(mockDetail03.sheetName).toBe("03_RINCIAN_PENDAPATAN");
+
+    // Mock detail object representing a row found in Tab 05
+    const mockDetail05 = {
+      found: true,
+      id: "SPPG0126-EE001",
+      sheetName: SHEET_NAMES.RINCIAN_PENGELUARAN,
+      orderNo: "05/02/09/26",
+      isProtected: true,
+      rowIndex: 8,
+    };
+
+    expect(mockDetail05.isProtected).toBe(true);
+    expect(mockDetail05.sheetName).toBe("05_RINCIAN_PENGELUARAN");
   });
 
   it("should render partial fulfillment indicator in supplier expense draft card", async () => {
