@@ -180,6 +180,16 @@ export class MarginSheetsService {
     colIndex: number,
     newValue: any
   ): Promise<boolean> {
+    // Column mapping from Tab 05 (colIndex 0-based) to Tab 06 (letter)
+    // colIndex 7 (Col H Tab 05: Harga Satuan Invoice)        -> Col I Tab 06
+    // colIndex 8 (Col I Tab 05: Total Belanja)               -> Col J Tab 06
+    // NOTE: We NEVER overwrite Col C (Supplier) or Col D (Uraian Bahan) in Tab 06
+    // because they are strictly Pagu definitions from Tab 03, not expense items.
+    let targetColLetter = "";
+    if (colIndex === 7) targetColLetter = "I";
+    else if (colIndex === 8) targetColLetter = "J";
+    else return false;
+
     const client = await this.getClient();
     try {
       const rekapRes = await client.spreadsheets.values.get({
@@ -189,18 +199,6 @@ export class MarginSheetsService {
       const rekapRows = rekapRes.data.values || [];
       const cleanOrder = orderNo.trim();
       const cleanOrigName = origItemName.toLowerCase().trim();
-
-      // Column mapping from Tab 05 (colIndex 0-based) to Tab 06 (letter)
-      // colIndex 3 (Col D Tab 05: Nama Supplier)                -> Col C Tab 06
-      // colIndex 4 (Col E Tab 05: Uraian Bahan / Barang)       -> Col D Tab 06
-      // colIndex 7 (Col H Tab 05: Harga Satuan Invoice)        -> Col I Tab 06
-      // colIndex 8 (Col I Tab 05: Total Belanja)               -> Col J Tab 06
-      let targetColLetter = "";
-      if (colIndex === 3) targetColLetter = "C";
-      else if (colIndex === 4) targetColLetter = "D";
-      else if (colIndex === 7) targetColLetter = "I";
-      else if (colIndex === 8) targetColLetter = "J";
-      else return false;
 
       for (let idx = 0; idx < rekapRows.length; idx++) {
         const r = rekapRows[idx];
@@ -218,6 +216,21 @@ export class MarginSheetsService {
             valueInputOption: "USER_ENTERED",
             requestBody: { values: [[newValue]] },
           });
+
+          // Also update status formula if Total Belanja (Col J) changed
+          if (targetColLetter === "J") {
+            const numVal = parseCurrencyNumber(newValue);
+            const statusFormula =
+              numVal <= 0
+                ? "🟡 MENUNGGU INVOICE"
+                : `=IF(K${rekapRowNum}>0; "🟢 HEMAT"; IF(K${rekapRowNum}=0; "🟢 PAS"; "🔴 OVER BUDGET"))`;
+            await client.spreadsheets.values.update({
+              spreadsheetId,
+              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!M${rekapRowNum}`,
+              valueInputOption: "USER_ENTERED",
+              requestBody: { values: [[statusFormula]] },
+            });
+          }
           logger.info(
             { orderNo, origItemName, targetColLetter, rekapRowNum, newValue },
             "Cascade-synced direct edit from Tab 05 to Tab 06"

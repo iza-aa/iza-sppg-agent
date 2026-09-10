@@ -1580,12 +1580,51 @@ export class ExpenseSheetsService {
         });
       }
 
-      // 4. Reconcile Tab 06
+      // 4. If all items under this transaction are deleted, clean up Tab 04 row as well
+      let cleanedParent = false;
+      if (nextNo === 1) {
+        try {
+          const tab04Res = await client.spreadsheets.values.get({
+            spreadsheetId,
+            range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!A:B`,
+          });
+          const tab04Rows = tab04Res.data.values || [];
+          const tab04SheetId = sheetMap.get(SHEET_NAMES.PAGU_PENGELUARAN) ?? SHEET_IDS.PAGU_PENGELUARAN;
+          for (let r = 1; r < tab04Rows.length; r++) {
+            if (matchesExp(tab04Rows[r][1])) {
+              await client.spreadsheets.batchUpdate({
+                spreadsheetId,
+                requestBody: {
+                  requests: [
+                    {
+                      deleteDimension: {
+                        range: {
+                          sheetId: tab04SheetId,
+                          dimension: "ROWS",
+                          startIndex: r,
+                          endIndex: r + 1,
+                        },
+                      },
+                    },
+                  ],
+                },
+              });
+              cleanedParent = true;
+              logger.info({ expenseId: foundItem.expenseId }, "Deleted empty parent transaction in 04_PAGU_PENGELUARAN");
+              break;
+            }
+          }
+        } catch (tab04DelErr: any) {
+          logger.warn({ err: tab04DelErr?.message }, "Note deleting parent transaction from Tab 04");
+        }
+      }
+
+      // 5. Reconcile Tab 06
       await this.reconcileTab06AfterItemDelete(spreadsheetId, foundItem).catch((err) => {
         logger.warn({ err: err?.message || err }, "Note during Tab 06 reconciliation after child item delete");
       });
 
-      // 5. Record Master Audit Log
+      // 6. Record Master Audit Log
       const unitName = this.getUnitNameFromSpreadsheetId(spreadsheetId);
       await this.appendMasterAuditLogsBatch([
         {
@@ -1600,9 +1639,13 @@ export class ExpenseSheetsService {
         },
       ]).catch(() => {});
 
+      const statusMsg = cleanedParent
+        ? `Rincian bahan "${foundItem.itemName}" berhasil dihapus dari transaksi ${foundItem.expenseId}. Karena seluruh rincian telah kosong, nota induk di Tab 04 otomatis dibersihkan.`
+        : `Rincian bahan "${foundItem.itemName}" berhasil dihapus dari transaksi ${foundItem.expenseId}. Total tagihan di Tab 04 berkurang Rp ${foundItem.total.toLocaleString("id-ID")}.`;
+
       return {
         success: true,
-        message: `Rincian bahan "${foundItem.itemName}" berhasil dihapus dari transaksi ${foundItem.expenseId}. Total tagihan di Tab 04 berkurang Rp ${foundItem.total.toLocaleString("id-ID")}.`,
+        message: statusMsg,
         deletedItem: foundItem,
       };
     } catch (err: any) {

@@ -239,25 +239,90 @@ export class DeltaSyncDaemon {
     editorName = "Ayah / Operator Spreadsheet"
   ): Promise<void> {
     const colLabels = TAB_COLUMN_MAP[sheetName] || [];
-    const maxRows = Math.max(prevRows.length, currentRows.length);
     const supabase = getSupabaseClient();
     const pendingMasterLogs: any[] = [];
     const pendingDbLogs: any[] = [];
 
-    for (let rIdx = 0; rIdx < maxRows; rIdx++) {
-      const prevRow = prevRows[rIdx] || [];
-      const currRow = currentRows[rIdx] || [];
+    const getRowKey = (row: string[]): string => {
+      if (!row || row.length === 0) return "";
+      if (sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN) {
+        return `${(row[1] || "").trim()}_${(row[4] || "").trim().toLowerCase()}`;
+      }
+      if (sheetName === SHEET_NAMES.PAGU_PENGELUARAN) {
+        return (row[1] || row[0] || "").trim();
+      }
+      if (sheetName === SHEET_NAMES.RINCIAN_PENDAPATAN) {
+        return `${(row[0] || "").trim()}_${(row[4] || "").trim().toLowerCase()}`;
+      }
+      if (sheetName === SHEET_NAMES.PAGU_PENERIMAAN) {
+        return (row[0] || "").trim();
+      }
+      if (sheetName === SHEET_NAMES.PERBANDINGAN_MARGIN) {
+        return `${(row[0] || "").trim()}_${(row[3] || "").trim().toLowerCase()}`;
+      }
+      return row.slice(0, 3).join("_").trim();
+    };
 
-      // If both rows are completely empty, skip
-      if (prevRow.length === 0 && currRow.length === 0) continue;
+    // Build key-indexed maps for previous and current rows
+    const prevMap = new Map<string, { row: string[]; index: number }>();
+    for (let i = 0; i < prevRows.length; i++) {
+      const row = prevRows[i];
+      if (!row || row.every((c) => !c)) continue;
+      const key = getRowKey(row) || `__idx_${i}`;
+      prevMap.set(key, { row, index: i });
+    }
 
-      const refId = currRow[0] || currRow[1] || prevRow[0] || prevRow[1] || `Baris ${rIdx + 2}`;
+    const currMap = new Map<string, { row: string[]; index: number }>();
+    for (let i = 0; i < currentRows.length; i++) {
+      const row = currentRows[i];
+      if (!row || row.every((c) => !c)) continue;
+      const key = getRowKey(row) || `__idx_${i}`;
+      currMap.set(key, { row, index: i });
+    }
 
-      // CASE: Entirely new row added
-      if (prevRow.length === 0 && currRow.length > 0) {
-        const rowSummary = currRow.filter(Boolean).slice(0, 5).join(" | ");
+    // 1. Detect Deleted Rows (present in prevMap but missing in currMap)
+    for (const [key, { row: delRow, index: pIdx }] of prevMap.entries()) {
+      if (!currMap.has(key)) {
+        const rowSummary = delRow.filter(Boolean).slice(0, 5).join(" | ");
+        const refId = delRow[0] || delRow[1] || `Baris ${pIdx + 2}`;
         logger.info(
-          { unit: unit.name, sheetName, row: rIdx + 2, rowSummary },
+          { unit: unit.name, sheetName, row: pIdx + 2, rowSummary },
+          "⚡ [Delta Sync Daemon] Row deletion detected!"
+        );
+
+        pendingMasterLogs.push({
+          unitName: unit.name,
+          editor: editorName,
+          sheetTab: sheetName,
+          refId: String(refId),
+          columnEdited: "Hapus Baris",
+          oldValue: rowSummary || "(data dihapus)",
+          newValue: "[DIHAPUS]",
+          sourceAction: "Spreadsheet Direct Edit",
+          status: "TERVERIFIKASI",
+        });
+
+        pendingDbLogs.push({
+          unit_name: unit.name,
+          editor: editorName,
+          sheet_tab: sheetName,
+          ref_id: String(refId),
+          column_edited: "Hapus Baris",
+          old_value: rowSummary || "(data dihapus)",
+          new_value: "[DIHAPUS]",
+          source_action: "Spreadsheet Direct Edit",
+          status: "TERVERIFIKASI",
+        });
+      }
+    }
+
+    // 2. Detect Inserted Rows (present in currMap but missing in prevMap)
+    for (const [key, { row: insRow, index: cIdx }] of currMap.entries()) {
+      if (!prevMap.has(key)) {
+        const rowSummary = insRow.filter(Boolean).slice(0, 5).join(" | ");
+        const refId = insRow[0] || insRow[1] || `Baris ${cIdx + 2}`;
+        logger.info(
+          { unit: unit.name, sheetName, row: cIdx + 2, rowSummary },
           "⚡ [Delta Sync Daemon] New row insertion detected!"
         );
 
@@ -286,19 +351,25 @@ export class DeltaSyncDaemon {
         });
 
         // Trigger cascading reconciliations for new row if applicable
-        if (sheetName === SHEET_NAMES.PENGELUARAN_SUPPLIER && currRow[5]) {
-          const newAmount = parseNum(currRow[5]);
-          const expenseId = currRow[1] || currRow[0];
+        if (sheetName === SHEET_NAMES.PAGU_PENGELUARAN && insRow[5]) {
+          const newAmount = parseNum(insRow[5]);
+          const expenseId = insRow[1] || insRow[0];
           if (expenseId && newAmount >= 0) {
             await this.sheetsService.updateMasterTransactionRow(expenseId, {
               total_amount: newAmount,
             });
           }
         }
-        continue;
       }
+    }
 
-      // CASE: Existing row modified cell-by-cell
+    // 3. Detect Cell-by-Cell Edits on Matching Rows
+    for (const [key, { row: currRow, index: rIdx }] of currMap.entries()) {
+      const prevEntry = prevMap.get(key);
+      if (!prevEntry) continue; // New row handled above
+      const prevRow = prevEntry.row;
+      const refId = currRow[0] || currRow[1] || prevRow[0] || prevRow[1] || `Baris ${rIdx + 2}`;
+
       const maxCols = Math.max(prevRow.length, currRow.length);
       for (let cIdx = 0; cIdx < maxCols; cIdx++) {
         const oldVal = prevRow[cIdx] ?? "";
@@ -306,7 +377,6 @@ export class DeltaSyncDaemon {
 
         // Value changed!
         if (oldVal !== newVal) {
-          // Skip trivial blank-to-empty diffs
           if (oldVal === "" && newVal === "") continue;
 
           const colName = colLabels[cIdx] || `Kolom ${String.fromCharCode(65 + cIdx)}`;
@@ -421,8 +491,8 @@ export class DeltaSyncDaemon {
             }
           }
 
-          // CASE D: Item in 05_RINCIAN_PENGELUARAN changed (Supplier, Item Name, Price, Total)
-          if (sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN && [3, 4, 7, 8].includes(cIdx)) {
+          // CASE D: Item in 05_RINCIAN_PENGELUARAN changed (Price or Total only - never overwrite Pagu item/supplier)
+          if (sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN && [7, 8].includes(cIdx)) {
             const orderNo = String(currRow[0] || "").trim();
             const prevItemName = String(prevRow[4] || "").trim();
             const currItemName = String(currRow[4] || "").trim();
@@ -560,6 +630,21 @@ export class DeltaSyncDaemon {
     if (matchedUnit.spreadsheetId) {
       await this.syncUnit(matchedUnit, payload.sheetName);
     }
+  }
+
+  /**
+   * Directly updates in-memory snapshot for a sheet tab (e.g. after bot API write/delete)
+   */
+  updateSnapshot(spreadsheetId: string, sheetName: string, rows: string[][]): void {
+    let unitSnapshots = this.snapshots.get(spreadsheetId);
+    if (!unitSnapshots) {
+      unitSnapshots = new Map();
+      this.snapshots.set(spreadsheetId, unitSnapshots);
+    }
+    unitSnapshots.set(
+      sheetName,
+      rows.map((r) => r.map((c) => (c !== null && c !== undefined ? String(c).trim() : "")))
+    );
   }
 }
 

@@ -121,4 +121,28 @@ describe("Delete Child Item Intent & Keyboard Tests", () => {
     expect(Buffer.byteLength(yesCallback, "utf8")).toBeLessThanOrEqual(64);
     expect(Buffer.byteLength(noCallback, "utf8")).toBeLessThanOrEqual(64);
   });
+
+  it("should never overwrite Pagu item name or supplier in Tab 06 from Tab 05 edits", async () => {
+    const { MarginSheetsService } = await import("../src/core/google/services/margin-sheets.service.js");
+    const svc = new MarginSheetsService();
+
+    // Col 3 (Supplier) and Col 4 (Uraian Bahan) must be rejected
+    const resCol3 = await svc.cascadeRincianPengeluaranChangeToRekapMargin(
+      "dummy-id",
+      "PO-2026/09/SPPG2-01",
+      "Beras Medium",
+      3,
+      "Pasar Baru"
+    );
+    expect(resCol3).toBe(false);
+
+    const resCol4 = await svc.cascadeRincianPengeluaranChangeToRekapMargin(
+      "dummy-id",
+      "PO-2026/09/SPPG2-01",
+      "Beras Medium",
+      4,
+      "Minyak Goreng"
+    );
+    expect(resCol4).toBe(false);
+  });
 });
