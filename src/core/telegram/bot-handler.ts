@@ -58,6 +58,8 @@ export interface PaguOneShotDraft {
   orderNo: string;
   orderLabel?: string;
   action: "UPDATE" | "ADD";
+  isExpense?: boolean;
+  expenseId?: string;
   itemRowIndex?: number;
   origItemName?: string;
   supplier?: string;
@@ -76,6 +78,26 @@ const pendingPaguModifications = new Map<string, PaguOneShotDraft>();
 
 function renderPaguOneShotCard(draft: PaguOneShotDraft, unitName: string): string {
   const newSubtotal = draft.qty * draft.price;
+
+  if (draft.isExpense) {
+    return [
+      `📋 <b>KONFIRMASI PENAMBAHAN RINCIAN BELANJA (PENGELUARAN)</b>`,
+      `Unit: <b>${escapeHtml(unitName)}</b>`,
+      `------------------------------------------`,
+      `• <b>Transaksi Belanja:</b> <code>${escapeHtml(draft.orderLabel || draft.expenseId || draft.orderNo)}</code>`,
+      `• <b>Bahan Belanja:</b> <b>${escapeHtml(draft.itemName)}</b>`,
+      `• <b>Kuantitas:</b> <b>${draft.qty} ${escapeHtml(draft.unit)}</b>`,
+      `• <b>Harga Satuan:</b> <b>${formatRupiah(draft.price)}</b>`,
+      `• <b>Total Belanja:</b> <b>${formatRupiah(newSubtotal)}</b>`,
+      draft.supplier ? `• <b>Supplier:</b> <b>${escapeHtml(draft.supplier)}</b>` : "",
+      `------------------------------------------`,
+      `📍 <i>Bahan akan disisipkan rapi mengelompok di bawah transaksi ${escapeHtml(draft.expenseId || draft.orderNo)} pada Tab 05 (baris di bawahnya bergeser otomatis).</i>`,
+      `📈 <i>Total nominal tagihan di Tab 04_PAGU_PENGELUARAN otomatis terakumulasi.</i>`,
+      ``,
+      `Apakah Anda ingin menulis rincian belanja ini ke spreadsheet?`,
+    ].filter(Boolean).join("\n");
+  }
+
   if (draft.action === "UPDATE") {
     const oldSubtotal = (draft.oldQty || 0) * (draft.oldPrice || 0);
     const subtotalDiff = newSubtotal - oldSubtotal;
@@ -2157,7 +2179,27 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     await ctx.answerCallbackQuery({ text: "Sedang menyimpan ke spreadsheet..." });
 
     try {
-      if (draft.action === "UPDATE") {
+      if (draft.isExpense && draft.expenseId) {
+        const result = await googleSheetsService.addExpenseItemToTransaction(
+          draft.spreadsheetId,
+          draft.expenseId,
+          {
+            itemName: draft.itemName,
+            qty: draft.qty,
+            unit: draft.unit,
+            price: draft.price,
+            supplier: draft.supplier,
+          },
+          draft.updatedBy
+        );
+
+        if (!result.success) {
+          await safeEditMessageText(ctx, `❌ Gagal menambahkan ke Google Sheets: ${escapeHtml(result.message)}`, {
+            parse_mode: "HTML",
+          });
+          return;
+        }
+      } else if (draft.action === "UPDATE") {
         const result = await googleSheetsService.updatePaguItemDetail(
           draft.spreadsheetId,
           draft.orderNo,
@@ -2202,31 +2244,41 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
 
       pendingPaguModifications.delete(draftId);
 
-      const title = draft.action === "ADD"
-        ? `✅ <b>BAHAN BARU BERHASIL DITAMBAHKAN KE PAGU!</b>`
-        : `✅ <b>PERUBAHAN PAGU BERHASIL DISIMPAN!</b>`;
-      const syncNote = draft.action === "ADD"
-        ? `🔄 <i>Bahan baru telah disisipkan ke Tab 03 & Tab 06. Urutan ID bahan lain bergeser ke bawah dengan rapi, dan total anggaran Tab 02 otomatis bertambah.</i>`
-        : `🔄 <i>Tab 03_RINCIAN_PENDAPATAN dan Tab 06_PERBANDINGAN_MARGIN telah diperbarui dan otomatis tersinkronisasi.</i>`;
+      const title = draft.isExpense
+        ? `✅ <b>RINCIAN BELANJA BERHASIL DISISIPKAN!</b>`
+        : (draft.action === "ADD"
+            ? `✅ <b>BAHAN BARU BERHASIL DITAMBAHKAN KE PAGU!</b>`
+            : `✅ <b>PERUBAHAN PAGU BERHASIL DISIMPAN!</b>`);
+
+      const syncNote = draft.isExpense
+        ? `🔄 <i>Bahan belanja telah disisipkan rapi mengelompok di bawah transaksi ${escapeHtml(draft.expenseId || draft.orderNo)} pada Tab 05. Urutan ID bahan lain bergeser turun otomatis, dan total tagihan Tab 04 otomatis terakumulasi.</i>`
+        : (draft.action === "ADD"
+            ? `🔄 <i>Bahan baru telah disisipkan ke Tab 03 & Tab 06. Urutan ID bahan lain bergeser ke bawah dengan rapi, dan total anggaran Tab 02 otomatis bertambah.</i>`
+            : `🔄 <i>Tab 03_RINCIAN_PENDAPATAN dan Tab 06_PERBANDINGAN_MARGIN telah diperbarui dan otomatis tersinkronisasi.</i>`);
 
       const successCard = [
         title,
         `Unit: <b>${escapeHtml(unitConfig.name)}</b>`,
         `------------------------------------------`,
-        `• <b>Surat Pesanan:</b> <code>${escapeHtml(draft.orderLabel || draft.orderNo)}</code>`,
+        draft.isExpense
+          ? `• <b>Transaksi Belanja:</b> <code>${escapeHtml(draft.orderLabel || draft.expenseId || draft.orderNo)}</code>`
+          : `• <b>Surat Pesanan:</b> <code>${escapeHtml(draft.orderLabel || draft.orderNo)}</code>`,
         `• <b>Bahan:</b> <b>${escapeHtml(draft.itemName)}</b>`,
         `• <b>Kuantitas:</b> <b>${draft.qty} ${escapeHtml(draft.unit)}</b>`,
         `• <b>Harga Satuan:</b> <b>${formatRupiah(draft.price)}</b>`,
-        `• <b>Total Pagu Bahan:</b> <b>${formatRupiah(draft.qty * draft.price)}</b>`,
-        draft.supplier ? `• <b>Target Rekanan:</b> <b>${escapeHtml(draft.supplier)}</b>` : "",
+        `• <b>Total Belanja:</b> <b>${formatRupiah(draft.qty * draft.price)}</b>`,
+        draft.supplier ? (draft.isExpense ? `• <b>Supplier:</b> ${escapeHtml(draft.supplier)}` : `• <b>Target Rekanan:</b> ${escapeHtml(draft.supplier)}`) : "",
         `------------------------------------------`,
         syncNote,
       ].filter(Boolean).join("\n");
 
-      const kb = new InlineKeyboard()
-        .text("📋 Rincian PO", `v:pagu_ord:${draft.orderNo}`)
-        .row()
-        .text("🏠 Menu Utama", "qa:start");
+      const kb = new InlineKeyboard();
+      if (draft.isExpense && draft.expenseId) {
+        kb.text("🔍 Detail Transaksi", `t:det:${draft.expenseId}`).row();
+      } else {
+        kb.text("📋 Rincian PO", `v:pagu_ord:${draft.orderNo}`).row();
+      }
+      kb.text("🏠 Menu Utama", "qa:start");
 
       await safeEditMessageText(ctx, successCard, {
         parse_mode: "HTML",
@@ -3001,6 +3053,47 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
 
             const req = intent.request;
             const targetName = req.newItemName || req.targetItemName || "";
+
+            const isExpenseRef = !!(req.orderRef && /^(?:SPPG\d*[-_])?E[A-Z]\d+/i.test(req.orderRef.trim()));
+            if (isExpenseRef) {
+              const expenseTrx = await googleSheetsService.findTransactionById(unitConfig.spreadsheetId, req.orderRef!);
+              if (expenseTrx.found && expenseTrx.type === "expense") {
+                const draftId = `p1s_${Math.random().toString(36).slice(2, 9)}`;
+                const draft: PaguOneShotDraft = {
+                  draftId,
+                  spreadsheetId: unitConfig.spreadsheetId,
+                  orderNo: expenseTrx.orderNo || "-",
+                  orderLabel: `Nota Supplier (${expenseTrx.id})`,
+                  action: "ADD",
+                  itemName: targetName || "Bahan Baru",
+                  qty: (req.qty !== undefined && req.qty !== null) ? req.qty : 1,
+                  unit: req.unit || "satuan",
+                  price: (req.price !== undefined && req.price !== null) ? req.price : 0,
+                  supplier: req.supplier || expenseTrx.supplierOrUnit || "Supplier",
+                  updatedBy: callerName,
+                  createdAt: Date.now(),
+                  isExpense: true,
+                  expenseId: expenseTrx.id,
+                };
+
+                pendingPaguModifications.set(draftId, draft);
+
+                const cardText = renderPaguOneShotCard(draft, unitConfig.name);
+                const confirmMsg = await ctx.reply(cardText, {
+                  parse_mode: "HTML",
+                  reply_markup: buildPaguOneShotConfirmKeyboard(draftId),
+                });
+                state.activeDraftMsgId = confirmMsg.message_id;
+                break;
+              } else {
+                await ctx.reply(
+                  `❌ <b>Transaksi Belanja Tidak Ditemukan</b>\n\nTransaksi belanja dengan ID <code>${escapeHtml(req.orderRef!)}</code> tidak ditemukan di Tab 04_PAGU_PENGELUARAN unit <b>${escapeHtml(unitConfig.name)}</b>.`,
+                  { parse_mode: "HTML" }
+                );
+                break;
+              }
+            }
+
             const queryRes = await googleSheetsService.findPaguItemByQuery(
               unitConfig.spreadsheetId,
               req.orderRef || undefined,

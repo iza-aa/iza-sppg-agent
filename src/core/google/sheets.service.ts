@@ -89,6 +89,90 @@ export interface FindPaguItemResult {
   availableOrders: PaguOrderSummary[];
 }
 
+export interface ExpenseInsertionTarget {
+  mode: "INSERT" | "APPEND";
+  targetRowIdx: number;       // 1-based row index in Google Sheet where new row is located
+  insertStartIndex: number;   // 0-based index for insertDimension
+  nextItemIndex: number;      // Next No Urut (1, 2, 3...)
+  matchedExpenseId: string;   // The canonical expense ID matched in the sheet
+  sppgRefNo: string;          // SPPG reference if available
+  supplierName: string;       // Supplier name if available
+}
+
+/**
+ * Calculates the exact insertion target for child rows in 05_RINCIAN_PENGELUARAN.
+ * If targetExpenseId already exists in Tab 05, it groups the new items right below
+ * the last item of that expenseId. Otherwise, it targets appending at the end.
+ */
+export function calculateExpenseInsertionTarget(
+  tab05Rows: (string | number)[][],
+  targetExpenseId: string
+): ExpenseInsertionTarget {
+  const cleanTarget = String(targetExpenseId || "").trim().toUpperCase();
+
+  const matchesExpenseId = (candidate: string): boolean => {
+    const c = String(candidate || "").trim().toUpperCase();
+    if (!c || !cleanTarget) return false;
+    return (
+      c === cleanTarget ||
+      c.endsWith(`-${cleanTarget}`) ||
+      c.endsWith(`_${cleanTarget}`) ||
+      cleanTarget.endsWith(`-${c}`) ||
+      cleanTarget.endsWith(`_${c}`) ||
+      (cleanTarget.length >= 4 && c.includes(cleanTarget))
+    );
+  };
+
+  let lastRowIndex = -1; // 1-based row index
+  let maxItemIndex = 0;
+  let matchedExpenseId = cleanTarget;
+  let sppgRefNo = "-";
+  let supplierName = "Supplier";
+
+  for (let i = 0; i < tab05Rows.length; i++) {
+    const row = tab05Rows[i];
+    const colB = String(row[1] || "");
+    if (matchesExpenseId(colB)) {
+      lastRowIndex = i + 1; // 1-based
+      matchedExpenseId = colB;
+      const parsedIdx = parseInt(String(row[2] || "0"), 10);
+      if (!isNaN(parsedIdx) && parsedIdx > maxItemIndex) {
+        maxItemIndex = parsedIdx;
+      }
+      if (row[0] && String(row[0]).trim() !== "-") {
+        sppgRefNo = String(row[0]).trim();
+      }
+      if (row[3] && String(row[3]).trim()) {
+        supplierName = String(row[3]).trim();
+      }
+    }
+  }
+
+  if (lastRowIndex > 0) {
+    return {
+      mode: "INSERT",
+      targetRowIdx: lastRowIndex + 1,
+      insertStartIndex: lastRowIndex, // 0-based
+      nextItemIndex: maxItemIndex + 1,
+      matchedExpenseId,
+      sppgRefNo,
+      supplierName,
+    };
+  } else {
+    const fallbackCount = tab05Rows.length;
+    const targetStartRow = Math.max(fallbackCount + 1, 2);
+    return {
+      mode: "APPEND",
+      targetRowIdx: targetStartRow,
+      insertStartIndex: targetStartRow - 1,
+      nextItemIndex: 1,
+      matchedExpenseId: cleanTarget,
+      sppgRefNo: "-",
+      supplierName: "Supplier",
+    };
+  }
+}
+
 export interface MasterAuditLogEntry {
   timestamp?: string; // Default to current WITA
   unitName: string;
@@ -1363,17 +1447,18 @@ export class GoogleSheetsService {
     const nowIso = new Date().toISOString().split("T")[0];
     const dateStr = receipt.date || nowIso;
 
-    // Count existing rows in 04_PAGU_PENGELUARAN for ID generation
-    const colA = await client.spreadsheets.values
-      .get({
-        spreadsheetId,
-        range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!A:A`,
-      })
-      .catch(() => ({ data: { values: null } }));
-    const existingCount = (colA.data?.values || []).length;
-    const counter = Math.max(existingCount, 1);
-    const expenseId = this.generateTransactionId(unitCode, dateStr, counter, "expense");
-    const targetExpenseRow = Math.max(existingCount + 1, 2);
+    // 1. Check if receipt specifies an existing transaction/expense ID
+    const explicitExpenseId = (receipt as any).expenseId || (receipt as any).expense_id || (receipt as any).transaction_id;
+    let expenseId: string | undefined;
+    let isExistingExpense = false;
+
+    if (explicitExpenseId) {
+      const existingCheck = await this.findTransactionById(spreadsheetId, explicitExpenseId);
+      if (existingCheck.found && existingCheck.type === "expense") {
+        expenseId = existingCheck.id;
+        isExistingExpense = true;
+      }
+    }
 
     const itemsSummary =
       receipt.items && receipt.items.length > 0
@@ -1381,59 +1466,60 @@ export class GoogleSheetsService {
         : "Belanja Bahan Dapur";
     const driveLinkFormula = driveLink ? `=HYPERLINK("${driveLink}"; "Lihat Nota")` : "-";
 
-    // 1. Write Parent Row to 04_PAGU_PENGELUARAN (Formula-driven Col F linked to Tab 05)
-    const expenseRow = [
-      receipt.sppg_ref_no || "-",                                 // A: No SPPG Ref
-      expenseId,                                                  // B: ID Transaksi
-      dateStr,                                                    // C: Tanggal Transaksi
-      receipt.supplier_name,                                      // D: Nama Supplier
-      (receipt as any).receipt_no || "-",                         // E: No Invoice Supplier
-      `=IF(COUNTIF('${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$B:$B; B${targetExpenseRow})>0; SUMIF('${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$B:$B; B${targetExpenseRow}; '${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$I:$I); ${receipt.total_amount})`, // F: Total Nominal Tagihan
-      receipt.payment_method || "Tunai",                          // G: Metode Pembayaran
-      driveLinkFormula,                                           // H: Link Bukti Nota
-      picName || "PIC Dapur",                                     // I: PIC / Operator
-      receipt.notes || rawCaption || itemsSummary,                // J: Catatan / Keterangan
-    ];
+    if (!isExistingExpense) {
+      // Count existing rows in 04_PAGU_PENGELUARAN for ID generation
+      const colA = await client.spreadsheets.values
+        .get({
+          spreadsheetId,
+          range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!A:A`,
+        })
+        .catch(() => ({ data: { values: null } }));
+      const existingCount = (colA.data?.values || []).length;
+      const counter = Math.max(existingCount, 1);
+      expenseId = this.generateTransactionId(unitCode, dateStr, counter, "expense");
+      const targetExpenseRow = Math.max(existingCount + 1, 2);
 
-    await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PAGU_PENGELUARAN, [expenseRow]);
+      // 1. Write Parent Row to 04_PAGU_PENGELUARAN (Formula-driven Col F linked to Tab 05)
+      const expenseRow = [
+        receipt.sppg_ref_no || "-",                                 // A: No SPPG Ref
+        expenseId,                                                  // B: ID Transaksi
+        dateStr,                                                    // C: Tanggal Transaksi
+        receipt.supplier_name,                                      // D: Nama Supplier
+        (receipt as any).receipt_no || "-",                         // E: No Invoice Supplier
+        `=IF(COUNTIF('${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$B:$B; B${targetExpenseRow})>0; SUMIF('${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$B:$B; B${targetExpenseRow}; '${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$I:$I); ${receipt.total_amount})`, // F: Total Nominal Tagihan
+        receipt.payment_method || "Tunai",                          // G: Metode Pembayaran
+        driveLinkFormula,                                           // H: Link Bukti Nota
+        picName || "PIC Dapur",                                     // I: PIC / Operator
+        receipt.notes || rawCaption || itemsSummary,                // J: Catatan / Keterangan
+      ];
 
-    // 2. Write Child Item Rows to 05_RINCIAN_PENGELUARAN (Mirroring Tab 03 but for Expenses)
-    const rincianExpColA = await client.spreadsheets.values
-      .get({
-        spreadsheetId,
-        range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:A`,
-      })
-      .catch(() => ({ data: { values: null } }));
-    const rincianExpExistingCount = (rincianExpColA.data?.values || []).length;
-    const rincianExpStartRow = Math.max(rincianExpExistingCount + 1, 2);
+      await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PAGU_PENGELUARAN, [expenseRow]);
+    }
 
+    // 2. Write Child Item Rows to 05_RINCIAN_PENGELUARAN using auto-grouping by expenseId
     const itemsToRecord = (receipt.items && receipt.items.length > 0)
-      ? receipt.items
+      ? receipt.items.map((it) => ({
+          itemName: it.item_name,
+          qty: it.qty,
+          unit: it.unit,
+          price: it.price,
+          supplier: it.supplier_name || receipt.supplier_name,
+          notes: (receipt as any).receipt_no || receipt.notes || "-",
+          sppgRefNo: receipt.sppg_ref_no || "-",
+          receiptNo: (receipt as any).receipt_no,
+        }))
       : [{
-          item_name: receipt.notes || rawCaption || "Belanja Bahan Dapur (Unitemized)",
+          itemName: receipt.notes || rawCaption || "Belanja Bahan Dapur (Unitemized)",
           qty: 1,
           unit: "Paket",
           price: receipt.total_amount,
-          total_price: receipt.total_amount
+          supplier: receipt.supplier_name,
+          notes: (receipt as any).receipt_no || receipt.notes || "-",
+          sppgRefNo: receipt.sppg_ref_no || "-",
+          receiptNo: (receipt as any).receipt_no,
         }];
 
-    const rincianPengeluaranRows = itemsToRecord.map((item, idx) => {
-      const r = rincianExpStartRow + idx;
-      return [
-        receipt.sppg_ref_no || "-",                                 // A: No SPPG Ref
-        expenseId,                                                  // B: ID Transaksi Belanja
-        idx + 1,                                                    // C: No Urut
-        receipt.supplier_name,                                      // D: Nama Supplier
-        item.item_name,                                             // E: Uraian Bahan / Barang Belanja
-        item.qty,                                                   // F: Kuantitas
-        item.unit,                                                  // G: Satuan
-        item.price,                                                 // H: Harga Satuan Invoice
-        `=IF(OR(F${r}=""; H${r}=""); ""; F${r} * H${r})`,          // I: Total Belanja
-        (receipt as any).receipt_no || receipt.notes || "-",        // J: Keterangan / No Nota
-      ];
-    });
-
-    await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.RINCIAN_PENGELUARAN, rincianPengeluaranRows);
+    await this.appendOrInsertRincianPengeluaranRows(spreadsheetId, expenseId!, itemsToRecord);
 
     // 3. Automated Granular Matching & Partial Fulfillment Tracking in 06_PERBANDINGAN_MARGIN
     if (receipt.sppg_ref_no === "-") {
@@ -2532,6 +2618,8 @@ export class GoogleSheetsService {
 
     return { found: false, id: cleanId };
   }
+
+  findTransactionById = this.getTransactionDetail;
 
   /**
    * Generates a preview of what will be affected if a transaction is deleted (Cascading Check)
@@ -4225,6 +4313,206 @@ export class GoogleSheetsService {
   }
 
   insertPaguItemToOrder = this.addPaguItemToOrder;
+
+  /**
+   * Appends or inserts child item rows into 05_RINCIAN_PENGELUARAN.
+   * If expenseId already exists in Tab 05, rows are inserted directly
+   * below the last item of that expenseId (auto-grouping by transaction ID).
+   * Otherwise, rows are appended safely at the bottom of the tab.
+   */
+  async appendOrInsertRincianPengeluaranRows(
+    spreadsheetId: string,
+    expenseId: string,
+    items: Array<{
+      itemName: string;
+      qty: number;
+      unit?: string;
+      price: number;
+      supplier?: string;
+      notes?: string;
+      sppgRefNo?: string;
+      receiptNo?: string;
+    }>
+  ): Promise<{
+    mode: "INSERT" | "APPEND";
+    startRow: number;
+    count: number;
+    matchedExpenseId: string;
+  }> {
+    await this.ensure5TabStructure(spreadsheetId);
+    const client = await this.getClient();
+
+    // 1. Read existing rows in 05_RINCIAN_PENGELUARAN (Cols A to D)
+    const tab05Res = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:D`,
+    });
+    const tab05Rows = tab05Res.data.values || [];
+
+    const target = calculateExpenseInsertionTarget(tab05Rows, expenseId);
+
+    // 2. Get sheetId for 05_RINCIAN_PENGELUARAN
+    const meta = await client.spreadsheets.get({ spreadsheetId });
+    const sheetMap = new Map<string, number>();
+    meta.data.sheets?.forEach((s) => {
+      if (s.properties?.title && typeof s.properties?.sheetId === "number") {
+        sheetMap.set(s.properties.title, s.properties.sheetId);
+      }
+    });
+    const rincianSheetId = sheetMap.get(SHEET_NAMES.RINCIAN_PENGELUARAN) ?? SHEET_IDS.RINCIAN_PENGELUARAN;
+
+    if (target.mode === "INSERT") {
+      // MODE INSERT: Insert dimension right after the last item of this expenseId
+      await client.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              insertDimension: {
+                range: {
+                  sheetId: rincianSheetId,
+                  dimension: "ROWS",
+                  startIndex: target.insertStartIndex,
+                  endIndex: target.insertStartIndex + items.length,
+                },
+                inheritFromBefore: true,
+              },
+            },
+          ],
+        },
+      });
+
+      // Prepare rows for the newly inserted space
+      let currentItemNo = target.nextItemIndex;
+      const newRows: any[][] = [];
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const r = target.targetRowIdx + i;
+        const refNo = item.sppgRefNo || target.sppgRefNo || "-";
+        const supp = item.supplier || target.supplierName || "Supplier";
+        const notes = item.receiptNo || item.notes || "-";
+
+        newRows.push([
+          refNo,
+          target.matchedExpenseId,
+          currentItemNo++,
+          supp,
+          item.itemName,
+          item.qty,
+          item.unit || "unit",
+          item.price,
+          `=IF(OR(F${r}=""; H${r}=""); ""; F${r} * H${r})`,
+          notes,
+        ]);
+      }
+
+      await client.spreadsheets.values.update({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A${target.targetRowIdx}:J${target.targetRowIdx + items.length - 1}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: newRows },
+      });
+
+      logger.info(
+        { expenseId, targetRowIdx: target.targetRowIdx, count: items.length },
+        "Inserted child rows directly under existing expense in 05_RINCIAN_PENGELUARAN"
+      );
+
+      return {
+        mode: "INSERT",
+        startRow: target.targetRowIdx,
+        count: items.length,
+        matchedExpenseId: target.matchedExpenseId,
+      };
+    } else {
+      // MODE APPEND: Expense has no prior rows in Tab 05, append at the end
+      let currentItemNo = 1;
+      const newRows: any[][] = [];
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const r = target.targetRowIdx + i;
+        newRows.push([
+          item.sppgRefNo || "-",
+          target.matchedExpenseId,
+          currentItemNo++,
+          item.supplier || "Supplier",
+          item.itemName,
+          item.qty,
+          item.unit || "unit",
+          item.price,
+          `=IF(OR(F${r}=""; H${r}=""); ""; F${r} * H${r})`,
+          item.receiptNo || item.notes || "-",
+        ]);
+      }
+
+      await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.RINCIAN_PENGELUARAN, newRows);
+
+      return {
+        mode: "APPEND",
+        startRow: target.targetRowIdx,
+        count: items.length,
+        matchedExpenseId: target.matchedExpenseId,
+      };
+    }
+  }
+
+  /**
+   * Adds a single expense item directly to an existing expense transaction in 05_RINCIAN_PENGELUARAN
+   * (Auto-groups under the last item of that transaction via insertDimension).
+   * Automatically updates Tab 06 reconciliation if the expense is tied to an SPPG PO.
+   */
+  async addExpenseItemToTransaction(
+    spreadsheetId: string,
+    expenseId: string,
+    item: {
+      itemName: string;
+      qty: number;
+      unit?: string;
+      price: number;
+      supplier?: string;
+      notes?: string;
+    },
+    addedBy = "Telegram User"
+  ): Promise<{
+    success: boolean;
+    message: string;
+    targetRow?: number;
+    matchedExpenseId?: string;
+  }> {
+    try {
+      const result = await this.appendOrInsertRincianPengeluaranRows(spreadsheetId, expenseId, [item]);
+
+      const unitName = this.getUnitNameFromSpreadsheetId(spreadsheetId);
+      await this.appendMasterAuditLogsBatch([
+        {
+          unitName,
+          editor: `${addedBy} (Expense Item Adder)`,
+          sheetTab: SHEET_NAMES.RINCIAN_PENGELUARAN,
+          refId: result.matchedExpenseId,
+          columnEdited: `Sisip Rincian Belanja di ${result.matchedExpenseId} (Baris ${result.startRow}) - ${item.itemName}`,
+          oldValue: "-",
+          newValue: `${item.qty} ${item.unit || "unit"} @ Rp ${item.price}`,
+          sourceAction: "Expense Item Add (Auto Grouping Insert)",
+        },
+      ]).catch(() => {});
+
+      const modeMsg = result.mode === "INSERT"
+        ? `disisipkan rapi di bawah ${result.matchedExpenseId} (Baris ke-${result.startRow})`
+        : `ditambahkan di baris ke-${result.startRow}`;
+
+      return {
+        success: true,
+        message: `Bahan "${item.itemName}" berhasil ${modeMsg} pada Tab 05_RINCIAN_PENGELUARAN. Total tagihan di Tab 04 otomatis diperbarui.`,
+        targetRow: result.startRow,
+        matchedExpenseId: result.matchedExpenseId,
+      };
+    } catch (err: any) {
+      logger.error({ err: err?.message, spreadsheetId, expenseId, item }, "Failed to add expense item to transaction");
+      return { success: false, message: `Gagal menyisipkan rincian belanja: ${err?.message || err}` };
+    }
+  }
 }
 
 export const googleSheetsService = new GoogleSheetsService();

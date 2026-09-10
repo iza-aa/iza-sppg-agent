@@ -117,7 +117,7 @@ export class MetaAgent {
     const isPaguModificationText =
       hasPaguActionVerb && (
         /\b(pagu|rincian|kuantitas|qty|harga|satuan|bahan|item)\b/i.test(lower) ||
-        /\b(?:SPPG\d*[-_])?(?:IH|II)\d+/i.test(lower) ||
+        /\b(?:SPPG\d*[-_])?(?:IH|II|EH|EI)\d+/i.test(lower) ||
         /\b\d{2}\/\d{2}\/\d{2}\/\d{2}\b/.test(lower) ||
         /\bpo\b/i.test(lower)
       );

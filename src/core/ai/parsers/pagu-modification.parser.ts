@@ -61,15 +61,15 @@ export function staticParsePaguModification(text: string): PaguModificationReque
 
   // Must have keywords related to changing / adding / pagu
   const isPaguChange = /\b(ubah|ngubah|mengubah|ganti|mengganti|edit|revisi|koreksi|tambah|nambah|menambah|tambahkan|menambahkan|masukkan|input|sisip|sisipkan)\b/i.test(lower) &&
-    /\b(pagu|rincian|kuantitas|qty|harga|satuan|bahan|item|ih\d+|ii\d+|\d{2}\/\d{2}\/\d{2}\/\d{2}|po)\b/i.test(lower);
+    /\b(pagu|rincian|kuantitas|qty|harga|satuan|bahan|item|ih\d+|ii\d+|eh\d+|ei\d+|\d{2}\/\d{2}\/\d{2}\/\d{2}|po)\b/i.test(lower);
 
   if (!isPaguChange) return null;
 
   const isAddAction = /\b(tambah|nambah|menambah|tambahkan|menambahkan|masukkan|input|sisip|sisipkan)\b/i.test(lower);
   const actionIntent: "UPDATE" | "ADD" = isAddAction ? "ADD" : "UPDATE";
 
-  // 1. Extract Order Reference (e.g. IH001, II005, 03/31/08/26) - prefer short ID code if available
-  const specificIdMatch = text.match(/\b((?:SPPG\d*[-_])?(?:IH|II|TRX)\d{3,})\b/i);
+  // 1. Extract Order Reference (e.g. IH001, II005, EI001, EI002, 03/31/08/26) - prefer short ID code if available
+  const specificIdMatch = text.match(/\b((?:SPPG\d*[-_])?(?:IH|II|EH|EI|TRX)\d{3,})\b/i);
   const datePoMatch = text.match(/\b(\d{2}\/\d{2}\/\d{2}\/\d{2})\b/);
   const orderRef = specificIdMatch ? specificIdMatch[1].toUpperCase() : (datePoMatch ? datePoMatch[1] : undefined);
 

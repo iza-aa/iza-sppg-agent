@@ -251,4 +251,58 @@ describe("Google Sheets 5-Tab Engine", () => {
     expect(callbacks).toContain("v:pagu_set:draft_test:-");
     expect(callbacks).toContain("v:sub:back:draft_test");
   });
+
+  describe("Option 1: Auto-Grouping by Transaction ID in Tab 05 (05_RINCIAN_PENGELUARAN)", () => {
+    it("should calculate correct insertion target below EI001 when Tab 05 has EI001, EI002, EI005", async () => {
+      const { calculateExpenseInsertionTarget } = await import("../src/core/google/sheets.service.js");
+
+      // Simulating Tab 05 data: Row 1 is header, Rows 2..22 are EI001 (21 items), Row 23 is EI002, Row 24 is EI005
+      const mockTab05Rows: (string | number)[][] = [
+        ["No SPPG Ref", "ID Transaksi Belanja", "No Urut", "Nama Supplier"],
+      ];
+
+      // Rows 2..22: SPPG0126-EI001 with No Urut 1..21
+      for (let i = 1; i <= 21; i++) {
+        mockTab05Rows.push(["03/31/08/26", "SPPG0126-EI001", i, "Supplier Pasar"]);
+      }
+      // Row 23: SPPG0126-EI002 with No Urut 1
+      mockTab05Rows.push(["-", "SPPG0126-EI002", 1, "Supplier Pasar"]);
+      // Row 24: SPPG0126-EI005 with No Urut 1
+      mockTab05Rows.push(["05/02/09/26", "SPPG0126-EI005", 1, "Supplier Pasar / Toko"]);
+
+      expect(mockTab05Rows.length).toBe(24);
+
+      // Case 1: Input for EI001 (suffix) or SPPG0126-EI001 (full ID)
+      const targetEI001 = calculateExpenseInsertionTarget(mockTab05Rows, "EI001");
+      expect(targetEI001.mode).toBe("INSERT");
+      // Row index 22 is the last item of EI001 (Row 22 in 1-based index)
+      // New row should be inserted at row 23 (startIndex = 22 in 0-based indexing)
+      expect(targetEI001.insertStartIndex).toBe(22);
+      expect(targetEI001.targetRowIdx).toBe(23);
+      expect(targetEI001.nextItemIndex).toBe(22); // Next No Urut after 21
+      expect(targetEI001.matchedExpenseId).toBe("SPPG0126-EI001");
+      expect(targetEI001.sppgRefNo).toBe("03/31/08/26");
+
+      // Case 2: Input for EI002
+      const targetEI002 = calculateExpenseInsertionTarget(mockTab05Rows, "EI002");
+      expect(targetEI002.mode).toBe("INSERT");
+      // Row 23 is the last item of EI002, so new row should be inserted at row 24
+      expect(targetEI002.insertStartIndex).toBe(23);
+      expect(targetEI002.targetRowIdx).toBe(24);
+      expect(targetEI002.nextItemIndex).toBe(2);
+      expect(targetEI002.matchedExpenseId).toBe("SPPG0126-EI002");
+
+      // Case 3: Input for brand new ID EI006
+      const targetEI006 = calculateExpenseInsertionTarget(mockTab05Rows, "EI006");
+      expect(targetEI006.mode).toBe("APPEND");
+      // Append at bottom: after row 24 -> row 25
+      expect(targetEI006.targetRowIdx).toBe(25);
+      expect(targetEI006.nextItemIndex).toBe(1);
+    });
+
+    it("should export findTransactionById alias on GoogleSheetsService", () => {
+      expect(typeof googleSheetsService.findTransactionById).toBe("function");
+      expect(googleSheetsService.findTransactionById).toBe(googleSheetsService.getTransactionDetail);
+    });
+  });
 });
