@@ -164,18 +164,22 @@ export function buildDeleteConfirmKeyboard(transactionId: string): InlineKeyboar
 /**
  * Confirmation keyboard before deleting a specific child item from Tab 05
  */
-export function buildDeleteChildItemKeyboard(expenseId: string, itemIndex: number): InlineKeyboard {
+export function buildDeleteChildItemKeyboard(expenseId: string, itemIndex?: number, itemCount = 1): InlineKeyboard {
+  const label = itemCount > 1 ? `🗑️ Ya, Hapus ${itemCount} Bahan Ini` : "🗑️ Ya, Hapus Bahan";
+  const callback = itemIndex !== undefined ? `v:delit_yes:${expenseId}:${itemIndex}` : `v:delit_yes:${expenseId}`;
   return new InlineKeyboard()
-    .text("🗑️ Ya, Hapus Bahan", `v:delit_yes:${expenseId}:${itemIndex}`)
+    .text(label, callback)
     .text("❌ Batalkan", `v:delit_no:${expenseId}`);
 }
 
 /**
  * Confirmation keyboard before deleting a specific child item from Tab 03 (Pagu)
  */
-export function buildDeletePaguItemKeyboard(orderNo: string, itemIndex: number): InlineKeyboard {
+export function buildDeletePaguItemKeyboard(orderNo: string, itemIndex?: number, itemCount = 1): InlineKeyboard {
+  const label = itemCount > 1 ? `🗑️ Ya, Hapus ${itemCount} Pagu Ini` : "🗑️ Ya, Hapus Pagu";
+  const callback = itemIndex !== undefined ? `v:delpg_yes:${orderNo}:${itemIndex}` : `v:delpg_yes:${orderNo}`;
   return new InlineKeyboard()
-    .text("🗑️ Ya, Hapus Pagu", `v:delpg_yes:${orderNo}:${itemIndex}`)
+    .text(label, callback)
     .text("❌ Batalkan", `v:delpg_no:${orderNo}`);
 }
 

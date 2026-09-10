@@ -209,6 +209,59 @@ export function registerTransactionHandlers(bCtx: BotContext) {
       state.activeDraftMsgId = undefined;
     }
 
+    // MULTI-ITEM DELETION CASE
+    if (state?.activeDeleteItems && state.activeDeleteItems.length > 1) {
+      const itemsToDelete = state.activeDeleteItems;
+      const itemNames = itemsToDelete.map((it) => it.itemName);
+
+      await ctx.answerCallbackQuery({ text: "🗑️ Menghapus bahan-bahan dari Google Sheets...", show_alert: false });
+      await safeEditMessageText(ctx, "⏳ <i>Sedang menghapus baris bahan di Tab 05 dan memperbarui evaluasi...</i>", {
+        parse_mode: "HTML",
+      });
+
+      const result = await googleSheetsService.deleteMultipleExpenseChildItems(
+        bCtx.unitConfig.spreadsheetId,
+        expenseId,
+        itemNames,
+        ctx.from?.first_name || "Admin"
+      );
+
+      if (result.success && result.deletedItems.length > 0) {
+        const deletedSummary = result.deletedItems
+          .map((d, i) => `  ${i + 1}. <s>${escapeHtml(d.itemName)}</s> (${formatRupiah(d.total)})`)
+          .join("\n");
+
+        const successText = [
+          `🗑️ <b>${result.deletedItems.length} Rincian Bahan Berhasil Dihapus!</b>`,
+          `------------------------------------------`,
+          `• <b>Transaksi:</b> <code>${escapeHtml(expenseId)}</code>`,
+          `• <b>Bahan yang Dihapus:</b>`,
+          deletedSummary,
+          `------------------------------------------`,
+          `• <b>Total Tagihan Berkurang:</b> <b>${formatRupiah(result.totalDeducted)}</b>`,
+          `✅ Baris rincian di <b>Tab 05_RINCIAN_PENGELUARAN</b> telah dihapus.`,
+          result.cleanedParent
+            ? `✅ Seluruh rincian telah kosong, nota induk di <b>Tab 04</b> otomatis dibersihkan.`
+            : `✅ Total tagihan di <b>Tab 04_PAGU_PENGELUARAN</b> otomatis terpotong.`,
+          `✅ <b>Tab 06_PERBANDINGAN_MARGIN</b> telah direkonsiliasi.`,
+          `\n<i>Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b></i>`,
+        ].join("\n");
+
+        await safeEditMessageText(ctx, successText, { parse_mode: "HTML" });
+        if (state) {
+          state.activeDeleteItems = null;
+          state.activeDeleteItem = null;
+        }
+      } else {
+        await safeEditMessageText(
+          ctx,
+          `❌ <b>Gagal menghapus rincian bahan:</b>\n${escapeHtml(result.message)}`,
+          { parse_mode: "HTML" }
+        );
+      }
+      return;
+    }
+
     const targetItemName = state?.activeDeleteItem?.itemName || "";
 
     await ctx.answerCallbackQuery({ text: "🗑️ Menghapus bahan dari Google Sheets...", show_alert: false });
@@ -256,6 +309,7 @@ export function registerTransactionHandlers(bCtx: BotContext) {
       const state = bCtx.getState(ctx.from.id);
       state.activeDraftMsgId = undefined;
       state.activeDeleteItem = null;
+      state.activeDeleteItems = null;
     }
     await ctx.answerCallbackQuery({ text: "Penghapusan dibatalkan." });
     await safeEditMessageText(
@@ -278,6 +332,63 @@ export function registerTransactionHandlers(bCtx: BotContext) {
     const state = ctx.from ? bCtx.getState(ctx.from.id) : undefined;
     if (state) {
       state.activeDraftMsgId = undefined;
+    }
+
+    // MULTI-ITEM PAGU DELETION
+    if (state?.activeDeleteItems && state.activeDeleteItems.length > 1) {
+      const itemsToDelete = state.activeDeleteItems;
+      await ctx.answerCallbackQuery({ text: "🗑️ Menghapus bahan-bahan dari pagu...", show_alert: false });
+      await safeEditMessageText(ctx, "⏳ <i>Sedang menghapus bahan dari Tab 03 dan memperbarui pagu...</i>", {
+        parse_mode: "HTML",
+      });
+
+      const deletedPagus: any[] = [];
+      let totalPaguReduced = 0;
+      for (const item of itemsToDelete) {
+        const res = await googleSheetsService.deletePaguChildItem(
+          bCtx.unitConfig.spreadsheetId,
+          orderNo,
+          item.itemName,
+          ctx.from?.first_name || "Admin"
+        );
+        if (res.success && res.deletedItem) {
+          deletedPagus.push(res.deletedItem);
+          totalPaguReduced += res.deletedItem.total;
+        }
+      }
+
+      if (deletedPagus.length > 0) {
+        const deletedSummary = deletedPagus
+          .map((d, i) => `  ${i + 1}. <s>${escapeHtml(d.itemName)}</s> (${formatRupiah(d.total)})`)
+          .join("\n");
+
+        const successText = [
+          `🗑️ <b>${deletedPagus.length} Bahan Pagu Berhasil Dihapus!</b>`,
+          `------------------------------------------`,
+          `• <b>Surat Pesanan:</b> <code>${escapeHtml(orderNo)}</code>`,
+          `• <b>Daftar Bahan:</b>`,
+          deletedSummary,
+          `------------------------------------------`,
+          `• <b>Total Pagu Berkurang:</b> <b>${formatRupiah(totalPaguReduced)}</b>`,
+          `✅ Baris bahan di <b>Tab 03_RINCIAN_PENDAPATAN</b> telah dihapus.`,
+          `✅ Total pagu di <b>Tab 02_PAGU_PENERIMAAN</b> otomatis disesuaikan.`,
+          `✅ Baris evaluasi di <b>Tab 06_PERBANDINGAN_MARGIN</b> telah dihapus.`,
+          `\n<i>Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b></i>`,
+        ].join("\n");
+
+        await safeEditMessageText(ctx, successText, { parse_mode: "HTML" });
+        if (state) {
+          state.activeDeleteItems = null;
+          state.activeDeleteItem = null;
+        }
+      } else {
+        await safeEditMessageText(
+          ctx,
+          `❌ <b>Gagal menghapus bahan pagu.</b>`,
+          { parse_mode: "HTML" }
+        );
+      }
+      return;
     }
 
     const targetItemName = state?.activeDeleteItem?.itemName || "";
@@ -327,6 +438,7 @@ export function registerTransactionHandlers(bCtx: BotContext) {
       const state = bCtx.getState(ctx.from.id);
       state.activeDraftMsgId = undefined;
       state.activeDeleteItem = null;
+      state.activeDeleteItems = null;
     }
     await ctx.answerCallbackQuery({ text: "Penghapusan pagu dibatalkan." });
     await safeEditMessageText(

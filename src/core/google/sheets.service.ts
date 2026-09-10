@@ -499,6 +499,15 @@ export class GoogleSheetsService {
     return this.expense.deleteExpenseChildItem(spreadsheetId, expenseId, itemName, deletedBy);
   }
 
+  async deleteMultipleExpenseChildItems(
+    spreadsheetId: string,
+    expenseId: string,
+    itemNames: string[],
+    deletedBy = "Telegram User"
+  ) {
+    return this.expense.deleteMultipleExpenseChildItems(spreadsheetId, expenseId, itemNames, deletedBy);
+  }
+
   async findPaguChildItem(spreadsheetId: string, orderNo: string, itemName: string) {
     return this.pagu.findPaguChildItem(spreadsheetId, orderNo, itemName);
   }

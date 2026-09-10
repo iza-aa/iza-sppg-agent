@@ -1658,6 +1658,197 @@ export class ExpenseSheetsService {
   }
 
   /**
+   * Deletes multiple child items under an expense transaction in Tab 05 atomically
+   */
+  async deleteMultipleExpenseChildItems(
+    spreadsheetId: string,
+    expenseId: string,
+    itemNames: string[],
+    deletedBy = "Telegram User"
+  ): Promise<{
+    success: boolean;
+    message: string;
+    deletedItems: ExpenseChildItemFound[];
+    totalDeducted: number;
+    cleanedParent: boolean;
+  }> {
+    try {
+      const client = await this.getClient();
+      const cleanMatchedId = expenseId.trim().toUpperCase();
+
+      // 1. Locate all requested items
+      const foundItems: ExpenseChildItemFound[] = [];
+      const notFoundNames: string[] = [];
+
+      for (const name of itemNames) {
+        const found = await this.findExpenseChildItem(spreadsheetId, expenseId, name);
+        if (found.found) {
+          // Avoid duplicate entries if user specified same item twice
+          if (!foundItems.some((f) => f.rowIndex === found.rowIndex)) {
+            foundItems.push(found);
+          }
+        } else {
+          notFoundNames.push(name);
+        }
+      }
+
+      if (foundItems.length === 0) {
+        return {
+          success: false,
+          message: `Tidak ada bahan yang ditemukan pada transaksi ${expenseId}.`,
+          deletedItems: [],
+          totalDeducted: 0,
+          cleanedParent: false,
+        };
+      }
+
+      // 2. Get sheetId for 05_RINCIAN_PENGELUARAN
+      const meta = await client.spreadsheets.get({ spreadsheetId });
+      const sheetMap = new Map<string, number>();
+      meta.data.sheets?.forEach((s) => {
+        if (s.properties?.title && typeof s.properties?.sheetId === "number") {
+          sheetMap.set(s.properties.title, s.properties.sheetId);
+        }
+      });
+      const rincianSheetId = sheetMap.get(SHEET_NAMES.RINCIAN_PENGELUARAN) ?? SHEET_IDS.RINCIAN_PENGELUARAN;
+
+      // 3. Sort found items by rowIndex DESCENDING to prevent shift during deletion
+      foundItems.sort((a, b) => b.rowIndex - a.rowIndex);
+
+      const deleteRequests = foundItems.map((item) => ({
+        deleteDimension: {
+          range: {
+            sheetId: rincianSheetId,
+            dimension: "ROWS",
+            startIndex: item.rowIndex - 1, // 0-based
+            endIndex: item.rowIndex,
+          },
+        },
+      }));
+
+      await client.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: { requests: deleteRequests },
+      });
+
+      // 4. Renumber remaining items under foundItems[0].expenseId in Tab 05 (if any)
+      const tab05PostRes = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!B:C`,
+      });
+      const postRows = tab05PostRes.data.values || [];
+      const matchesExp = (cand: string) => {
+        const c = String(cand || "").trim().toUpperCase();
+        return c === cleanMatchedId || (cleanMatchedId.length >= 4 && c.includes(cleanMatchedId));
+      };
+
+      const renumberUpdates: { range: string; values: any[][] }[] = [];
+      let nextNo = 1;
+      for (let r = 1; r < postRows.length; r++) {
+        if (matchesExp(postRows[r][0])) {
+          const sheetRow = r + 1;
+          renumberUpdates.push({
+            range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!C${sheetRow}`,
+            values: [[nextNo++]],
+          });
+        }
+      }
+      if (renumberUpdates.length > 0) {
+        await client.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            valueInputOption: "USER_ENTERED",
+            data: renumberUpdates,
+          },
+        });
+      }
+
+      // 5. If all items under this transaction are deleted, clean up Tab 04 row
+      let cleanedParent = false;
+      if (nextNo === 1) {
+        try {
+          const tab04Res = await client.spreadsheets.values.get({
+            spreadsheetId,
+            range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!A:B`,
+          });
+          const tab04Rows = tab04Res.data.values || [];
+          const tab04SheetId = sheetMap.get(SHEET_NAMES.PAGU_PENGELUARAN) ?? SHEET_IDS.PAGU_PENGELUARAN;
+          for (let r = 1; r < tab04Rows.length; r++) {
+            if (matchesExp(tab04Rows[r][1])) {
+              await client.spreadsheets.batchUpdate({
+                spreadsheetId,
+                requestBody: {
+                  requests: [
+                    {
+                      deleteDimension: {
+                        range: {
+                          sheetId: tab04SheetId,
+                          dimension: "ROWS",
+                          startIndex: r,
+                          endIndex: r + 1,
+                        },
+                      },
+                    },
+                  ],
+                },
+              });
+              cleanedParent = true;
+              logger.info({ expenseId }, "Deleted empty parent transaction in 04_PAGU_PENGELUARAN");
+              break;
+            }
+          }
+        } catch (tab04DelErr: any) {
+          logger.warn({ err: tab04DelErr?.message }, "Note deleting parent transaction from Tab 04");
+        }
+      }
+
+      // 6. Reconcile Tab 06 for each deleted item
+      for (const item of foundItems) {
+        await this.reconcileTab06AfterItemDelete(spreadsheetId, item).catch((err) => {
+          logger.warn({ err: err?.message || err, item: item.itemName }, "Note during Tab 06 reconciliation after child item delete");
+        });
+      }
+
+      // 7. Record Master Audit Log
+      const totalDeducted = foundItems.reduce((sum, it) => sum + (it.total || 0), 0);
+      const unitName = this.getUnitNameFromSpreadsheetId(spreadsheetId);
+      const auditEntries = foundItems.map((item) => ({
+        unitName,
+        editor: `${deletedBy} (Batch Child Item Deletion)`,
+        sheetTab: SHEET_NAMES.RINCIAN_PENGELUARAN,
+        refId: item.expenseId,
+        columnEdited: `Hapus Rincian Belanja di ${item.expenseId} (Baris ${item.rowIndex}) - ${item.itemName}`,
+        oldValue: `${item.qty} ${item.unit} @ Rp ${item.price} (Total: Rp ${item.total})`,
+        newValue: "[DIHAPUS]",
+        sourceAction: "Batch Expense Child Item Delete",
+      }));
+      await this.appendMasterAuditLogsBatch(auditEntries).catch(() => {});
+
+      const itemNamesList = foundItems.map((it) => `"${it.itemName}"`).join(", ");
+      const statusMsg = cleanedParent
+        ? `Sebanyak ${foundItems.length} bahan (${itemNamesList}) berhasil dihapus dari transaksi ${expenseId}. Seluruh rincian nota telah kosong sehingga nota induk di Tab 04 otomatis dibersihkan.`
+        : `Sebanyak ${foundItems.length} bahan (${itemNamesList}) berhasil dihapus dari transaksi ${expenseId}. Total tagihan di Tab 04 otomatis berkurang Rp ${totalDeducted.toLocaleString("id-ID")}.`;
+
+      return {
+        success: true,
+        message: statusMsg,
+        deletedItems: foundItems,
+        totalDeducted,
+        cleanedParent,
+      };
+    } catch (err: any) {
+      logger.error({ err: err?.message, spreadsheetId, expenseId, itemNames }, "Failed to batch delete expense child items");
+      return {
+        success: false,
+        message: `Gagal menghapus rincian bahan: ${err?.message || err}`,
+        deletedItems: [],
+        totalDeducted: 0,
+        cleanedParent: false,
+      };
+    }
+  }
+
+  /**
    * Reconciles Tab 06 after a child item is deleted from Tab 05
    */
   private async reconcileTab06AfterItemDelete(

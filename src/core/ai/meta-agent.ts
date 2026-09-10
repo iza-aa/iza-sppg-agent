@@ -13,7 +13,7 @@ export type MetaAgentIntent =
   | { type: "LIST_TRANSACTIONS"; limit?: number }
   | { type: "DETAIL_TRANSACTION"; transactionId: string }
   | { type: "DELETE_TRANSACTION"; transactionId: string }
-  | { type: "DELETE_ITEM"; transactionId: string; itemName: string }
+  | { type: "DELETE_ITEM"; transactionId: string; itemName: string; itemNames?: string[] }
   | { type: "EDIT_TRANSACTION"; transactionId: string; newAmount?: number; newSupplier?: string }
   | { type: "PAGU_MODIFICATION"; request: PaguModificationRequest }
   | { type: "INVITE"; name: string; role: "super_admin" | "admin" | "member" }
@@ -117,19 +117,36 @@ export class MetaAgent {
       /\b(?:hapus|delete|batal(?:kan)?)\s+(?:dari|di|pada|ke)\s+(?:transaksi\s+|nota\s+|po\s+|pagu\s+)?([A-Za-z0-9_/-]{3,35})\s+(?:rincian\s+|bahan\s+|pagu\s+|item\s+belanja\s+|item\s+)?(.+)\b/i
     );
 
+    const extractItemNames = (raw: string): string[] => {
+      return raw
+        .split(/,|\bdan\b|&|\bserta\b|\n/i)
+        .map((s) => s.replace(/^(?:pagu|bahan|rincian|item\s+belanja|item)\s+/i, "").trim())
+        .filter((s) => Boolean(s) && s.length > 0);
+    };
+
     if (deleteChildItemMatch) {
-      let candidateItem = deleteChildItemMatch[1].trim();
+      const candidateRaw = deleteChildItemMatch[1].trim();
       const candidateId = deleteChildItemMatch[2].trim();
-      candidateItem = candidateItem.replace(/^(?:pagu|bahan|rincian|item)\s+/i, "").trim();
-      if (candidateItem && candidateId) {
-        return { type: "DELETE_ITEM", transactionId: candidateId, itemName: candidateItem };
+      const items = extractItemNames(candidateRaw);
+      if (items.length > 0 && candidateId) {
+        return {
+          type: "DELETE_ITEM",
+          transactionId: candidateId,
+          itemName: items[0],
+          ...(items.length > 1 ? { itemNames: items } : {}),
+        };
       }
     } else if (deleteChildItemInvertedMatch) {
       const candidateId = deleteChildItemInvertedMatch[1].trim();
-      let candidateItem = deleteChildItemInvertedMatch[2].trim();
-      candidateItem = candidateItem.replace(/^(?:pagu|bahan|rincian|item)\s+/i, "").trim();
-      if (candidateItem && candidateId) {
-        return { type: "DELETE_ITEM", transactionId: candidateId, itemName: candidateItem };
+      const candidateRaw = deleteChildItemInvertedMatch[2].trim();
+      const items = extractItemNames(candidateRaw);
+      if (items.length > 0 && candidateId) {
+        return {
+          type: "DELETE_ITEM",
+          transactionId: candidateId,
+          itemName: items[0],
+          ...(items.length > 1 ? { itemNames: items } : {}),
+        };
       }
     }
 
@@ -144,7 +161,13 @@ export class MetaAgent {
       if (isCode) {
         return { type: "DELETE_TRANSACTION", transactionId: candidate };
       } else if (candidate) {
-        return { type: "DELETE_ITEM", transactionId: "", itemName: candidate };
+        const items = extractItemNames(candidate);
+        return {
+          type: "DELETE_ITEM",
+          transactionId: "",
+          itemName: items[0],
+          ...(items.length > 1 ? { itemNames: items } : {}),
+        };
       }
     }
 

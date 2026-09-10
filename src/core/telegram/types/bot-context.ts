@@ -150,6 +150,17 @@ export interface UserInteractionState {
     total?: number;
     supplier?: string;
   } | null;
+  activeDeleteItems?: Array<{
+    expenseId: string;
+    itemName: string;
+    itemIndex?: number;
+    rowIndex?: number;
+    qty?: number;
+    unit?: string;
+    price?: number;
+    total?: number;
+    supplier?: string;
+  }> | null;
 }
 
 export interface BotContext {

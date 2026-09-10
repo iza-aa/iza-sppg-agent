@@ -145,4 +145,46 @@ describe("Delete Child Item Intent & Keyboard Tests", () => {
     );
     expect(resCol4).toBe(false);
   });
+
+  describe("Multi-Item Child Deletion (Batch)", () => {
+    it("should classify multi-item delete syntax with 'dan'", async () => {
+      const res = await metaAgent.classifyAndRoute("hapus rincian Sayur Sop Campur dan Minyak Goreng dari EI002");
+      expect(res.type).toBe("DELETE_ITEM");
+      if (res.type === "DELETE_ITEM") {
+        expect(res.transactionId).toBe("EI002");
+        expect(res.itemNames).toEqual(["Sayur Sop Campur", "Minyak Goreng"]);
+      }
+    });
+
+    it("should classify multi-item delete syntax with comma", async () => {
+      const res = await metaAgent.classifyAndRoute("hapus Sayur Sop Campur, Minyak Goreng dari EI002");
+      expect(res.type).toBe("DELETE_ITEM");
+      if (res.type === "DELETE_ITEM") {
+        expect(res.transactionId).toBe("EI002");
+        expect(res.itemNames).toEqual(["Sayur Sop Campur", "Minyak Goreng"]);
+      }
+    });
+
+    it("should classify multi-item delete syntax for Pagu with 3 items", async () => {
+      const res = await metaAgent.classifyAndRoute("hapus bahan beras, telur, dan minyak di PO-2026/09/SPPG2-01");
+      expect(res.type).toBe("DELETE_ITEM");
+      if (res.type === "DELETE_ITEM") {
+        expect(res.transactionId).toBe("PO-2026/09/SPPG2-01");
+        expect(res.itemNames).toEqual(["beras", "telur", "minyak"]);
+      }
+    });
+
+    it("should generate multi-item delete keyboard with item count in button label", () => {
+      const kb = buildDeleteChildItemKeyboard("SPPG0226-EI002", undefined, 2);
+      expect(kb).toBeDefined();
+      const inlineButtons = kb.inline_keyboard[0];
+      expect(inlineButtons[0].text).toContain("2 Bahan");
+      expect(inlineButtons[0].callback_data).toBe("v:delit_yes:SPPG0226-EI002");
+    });
+
+    it("should export deleteMultipleExpenseChildItems on googleSheetsService", async () => {
+      const { googleSheetsService } = await import("../src/core/google/sheets.service.js");
+      expect(typeof googleSheetsService.deleteMultipleExpenseChildItems).toBe("function");
+    });
+  });
 });

@@ -489,10 +489,147 @@ export function registerTextRouterHandler(bCtx: BotContext) {
 
             const targetRef = intent.transactionId.trim();
             const targetItemName = intent.itemName.trim();
+            const targetNames = intent.itemNames && intent.itemNames.length > 1
+              ? intent.itemNames
+              : [targetItemName];
             const isPaguTarget =
               /\bpagu\b/i.test(text) ||
               /^PO-/i.test(targetRef) ||
               /^\d{2}\/\d{2}\/\d{2}\/\d{2}$/.test(targetRef);
+
+            // MULTI-ITEM DELETION BRANCH (2+ Items)
+            if (targetNames.length > 1) {
+              if (isPaguTarget) {
+                const foundItems: any[] = [];
+                const notFound: string[] = [];
+                for (const name of targetNames) {
+                  const f = await googleSheetsService.findPaguChildItem(
+                    bCtx.unitConfig.spreadsheetId,
+                    targetRef,
+                    name
+                  );
+                  if (f.found) foundItems.push(f);
+                  else notFound.push(name);
+                }
+
+                if (foundItems.length === 0) {
+                  await ctx.reply(
+                    `❌ Tidak ada bahan dari daftar [${targetNames.map((n) => `"${escapeHtml(n)}"`).join(", ")}] yang ditemukan pada pagu <code>${escapeHtml(targetRef || "-")}</code> di unit <b>${escapeHtml(bCtx.unitConfig.name)}</b>.`,
+                    { parse_mode: "HTML" }
+                  );
+                  break;
+                }
+
+                const notFoundWarning = notFound.length > 0
+                  ? `\n⚠️ <i>Catatan: Bahan berikut tidak ditemukan: ${notFound.map((n) => `<b>${escapeHtml(n)}</b>`).join(", ")}</i>\n`
+                  : "";
+
+                const totalPaguLoss = foundItems.reduce((acc, it) => acc + (it.total || 0), 0);
+                const itemsListFormatted = foundItems
+                  .map((it, idx) => `  ${idx + 1}. <b>${escapeHtml(it.itemName)}</b> (${it.qty} ${escapeHtml(it.unit)} @ ${formatRupiah(it.price)} = <b>${formatRupiah(it.total)}</b>)`)
+                  .join("\n");
+
+                state.activeDeleteItems = foundItems.map((f) => ({
+                  expenseId: f.orderNo,
+                  itemName: f.itemName,
+                  itemIndex: f.itemIndex,
+                  rowIndex: f.rowIndex,
+                  qty: f.qty,
+                  unit: f.unit,
+                  price: f.price,
+                  total: f.total,
+                  supplier: f.supplier,
+                }));
+
+                const confirmMsgText = [
+                  `🗑️ <b>KONFIRMASI HAPUS ${foundItems.length} BAHAN DARI PAGU RESMI</b>`,
+                  `Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>`,
+                  `------------------------------------------`,
+                  `• <b>Surat Pesanan:</b> <code>${escapeHtml(targetRef || foundItems[0].orderNo)}</code>`,
+                  `• <b>Daftar Bahan yang Dihapus:</b>`,
+                  itemsListFormatted,
+                  `------------------------------------------`,
+                  `📉 Total alokasi pagu berkurang: <b>${formatRupiah(totalPaguLoss)}</b>`,
+                  `📍 Baris bahan ini akan dihapus dari <b>Tab 03_RINCIAN_PENDAPATAN</b>.`,
+                  `🔄 Baris evaluasi di <b>Tab 06_PERBANDINGAN_MARGIN</b> akan dihapus.`,
+                  notFoundWarning,
+                  `<i>Apakah Anda yakin ingin menghapus ${foundItems.length} bahan ini dari pagu?</i>`,
+                ].filter(Boolean).join("\n");
+
+                const confirmMsg = await ctx.reply(confirmMsgText, {
+                  parse_mode: "HTML",
+                  reply_markup: buildDeletePaguItemKeyboard(targetRef || foundItems[0].orderNo, undefined, foundItems.length),
+                });
+                state.activeDraftMsgId = confirmMsg.message_id;
+                break;
+              } else {
+                // For Expense Child Items (Tab 05)
+                const foundItems: any[] = [];
+                const notFound: string[] = [];
+                for (const name of targetNames) {
+                  const f = await googleSheetsService.findExpenseChildItem(
+                    bCtx.unitConfig.spreadsheetId,
+                    targetRef,
+                    name
+                  );
+                  if (f.found) foundItems.push(f);
+                  else notFound.push(name);
+                }
+
+                if (foundItems.length === 0) {
+                  await ctx.reply(
+                    `❌ Tidak ada bahan dari daftar [${targetNames.map((n) => `"${escapeHtml(n)}"`).join(", ")}] yang ditemukan pada transaksi <code>${escapeHtml(targetRef || "-")}</code> di unit <b>${escapeHtml(bCtx.unitConfig.name)}</b>.`,
+                    { parse_mode: "HTML" }
+                  );
+                  break;
+                }
+
+                const notFoundWarning = notFound.length > 0
+                  ? `\n⚠️ <i>Catatan: Bahan berikut tidak ditemukan: ${notFound.map((n) => `<b>${escapeHtml(n)}</b>`).join(", ")}</i>\n`
+                  : "";
+
+                const totalExpenseDeduction = foundItems.reduce((acc, it) => acc + (it.total || 0), 0);
+                const itemsListFormatted = foundItems
+                  .map((it, idx) => `  ${idx + 1}. <b>${escapeHtml(it.itemName)}</b> (${it.qty} ${escapeHtml(it.unit)} @ ${formatRupiah(it.price)} = <b>${formatRupiah(it.total)}</b>)${it.isNonPagu ? " <code>[NON-PAGU]</code>" : ""}`)
+                  .join("\n");
+
+                state.activeDeleteItems = foundItems.map((f) => ({
+                  expenseId: f.expenseId,
+                  itemName: f.itemName,
+                  itemIndex: f.itemIndex,
+                  rowIndex: f.rowIndex,
+                  qty: f.qty,
+                  unit: f.unit,
+                  price: f.price,
+                  total: f.total,
+                  supplier: f.supplier,
+                  isNonPagu: f.isNonPagu,
+                }));
+
+                const expId = foundItems[0].expenseId;
+                const confirmMsgText = [
+                  `🗑️ <b>KONFIRMASI HAPUS ${foundItems.length} RINCIAN BELANJA</b>`,
+                  `Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>`,
+                  `------------------------------------------`,
+                  `• <b>Transaksi:</b> <code>Nota Supplier (${escapeHtml(expId)})</code>`,
+                  `• <b>Daftar Bahan yang Dihapus:</b>`,
+                  itemsListFormatted,
+                  `------------------------------------------`,
+                  `📉 Total tagihan berkurang: <b>${formatRupiah(totalExpenseDeduction)}</b>`,
+                  `📍 Baris rincian akan dihapus dari <b>Tab 05_RINCIAN_PENGELUARAN</b>.`,
+                  `🔄 Evaluasi margin di <b>Tab 06_PERBANDINGAN_MARGIN</b> akan disesuaikan.`,
+                  notFoundWarning,
+                  `<i>Apakah Anda yakin ingin menghapus ${foundItems.length} bahan ini?</i>`,
+                ].filter(Boolean).join("\n");
+
+                const confirmMsg = await ctx.reply(confirmMsgText, {
+                  parse_mode: "HTML",
+                  reply_markup: buildDeleteChildItemKeyboard(expId, undefined, foundItems.length),
+                });
+                state.activeDraftMsgId = confirmMsg.message_id;
+                break;
+              }
+            }
 
             if (isPaguTarget) {
               const foundPagu = await googleSheetsService.findPaguChildItem(
