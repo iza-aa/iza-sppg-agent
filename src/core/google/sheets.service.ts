@@ -595,7 +595,7 @@ export class GoogleSheetsService {
           spreadsheetId,
           range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A2`,
           valueInputOption: "USER_ENTERED",
-          insertDataOption: "INSERT_ROWS",
+          insertDataOption: "OVERWRITE",
           requestBody: { values: tab05NewRows },
         });
 
@@ -609,6 +609,23 @@ export class GoogleSheetsService {
             },
           });
         }
+
+        // Re-apply clean text, currency formatting, and standard row heights
+        const updatedMeta = await client.spreadsheets.get({ spreadsheetId });
+        const sheetMap = new Map<string, number>();
+        (updatedMeta.data.sheets || []).forEach((s) => {
+          if (s.properties?.title && typeof s.properties?.sheetId === "number") {
+            sheetMap.set(s.properties.title, s.properties.sheetId);
+          }
+        });
+        const stylingReqs = [
+          ...createHeaderStylingBatchRequests(sheetMap),
+          ...createNumberFormattingBatchRequests(sheetMap),
+        ];
+        await client.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: { requests: stylingReqs },
+        }).catch(() => {});
 
         logger.info(
           { spreadsheetId, backfilledItems: tab05NewRows.length },

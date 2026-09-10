@@ -419,6 +419,30 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
         fields: 'userEnteredFormat.numberFormat'
       }
     },
+    // Tab 05 (RINCIAN_PENGELUARAN): Data rows text styling (Black, Normal not bold, Arial 10)
+    {
+      repeatCell: {
+        range: {
+          sheetId: rincianPengeluaranId,
+          startRowIndex: 1,
+          endRowIndex: 5000,
+          startColumnIndex: 0,
+          endColumnIndex: 9,
+        },
+        cell: {
+          userEnteredFormat: {
+            textFormat: {
+              foregroundColor: hexToRgbColor('#000000'),
+              bold: false,
+              fontSize: 10,
+              fontFamily: 'Arial',
+            },
+            verticalAlignment: 'MIDDLE',
+          },
+        },
+        fields: 'userEnteredFormat(textFormat,verticalAlignment)',
+      },
+    },
     // Tab 05 (RINCIAN_PENGELUARAN): Kuantitas (Kolom F)
     {
       repeatCell: {
@@ -431,10 +455,11 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
         },
         cell: {
           userEnteredFormat: {
+            horizontalAlignment: 'RIGHT',
             numberFormat: { type: 'NUMBER', pattern: '#,##0' }
           }
         },
-        fields: 'userEnteredFormat.numberFormat'
+        fields: 'userEnteredFormat(horizontalAlignment,numberFormat)'
       }
     },
     // Tab 05 (RINCIAN_PENGELUARAN): Harga Satuan Invoice & Total Belanja (Kolom H & I)
@@ -449,10 +474,11 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
         },
         cell: {
           userEnteredFormat: {
+            horizontalAlignment: 'RIGHT',
             numberFormat: { type: 'CURRENCY', pattern: '"Rp"#,##0' }
           }
         },
-        fields: 'userEnteredFormat.numberFormat'
+        fields: 'userEnteredFormat(horizontalAlignment,numberFormat)'
       }
     },
     // Tab 06 (PERBANDINGAN_MARGIN): Tanggal (Kolom B)
@@ -714,10 +740,10 @@ export function createHeaderStylingBatchRequests(sheetMap?: Map<string, number>)
       sheetId: resolveSheetId(sheetMap, SHEET_NAMES.PAGU_PENGELUARAN, SHEET_IDS.PAGU_PENGELUARAN),
       widths: [130, 140, 110, 150, 130, 140, 110, 120, 130, 180]
     },
-    // Tab 05: RINCIAN_PENGELUARAN (10 Kolom)
+    // Tab 05: RINCIAN_PENGELUARAN (9 Kolom)
     {
       sheetId: resolveSheetId(sheetMap, SHEET_NAMES.RINCIAN_PENGELUARAN, SHEET_IDS.RINCIAN_PENGELUARAN),
-      widths: [120, 140, 65, 150, 200, 85, 85, 120, 140, 160]
+      widths: [130, 150, 70, 180, 260, 95, 90, 140, 150]
     },
     // Tab 06: PERBANDINGAN_MARGIN (13 Kolom)
     {
@@ -758,11 +784,18 @@ export function createHeaderStylingBatchRequests(sheetMap?: Map<string, number>)
       },
     });
 
-    // 2. Row 1 Height: 34px
+    // 2. Row 1 Height: 30px, Data Rows 2..5000 Height: 21px (Standard, not enlarged)
     requests.push({
       updateDimensionProperties: {
         range: { sheetId: tw.sheetId, dimension: 'ROWS', startIndex: 0, endIndex: 1 },
-        properties: { pixelSize: 34 },
+        properties: { pixelSize: 30 },
+        fields: 'pixelSize',
+      },
+    });
+    requests.push({
+      updateDimensionProperties: {
+        range: { sheetId: tw.sheetId, dimension: 'ROWS', startIndex: 1, endIndex: 5000 },
+        properties: { pixelSize: 21 },
         fields: 'pixelSize',
       },
     });
