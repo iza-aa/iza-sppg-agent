@@ -148,8 +148,18 @@ export function renderSupplierExpenseDraftCard(
   let statusPaguLine = "";
 
   if (isSelectionRequired) {
-    allocSection = `❓ <b>Alokasi Anggaran: ⚠️ BELUM DIPILIH</b>\n` +
-      `<i>Ditemukan ${candidatesCount} rencana menu aktif untuk bahan "${escapeHtml(firstItemName)}". Silakan pilih alokasi menu pada tombol di bawah:</i>`;
+    const isMultiItem = expense.items && expense.items.length > 1;
+    const poList = Array.from(
+      new Set(((expense as any).paguCandidates || []).map((c: any) => c.sppg_ref_no))
+    ).filter(Boolean);
+    const poText = poList.length > 0 ? ` (${poList.join(", ")})` : "";
+    const itemDesc = isMultiItem
+      ? `bahan-bahan belanjaan ini`
+      : `bahan "${escapeHtml(firstItemName)}"`;
+
+    allocSection =
+      `❓ <b>Alokasi Anggaran: ⚠️ BELUM DIPILIH</b>\n` +
+      `<i>Ditemukan ${poList.length || candidatesCount} rencana menu aktif yang membutuhkan ${itemDesc}${poText}. Silakan tentukan alokasi PO pada tombol di bawah:</i>`;
   } else if (ctx && ctx.sppg_ref_no && ctx.sppg_ref_no !== "-") {
     const supplierInfo = ctx.pagu_supplier ? ` (${escapeHtml(ctx.pagu_supplier)})` : "";
     allocSection = `📄 <b>Alokasi Anggaran</b>: <code>${escapeHtml(ctx.sppg_ref_no)}</code>${supplierInfo}`;

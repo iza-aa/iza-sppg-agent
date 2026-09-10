@@ -65,7 +65,10 @@ export function buildPaguPromptKeyboard(
   candidates: Array<{ sppg_ref_no: string; order_date: string; item_name: string; remaining_qty: number; unit: string; supplier_name: string }>
 ): InlineKeyboard {
   const kb = new InlineKeyboard();
+  const seen = new Set<string>();
   candidates.slice(0, 5).forEach((c) => {
+    if (seen.has(c.sppg_ref_no)) return;
+    seen.add(c.sppg_ref_no);
     const dateLabel = c.order_date ? c.order_date.replace(/^\d{4}-/, "") : "Menu";
     const label = `📅 PO ${c.sppg_ref_no} (${dateLabel} - Sisa ${c.remaining_qty} ${c.unit})`;
     kb.text(label, `v:pagu_set:${draftId}:${c.sppg_ref_no}`).row();
