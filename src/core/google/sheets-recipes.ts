@@ -2768,7 +2768,7 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     // R8: empty padding (21px)
     [],
     // R9: Section Headers (B9:E9 Supplier, Gap F, G9:K9 Category)
-    ['', '5 REKANAN SUPPLIER TERBESAR', '', '', '', '', 'DISTRIBUSI BELANJA BAHAN POKOK', '', '', '', ''],
+    ['', '6 REKANAN SUPPLIER TERBESAR', '', '', '', '', 'DISTRIBUSI BELANJA BAHAN POKOK', '', '', '', ''],
     // R10
     [
       '',
@@ -2779,7 +2779,7 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
       '',
       'Protein Hewani',
       `=IFERROR(SUM(FILTER('06_PERBANDINGAN_MARGIN'!$J$2:$J; '06_PERBANDINGAN_MARGIN'!$B$2:$B>=$M$1; '06_PERBANDINGAN_MARGIN'!$B$2:$B<=$M$2; REGEXMATCH(LOWER('06_PERBANDINGAN_MARGIN'!$D$2:$D); "telur|ayam|daging|ikan|sapi|udang|bebek|susu|tongkol|lele|nugget"))); 0)`,
-      `=IFERROR(H10/$H$15; 0)`,
+      `=IFERROR(H10/$H$16; 0)`,
       `=REPT("█"; ROUND(I10*28)) & REPT("░"; 28-ROUND(I10*28))`,
       ''
     ],
@@ -2793,7 +2793,7 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
       '',
       'Sayuran Segar',
       `=IFERROR(SUM(FILTER('06_PERBANDINGAN_MARGIN'!$J$2:$J; '06_PERBANDINGAN_MARGIN'!$B$2:$B>=$M$1; '06_PERBANDINGAN_MARGIN'!$B$2:$B<=$M$2; REGEXMATCH(LOWER('06_PERBANDINGAN_MARGIN'!$D$2:$D); "sayur|wortel|buncis|kol|kubis|sawi|kangkung|bayam|tomat|labu|kentang|kacang|tauge|terong|timun|brokoli"))); 0)`,
-      `=IFERROR(H11/$H$15; 0)`,
+      `=IFERROR(H11/$H$16; 0)`,
       `=REPT("█"; ROUND(I11*28)) & REPT("░"; 28-ROUND(I11*28))`,
       ''
     ],
@@ -2807,7 +2807,7 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
       '',
       'Bahan Pokok & Beras',
       `=IFERROR(SUM(FILTER('06_PERBANDINGAN_MARGIN'!$J$2:$J; '06_PERBANDINGAN_MARGIN'!$B$2:$B>=$M$1; '06_PERBANDINGAN_MARGIN'!$B$2:$B<=$M$2; REGEXMATCH(LOWER('06_PERBANDINGAN_MARGIN'!$D$2:$D); "beras|minyak|tahu|tempe|tepung|gula|garam|mie|bihun|soun|santan"))); 0)`,
-      `=IFERROR(H12/$H$15; 0)`,
+      `=IFERROR(H12/$H$16; 0)`,
       `=REPT("█"; ROUND(I12*28)) & REPT("░"; 28-ROUND(I12*28))`,
       ''
     ],
@@ -2821,11 +2821,11 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
       '',
       'Buah Segar',
       `=IFERROR(SUM(FILTER('06_PERBANDINGAN_MARGIN'!$J$2:$J; '06_PERBANDINGAN_MARGIN'!$B$2:$B>=$M$1; '06_PERBANDINGAN_MARGIN'!$B$2:$B<=$M$2; REGEXMATCH(LOWER('06_PERBANDINGAN_MARGIN'!$D$2:$D); "buah|pisang|semangka|melon|jeruk|apel|pepaya|mangga|nanas|salak|anggur|kelengkeng|pir"))); 0)`,
-      `=IFERROR(H13/$H$15; 0)`,
+      `=IFERROR(H13/$H$16; 0)`,
       `=REPT("█"; ROUND(I13*28)) & REPT("░"; 28-ROUND(I13*28))`,
       ''
     ],
-    // R14
+    // R14: Bumbu Dapur
     [
       '',
       `=IFERROR(INDEX(QUERY('04_PAGU_PENGELUARAN'!$A$2:$F; "SELECT Col4, SUM(Col6) WHERE Col4 IS NOT NULL AND Col3 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col3 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col4 ORDER BY SUM(Col6) DESC LABEL Col4 '', SUM(Col6) ''"; 0); 5; 1); "-")`,
@@ -2833,35 +2833,49 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
       '',
       `=IF(B14="-"; 0; IFERROR(SUMIFS('04_PAGU_PENGELUARAN'!$F$2:$F; '04_PAGU_PENGELUARAN'!$D$2:$D; B14; '04_PAGU_PENGELUARAN'!$C$2:$C; ">="&$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C; "<="&$M$2); 0))`,
       '',
-      'Bumbu & Operasional',
-      `=IFERROR(D6 - SUM(H10:H13); 0)`,
-      `=IFERROR(H14/$H$15; 0)`,
+      'Bumbu Dapur',
+      `=IFERROR(SUM(FILTER('06_PERBANDINGAN_MARGIN'!$J$2:$J; '06_PERBANDINGAN_MARGIN'!$B$2:$B>=$M$1; '06_PERBANDINGAN_MARGIN'!$B$2:$B<=$M$2; REGEXMATCH(LOWER('06_PERBANDINGAN_MARGIN'!$D$2:$D); "bawang|cabai|cabe|lada|merica|kaldu|serai|lengkuas|salam|jeruk|wijen|jahe|kunyit|kemiri|jagung|saus|saos|kecap|bumbu"))); 0)`,
+      `=IFERROR(H14/$H$16; 0)`,
       `=REPT("█"; ROUND(I14*28)) & REPT("░"; 28-ROUND(I14*28))`,
       ''
     ],
-    // R15: Totals
+    // R15: Belanja Belum Dirinci
+    [
+      '',
+      `=IFERROR(INDEX(QUERY('04_PAGU_PENGELUARAN'!$A$2:$F; "SELECT Col4, SUM(Col6) WHERE Col4 IS NOT NULL AND Col3 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col3 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col4 ORDER BY SUM(Col6) DESC LABEL Col4 '', SUM(Col6) ''"; 0); 6; 1); "-")`,
+      '',
+      '',
+      `=IF(B15="-"; 0; IFERROR(SUMIFS('04_PAGU_PENGELUARAN'!$F$2:$F; '04_PAGU_PENGELUARAN'!$D$2:$D; B15; '04_PAGU_PENGELUARAN'!$C$2:$C; ">="&$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C; "<="&$M$2); 0))`,
+      '',
+      'Belanja Belum Dirinci',
+      `=IFERROR(D6 - SUM(H10:H14); 0)`,
+      `=IFERROR(H15/$H$16; 0)`,
+      `=REPT("█"; ROUND(I15*28)) & REPT("░"; 28-ROUND(I15*28))`,
+      ''
+    ],
+    // R16: Totals
     [
       '',
       'TOTAL BELANJA SUPPLIER',
       '',
       '',
-      `=SUM(E10:E14)`,
+      `=SUM(E10:E15)`,
       '',
       'TOTAL BIAYA BAHAN',
-      `=SUM(H10:H14)`,
+      `=SUM(H10:H15)`,
       '100.0%',
       '',
       ''
     ],
-    // R16: empty spacer (16px)
+    // R17: empty spacer (16px)
     [],
-    // R17: Lower Titles (Area B17:E17 empty for pie chart overlay, G17:K17 Title)
+    // R18: Lower Titles (Area B18:E18 empty for pie chart overlay, G18:K18 Title)
     ['', '', '', '', '', '', '10 TRANSAKSI BELANJA TERAKHIR', '', '', '', ''],
-    // R18: Subheaders
+    // R19: Subheaders
     ['', '', '', '', '', '', 'Tanggal', 'Supplier', 'Nominal', 'Metode', 'Status'],
   ];
 
-  // R19..R28: 10 Recent Transactions in G..K (B..E remain empty for pie chart overlay)
+  // R20..R29: 10 Recent Transactions in G..K (B..E remain empty for pie chart overlay)
   for (let i = 1; i <= 10; i++) {
     valuesDashboard.push([
       '',
@@ -3019,8 +3033,8 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
     {
       mergeCells: { range: { sheetId: firstId, startRowIndex: 8, endRowIndex: 9, startColumnIndex: 1, endColumnIndex: 5 }, mergeType: 'MERGE_ALL' },
     },
-    // Merges for Supplier Rows (B10:D10 to B14:D14 and Total B15:D15)
-    ...[9, 10, 11, 12, 13, 14].map((r) => ({
+    // Merges for Supplier Rows (B10:D10 to B15:D15 and Total B16:D16)
+    ...[9, 10, 11, 12, 13, 14, 15].map((r) => ({
       mergeCells: { range: { sheetId: firstId, startRowIndex: r, endRowIndex: r + 1, startColumnIndex: 1, endColumnIndex: 4 }, mergeType: 'MERGE_ALL' as const },
     })),
 
@@ -3028,14 +3042,14 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
     {
       mergeCells: { range: { sheetId: firstId, startRowIndex: 8, endRowIndex: 9, startColumnIndex: 6, endColumnIndex: 11 }, mergeType: 'MERGE_ALL' },
     },
-    // Merges for Category Progress Bars (J10:K10 to J14:K14 and Total J15:K15)
-    ...[9, 10, 11, 12, 13, 14].map((r) => ({
+    // Merges for Category Progress Bars (J10:K10 to J15:K15 and Total J16:K16)
+    ...[9, 10, 11, 12, 13, 14, 15].map((r) => ({
       mergeCells: { range: { sheetId: firstId, startRowIndex: r, endRowIndex: r + 1, startColumnIndex: 9, endColumnIndex: 11 }, mergeType: 'MERGE_ALL' as const },
     })),
 
-    // Merges for 10 Transaksi Title (G17:K17)
+    // Merges for 10 Transaksi Title (G18:K18)
     {
-      mergeCells: { range: { sheetId: firstId, startRowIndex: 16, endRowIndex: 17, startColumnIndex: 6, endColumnIndex: 11 }, mergeType: 'MERGE_ALL' },
+      mergeCells: { range: { sheetId: firstId, startRowIndex: 17, endRowIndex: 18, startColumnIndex: 6, endColumnIndex: 11 }, mergeType: 'MERGE_ALL' },
     },
 
     // Banner Styling (B2:G3)
@@ -3295,10 +3309,10 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
       },
     })),
 
-    // Currency format for Supplier Table (E10:E15)
+    // Currency format for Supplier Table (E10:E16)
     {
       repeatCell: {
-        range: { sheetId: firstId, startRowIndex: 9, endRowIndex: 15, startColumnIndex: 4, endColumnIndex: 5 },
+        range: { sheetId: firstId, startRowIndex: 9, endRowIndex: 16, startColumnIndex: 4, endColumnIndex: 5 },
         cell: {
           userEnteredFormat: {
             numberFormat: { type: 'CURRENCY', pattern: '"Rp"#,##0' },
@@ -3311,10 +3325,10 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
         fields: 'userEnteredFormat(numberFormat,textFormat,horizontalAlignment,verticalAlignment,padding)',
       },
     },
-    // Supplier Table Left Align for names (B10:D14)
+    // Supplier Table Left Align for names (B10:D15)
     {
       repeatCell: {
-        range: { sheetId: firstId, startRowIndex: 9, endRowIndex: 14, startColumnIndex: 1, endColumnIndex: 4 },
+        range: { sheetId: firstId, startRowIndex: 9, endRowIndex: 15, startColumnIndex: 1, endColumnIndex: 4 },
         cell: {
           userEnteredFormat: {
             verticalAlignment: 'MIDDLE',
@@ -3324,10 +3338,10 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
         fields: 'userEnteredFormat(verticalAlignment,padding)',
       },
     },
-    // Supplier Table Total Label (B15:D15)
+    // Supplier Table Total Label (B16:D16)
     {
       repeatCell: {
-        range: { sheetId: firstId, startRowIndex: 14, endRowIndex: 15, startColumnIndex: 1, endColumnIndex: 4 },
+        range: { sheetId: firstId, startRowIndex: 15, endRowIndex: 16, startColumnIndex: 1, endColumnIndex: 4 },
         cell: {
           userEnteredFormat: {
             textFormat: { bold: true, fontSize: 9, foregroundColor: hexToRgbColor(BGN_PALETTE.SLATE_GRAY) },
@@ -3339,11 +3353,11 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
       },
     },
 
-    // Category Table Formatting (G10:K15)
-    // Category Names (G10:G14)
+    // Category Table Formatting (G10:K16)
+    // Category Names (G10:G15)
     {
       repeatCell: {
-        range: { sheetId: firstId, startRowIndex: 9, endRowIndex: 14, startColumnIndex: 6, endColumnIndex: 7 },
+        range: { sheetId: firstId, startRowIndex: 9, endRowIndex: 15, startColumnIndex: 6, endColumnIndex: 7 },
         cell: {
           userEnteredFormat: {
             verticalAlignment: 'MIDDLE',
@@ -3353,10 +3367,10 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
         fields: 'userEnteredFormat(verticalAlignment,padding)',
       },
     },
-    // Category Amounts (H10:H15)
+    // Category Amounts (H10:H16)
     {
       repeatCell: {
-        range: { sheetId: firstId, startRowIndex: 9, endRowIndex: 15, startColumnIndex: 7, endColumnIndex: 8 },
+        range: { sheetId: firstId, startRowIndex: 9, endRowIndex: 16, startColumnIndex: 7, endColumnIndex: 8 },
         cell: {
           userEnteredFormat: {
             numberFormat: { type: 'CURRENCY', pattern: '"Rp"#,##0' },
@@ -3369,10 +3383,10 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
         fields: 'userEnteredFormat(numberFormat,textFormat,horizontalAlignment,verticalAlignment,padding)',
       },
     },
-    // Percent format for Category Table (I10:I15)
+    // Percent format for Category Table (I10:I16)
     {
       repeatCell: {
-        range: { sheetId: firstId, startRowIndex: 9, endRowIndex: 15, startColumnIndex: 8, endColumnIndex: 9 },
+        range: { sheetId: firstId, startRowIndex: 9, endRowIndex: 16, startColumnIndex: 8, endColumnIndex: 9 },
         cell: {
           userEnteredFormat: {
             numberFormat: { type: 'PERCENT', pattern: '0.0%' },
@@ -3383,10 +3397,10 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
         fields: 'userEnteredFormat(numberFormat,horizontalAlignment,verticalAlignment)',
       },
     },
-    // Progress Bar format (J10:K15)
+    // Progress Bar format (J10:K16)
     {
       repeatCell: {
-        range: { sheetId: firstId, startRowIndex: 9, endRowIndex: 15, startColumnIndex: 9, endColumnIndex: 11 },
+        range: { sheetId: firstId, startRowIndex: 9, endRowIndex: 16, startColumnIndex: 9, endColumnIndex: 11 },
         cell: {
           userEnteredFormat: {
             textFormat: { foregroundColor: { red: 0, green: 0.54, blue: 0.48 }, fontSize: 9 },
@@ -3398,10 +3412,10 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
         fields: 'userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment,padding)',
       },
     },
-    // Total Category Label (G15)
+    // Total Category Label (G16)
     {
       repeatCell: {
-        range: { sheetId: firstId, startRowIndex: 14, endRowIndex: 15, startColumnIndex: 6, endColumnIndex: 7 },
+        range: { sheetId: firstId, startRowIndex: 15, endRowIndex: 16, startColumnIndex: 6, endColumnIndex: 7 },
         cell: {
           userEnteredFormat: {
             textFormat: { bold: true, fontSize: 9, foregroundColor: hexToRgbColor(BGN_PALETTE.SLATE_GRAY) },
@@ -3413,27 +3427,27 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
       },
     },
 
-    // Dotted/Solid Top Border on Totals Row 15
+    // Dotted/Solid Top Border on Totals Row 16
     {
       updateBorders: {
-        range: { sheetId: firstId, startRowIndex: 14, endRowIndex: 15, startColumnIndex: 1, endColumnIndex: 5 },
+        range: { sheetId: firstId, startRowIndex: 15, endRowIndex: 16, startColumnIndex: 1, endColumnIndex: 5 },
         top: { style: 'SOLID', color: { red: 0.8, green: 0.8, blue: 0.8 } },
         bottom: { style: 'DOUBLE', color: { red: 0.8, green: 0.8, blue: 0.8 } },
       },
     },
     {
       updateBorders: {
-        range: { sheetId: firstId, startRowIndex: 14, endRowIndex: 15, startColumnIndex: 6, endColumnIndex: 11 },
+        range: { sheetId: firstId, startRowIndex: 15, endRowIndex: 16, startColumnIndex: 6, endColumnIndex: 11 },
         top: { style: 'SOLID', color: { red: 0.8, green: 0.8, blue: 0.8 } },
         bottom: { style: 'DOUBLE', color: { red: 0.8, green: 0.8, blue: 0.8 } },
       },
     },
 
-    // Lower Section: 10 Transaksi Belanja Terakhir (G17:K28)
-    // Header (Row 17: G17:K17)
+    // Lower Section: 10 Transaksi Belanja Terakhir (G18:K29)
+    // Header (Row 18: G18:K18)
     {
       repeatCell: {
-        range: { sheetId: firstId, startRowIndex: 16, endRowIndex: 17, startColumnIndex: 6, endColumnIndex: 11 },
+        range: { sheetId: firstId, startRowIndex: 17, endRowIndex: 18, startColumnIndex: 6, endColumnIndex: 11 },
         cell: {
           userEnteredFormat: {
             backgroundColor: hexToRgbColor(BGN_PALETTE.DEEP_NAVY),
@@ -3445,10 +3459,10 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
         fields: 'userEnteredFormat(backgroundColor,textFormat,verticalAlignment,padding)',
       },
     },
-    // Subheaders (Row 18: G18:K18)
+    // Subheaders (Row 19: G19:K19)
     {
       repeatCell: {
-        range: { sheetId: firstId, startRowIndex: 17, endRowIndex: 18, startColumnIndex: 6, endColumnIndex: 11 },
+        range: { sheetId: firstId, startRowIndex: 18, endRowIndex: 19, startColumnIndex: 6, endColumnIndex: 11 },
         cell: {
           userEnteredFormat: {
             backgroundColor: { red: 0.91, green: 0.94, blue: 0.97 },
@@ -3460,10 +3474,10 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
         fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
       },
     },
-    // Date format for Recent Transactions Tanggal (Col G: index 6, Row 19-28)
+    // Date format for Recent Transactions Tanggal (Col G: index 6, Row 20-29)
     {
       repeatCell: {
-        range: { sheetId: firstId, startRowIndex: 18, endRowIndex: 28, startColumnIndex: 6, endColumnIndex: 7 },
+        range: { sheetId: firstId, startRowIndex: 19, endRowIndex: 29, startColumnIndex: 6, endColumnIndex: 7 },
         cell: {
           userEnteredFormat: {
             numberFormat: { type: 'DATE', pattern: 'yyyy-mm-dd' },
@@ -3474,10 +3488,10 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
         fields: 'userEnteredFormat(numberFormat,horizontalAlignment,verticalAlignment)',
       },
     },
-    // Uraian Bahan (Col H: index 7, Row 19-28)
+    // Uraian Bahan (Col H: index 7, Row 20-29)
     {
       repeatCell: {
-        range: { sheetId: firstId, startRowIndex: 18, endRowIndex: 28, startColumnIndex: 7, endColumnIndex: 8 },
+        range: { sheetId: firstId, startRowIndex: 19, endRowIndex: 29, startColumnIndex: 7, endColumnIndex: 8 },
         cell: {
           userEnteredFormat: {
             verticalAlignment: 'MIDDLE',
@@ -3487,10 +3501,10 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
         fields: 'userEnteredFormat(verticalAlignment,padding)',
       },
     },
-    // Currency format for Recent Transactions Nominal (Col I: index 8, Row 19-28)
+    // Currency format for Recent Transactions Nominal (Col I: index 8, Row 20-29)
     {
       repeatCell: {
-        range: { sheetId: firstId, startRowIndex: 18, endRowIndex: 28, startColumnIndex: 8, endColumnIndex: 9 },
+        range: { sheetId: firstId, startRowIndex: 19, endRowIndex: 29, startColumnIndex: 8, endColumnIndex: 9 },
         cell: {
           userEnteredFormat: {
             numberFormat: { type: 'CURRENCY', pattern: '"Rp"#,##0' },
@@ -3503,10 +3517,10 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
         fields: 'userEnteredFormat(numberFormat,textFormat,horizontalAlignment,verticalAlignment,padding)',
       },
     },
-    // Supplier & Status (Col J & K: index 9 & 10, Row 19-28)
+    // Supplier & Status (Col J & K: index 9 & 10, Row 20-29)
     {
       repeatCell: {
-        range: { sheetId: firstId, startRowIndex: 18, endRowIndex: 28, startColumnIndex: 9, endColumnIndex: 11 },
+        range: { sheetId: firstId, startRowIndex: 19, endRowIndex: 29, startColumnIndex: 9, endColumnIndex: 11 },
         cell: {
           userEnteredFormat: {
             horizontalAlignment: 'CENTER',
@@ -3516,10 +3530,10 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
         fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment)',
       },
     },
-    // Subtle row borders for 10 Transaksi (Row 18-28)
+    // Subtle row borders for 10 Transaksi (Row 18-29)
     {
       updateBorders: {
-        range: { sheetId: firstId, startRowIndex: 17, endRowIndex: 28, startColumnIndex: 6, endColumnIndex: 11 },
+        range: { sheetId: firstId, startRowIndex: 17, endRowIndex: 29, startColumnIndex: 6, endColumnIndex: 11 },
         left: { style: 'SOLID', color: { red: 0.85, green: 0.85, blue: 0.85 } },
         right: { style: 'SOLID', color: { red: 0.85, green: 0.85, blue: 0.85 } },
         bottom: { style: 'SOLID', color: { red: 0.85, green: 0.85, blue: 0.85 } },
@@ -3552,9 +3566,9 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
 
     // Row Heights on 01_DASHBOARD
     ...[
-      { start: 0, end: 15, height: 21 },
-      { start: 15, end: 16, height: 16 }, // R16: Spacer row
-      { start: 16, end: 28, height: 21 }, // R17..R28
+      { start: 0, end: 16, height: 21 },
+      { start: 16, end: 17, height: 16 }, // R17: Spacer row
+      { start: 17, end: 29, height: 21 }, // R18..R29
     ].map((rh) => ({
       updateDimensionProperties: {
         range: { sheetId: firstId, dimension: 'ROWS', startIndex: rh.start, endIndex: rh.end },
@@ -3566,7 +3580,7 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
 }
 
 /**
- * Menambahkan Diagram Pie Chart (Pengeluaran per Kategori) pada range B17:E28
+ * Menambahkan Diagram Pie Chart (Pengeluaran per Kategori) pada range B18:E29
  */
 export function createOperationalDashboardChartRequest(firstId: number): sheets_v4.Schema$Request {
   return {
@@ -3589,7 +3603,7 @@ export function createOperationalDashboardChartRequest(firstId: number): sheets_
                   {
                     sheetId: firstId,
                     startRowIndex: 9,
-                    endRowIndex: 14,
+                    endRowIndex: 15,
                     startColumnIndex: 6,
                     endColumnIndex: 7,
                   },
@@ -3602,7 +3616,7 @@ export function createOperationalDashboardChartRequest(firstId: number): sheets_
                   {
                     sheetId: firstId,
                     startRowIndex: 9,
-                    endRowIndex: 14,
+                    endRowIndex: 15,
                     startColumnIndex: 7,
                     endColumnIndex: 8,
                   },
@@ -3615,7 +3629,7 @@ export function createOperationalDashboardChartRequest(firstId: number): sheets_
           overlayPosition: {
             anchorCell: {
               sheetId: firstId,
-              rowIndex: 16,
+              rowIndex: 17,
               columnIndex: 1,
             },
             offsetYPixels: 8,

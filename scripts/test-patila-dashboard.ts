@@ -57,7 +57,7 @@ async function main() {
     requestBody: {
       valueInputOption: "USER_ENTERED",
       data: [
-        { range: "'01_DASHBOARD'!A1:K28", values: valuesDashboard },
+        { range: "'01_DASHBOARD'!A1:K29", values: valuesDashboard },
         { range: "'01_DASHBOARD'!M1:M4", values: valuesHelper },
       ],
     },

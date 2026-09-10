@@ -385,7 +385,7 @@ export class GoogleSheetsService {
           valueInputOption: "USER_ENTERED",
           data: [
             {
-              range: `'${SHEET_NAMES.DASHBOARD}'!A1:K28`,
+              range: `'${SHEET_NAMES.DASHBOARD}'!A1:K29`,
               values: valuesDashboard,
             },
             {
