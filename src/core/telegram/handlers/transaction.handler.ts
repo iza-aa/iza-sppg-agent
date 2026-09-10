@@ -194,6 +194,77 @@ export function registerTransactionHandlers(bCtx: BotContext) {
     }
   });
 
+  // [🗑️ Ya, Hapus Bahan dari Tab 05]
+  bCtx.bot.callbackQuery(/^v:delit_yes:([^:]+)(?::(\d+))?$/, async (ctx) => {
+    if (await bCtx.isCallerMember(ctx.from?.id)) {
+      return ctx.answerCallbackQuery({
+        text: "⛔ Akses Ditolak: Penghapusan rincian hanya dapat dilakukan oleh Admin.",
+        show_alert: true,
+      });
+    }
+
+    const expenseId = ctx.match[1];
+    const state = ctx.from ? bCtx.getState(ctx.from.id) : undefined;
+    if (state) {
+      state.activeDraftMsgId = undefined;
+    }
+
+    const targetItemName = state?.activeDeleteItem?.itemName || "";
+
+    await ctx.answerCallbackQuery({ text: "🗑️ Menghapus bahan dari Google Sheets...", show_alert: false });
+    await safeEditMessageText(ctx, "⏳ <i>Sedang menghapus baris bahan di Tab 05 dan memperbarui evaluasi...</i>", {
+      parse_mode: "HTML",
+    });
+
+    const result = await googleSheetsService.deleteExpenseChildItem(
+      bCtx.unitConfig.spreadsheetId,
+      expenseId,
+      targetItemName,
+      ctx.from?.first_name || "Admin"
+    );
+
+    if (result.success && result.deletedItem) {
+      const del = result.deletedItem;
+      const successText = [
+        `🗑️ <b>Rincian Bahan Berhasil Dihapus!</b>`,
+        `------------------------------------------`,
+        `• <b>Bahan:</b> <s>${escapeHtml(del.itemName)}</s>`,
+        `• <b>Transaksi:</b> <code>${escapeHtml(del.expenseId)}</code>`,
+        `• <b>Nominal Berkurang:</b> <b>${formatRupiah(del.total)}</b>`,
+        `• <b>Supplier:</b> ${escapeHtml(del.supplier || "Supplier")}`,
+        `------------------------------------------`,
+        `✅ Baris rincian di <b>Tab 05_RINCIAN_PENGELUARAN</b> telah dihapus.`,
+        `✅ Total tagihan di <b>Tab 04_PAGU_PENGELUARAN</b> otomatis berkurang ${formatRupiah(del.total)}.`,
+        `✅ <b>Tab 06_PERBANDINGAN_MARGIN</b> telah direkonsiliasi.`,
+        `\n<i>Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b></i>`,
+      ].join("\n");
+
+      await safeEditMessageText(ctx, successText, { parse_mode: "HTML" });
+      if (state) state.activeDeleteItem = null;
+    } else {
+      await safeEditMessageText(
+        ctx,
+        `❌ <b>Gagal menghapus rincian bahan:</b>\n${escapeHtml(result.message)}`,
+        { parse_mode: "HTML" }
+      );
+    }
+  });
+
+  // [❌ Batalkan Penghapusan Bahan]
+  bCtx.bot.callbackQuery(/^v:delit_no(?::(.+))?$/, async (ctx) => {
+    if (ctx.from) {
+      const state = bCtx.getState(ctx.from.id);
+      state.activeDraftMsgId = undefined;
+      state.activeDeleteItem = null;
+    }
+    await ctx.answerCallbackQuery({ text: "Penghapusan dibatalkan." });
+    await safeEditMessageText(
+      ctx,
+      `❌ <i>Penghapusan rincian bahan dibatalkan. Data di Google Sheets tetap aman.</i>`,
+      { parse_mode: "HTML" }
+    );
+  });
+
   // [✏️ Ubah Nominal Transaksi - Minta Input Nominal]
   bCtx.bot.callbackQuery(/^v:trx:edit:(.+)$/, async (ctx) => {
     if (await bCtx.isCallerMember(ctx.from?.id)) {

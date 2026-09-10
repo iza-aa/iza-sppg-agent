@@ -155,6 +155,15 @@ export function buildDeleteConfirmKeyboard(transactionId: string): InlineKeyboar
 }
 
 /**
+ * Confirmation keyboard before deleting a specific child item from Tab 05
+ */
+export function buildDeleteChildItemKeyboard(expenseId: string, itemIndex: number): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("🗑️ Ya, Hapus Bahan", `v:delit_yes:${expenseId}:${itemIndex}`)
+    .text("❌ Batalkan", `v:delit_no:${expenseId}`);
+}
+
+/**
  * Confirmation keyboard before applying an edit to Google Sheets
  */
 export function buildEditConfirmKeyboard(transactionId: string, newAmount: number): InlineKeyboard {

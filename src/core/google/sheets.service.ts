@@ -481,6 +481,23 @@ export class GoogleSheetsService {
   ) {
     return this.expense.addExpenseItemToTransaction(spreadsheetId, expenseId, item, addedBy, options);
   }
+
+  async findExpenseChildItem(spreadsheetId: string, expenseId: string, itemName: string) {
+    return this.expense.findExpenseChildItem(spreadsheetId, expenseId, itemName);
+  }
+
+  async getExpenseChildItems(spreadsheetId: string, expenseId: string) {
+    return this.expense.getExpenseChildItems(spreadsheetId, expenseId);
+  }
+
+  async deleteExpenseChildItem(
+    spreadsheetId: string,
+    expenseId: string,
+    itemName: string,
+    deletedBy = "Telegram User"
+  ) {
+    return this.expense.deleteExpenseChildItem(spreadsheetId, expenseId, itemName, deletedBy);
+  }
 }
 
 export const googleSheetsService = new GoogleSheetsService();

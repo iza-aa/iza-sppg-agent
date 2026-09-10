@@ -139,6 +139,17 @@ export interface UserInteractionState {
   addingPaguItemToOrder?: {
     orderNo: string;
   } | null;
+  activeDeleteItem?: {
+    expenseId: string;
+    itemName: string;
+    itemIndex?: number;
+    rowIndex?: number;
+    qty?: number;
+    unit?: string;
+    price?: number;
+    total?: number;
+    supplier?: string;
+  } | null;
 }
 
 export interface BotContext {

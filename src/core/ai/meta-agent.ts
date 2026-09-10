@@ -13,6 +13,7 @@ export type MetaAgentIntent =
   | { type: "LIST_TRANSACTIONS"; limit?: number }
   | { type: "DETAIL_TRANSACTION"; transactionId: string }
   | { type: "DELETE_TRANSACTION"; transactionId: string }
+  | { type: "DELETE_ITEM"; transactionId: string; itemName: string }
   | { type: "EDIT_TRANSACTION"; transactionId: string; newAmount?: number; newSupplier?: string }
   | { type: "PAGU_MODIFICATION"; request: PaguModificationRequest }
   | { type: "INVITE"; name: string; role: "super_admin" | "admin" | "member" }
@@ -91,20 +92,57 @@ export class MetaAgent {
     }
 
     // Detail Transaction: e.g. "detail EI002", "cek EI002", "lihat SPPG0126-EI002", "rincian EI002", or standalone code "EI002"
+    const isExplicitRecord = /\b(catat|simpan|input|masukkan|rekam|tulis)\b/i.test(text);
+    const isExplicitAction = /\b(ubah|ngubah|mengubah|ganti|mengganti|edit|revisi|koreksi|hapus|delete|batal(?:kan)?|tambah|nambah|menambah|tambahkan|menambahkan|masukkan|input|sisip|sisipkan)\b/i.test(text);
+
     const detailPrefixMatch = text.match(/\b(?:detail|lihat|cek|rincian|buka|info)\s+(?:data\s+)?(?:untuk\s+)?(?:kode\s+)?(?:transaksi\s+|nota\s+)?([A-Za-z0-9_-]{3,35})\b/i);
     const standaloneCodeMatch = text.trim().match(/^(?:SPPG\d*[-_])?(?:[EI][A-Z]|TRX)\d+$/i);
     const specificIdInText = text.match(/\b((?:SPPG\d*[-_])?(?:[EI][A-Z]|TRX)\d+)\b/i);
 
-    if (detailPrefixMatch) {
+    if (detailPrefixMatch && !isExplicitAction) {
       return { type: "DETAIL_TRANSACTION", transactionId: detailPrefixMatch[1] };
     }
     if (standaloneCodeMatch) {
       return { type: "DETAIL_TRANSACTION", transactionId: standaloneCodeMatch[0] };
     }
-    const isExplicitRecord = /\b(catat|simpan|input|masukkan|rekam|tulis)\b/i.test(text);
-    const isExplicitAction = /\b(ubah|ngubah|mengubah|ganti|mengganti|edit|revisi|koreksi|hapus|delete|batal(?:kan)?|tambah|nambah|menambah|tambahkan|menambahkan|masukkan|input|sisip|sisipkan)\b/i.test(text);
     if (specificIdInText && !isExplicitRecord && !isExplicitAction) {
       return { type: "DETAIL_TRANSACTION", transactionId: specificIdInText[1] };
+    }
+
+    // Delete Child Item: e.g. "hapus rincian ceker ayam dari EI001", "hapus bahan ceker ayam di EI001", "hapus ceker ayam dari EI001"
+    const deleteChildItemMatch = text.match(
+      /\b(?:hapus|delete|batal(?:kan)?)\s+(?:rincian\s+|bahan\s+|item\s+belanja\s+|item\s+)?(.+?)\s+(?:dari|di|pada|ke)\s+(?:transaksi\s+|nota\s+|po\s+)?([A-Za-z0-9_/-]{3,35})\b/i
+    );
+    const deleteChildItemInvertedMatch = text.match(
+      /\b(?:hapus|delete|batal(?:kan)?)\s+(?:dari|di|pada|ke)\s+(?:transaksi\s+|nota\s+|po\s+)?([A-Za-z0-9_/-]{3,35})\s+(?:rincian\s+|bahan\s+|item\s+belanja\s+|item\s+)?(.+)\b/i
+    );
+
+    if (deleteChildItemMatch) {
+      const candidateItem = deleteChildItemMatch[1].trim();
+      const candidateId = deleteChildItemMatch[2].trim();
+      if (candidateItem && candidateId) {
+        return { type: "DELETE_ITEM", transactionId: candidateId, itemName: candidateItem };
+      }
+    } else if (deleteChildItemInvertedMatch) {
+      const candidateId = deleteChildItemInvertedMatch[1].trim();
+      const candidateItem = deleteChildItemInvertedMatch[2].trim();
+      if (candidateItem && candidateId) {
+        return { type: "DELETE_ITEM", transactionId: candidateId, itemName: candidateItem };
+      }
+    }
+
+    // Delete Child Item without transaction ID: e.g. "hapus rincian ceker ayam"
+    const deleteItemOnlyMatch = text.match(
+      /\b(?:hapus|delete|batal(?:kan)?)\s+(?:rincian\s+|bahan\s+|item\s+belanja\s+|item\s+)(.+)\b/i
+    );
+    if (deleteItemOnlyMatch) {
+      const candidate = deleteItemOnlyMatch[1].trim();
+      const isCode = /^(?:SPPG\d*[-_])?(?:[EI][A-Z]|TRX)\d+$/i.test(candidate) || /^PO-/i.test(candidate);
+      if (isCode) {
+        return { type: "DELETE_TRANSACTION", transactionId: candidate };
+      } else if (candidate) {
+        return { type: "DELETE_ITEM", transactionId: "", itemName: candidate };
+      }
     }
 
     // Delete Transaction: e.g. "hapus EI002" or "batalkan EI002"

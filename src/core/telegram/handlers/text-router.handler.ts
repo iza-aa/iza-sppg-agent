@@ -22,6 +22,7 @@ import {
   buildPaguClarifyAddOrReplaceKeyboard,
   buildEditConfirmKeyboard,
   buildDeleteConfirmKeyboard,
+  buildDeleteChildItemKeyboard,
 } from "../keyboards.js";
 import { enrichReceiptWithPaguContext, getDraftConfirmationReplyMarkup } from "./draft.handler.js";
 import { sendSheets, sendRekap, sendPdf } from "./report.handler.js";
@@ -474,6 +475,78 @@ export function registerTextRouterHandler(bCtx: BotContext) {
             const confirmMsg = await ctx.reply(confirmationBody, {
               parse_mode: "HTML",
               reply_markup: buildDeleteConfirmKeyboard(intent.transactionId),
+            });
+            state.activeDraftMsgId = confirmMsg.message_id;
+            break;
+          }
+
+          case "DELETE_ITEM": {
+            if (await bCtx.isCallerMember(userId)) {
+              await bCtx.notifyMemberRestricted(ctx, "penghapusan rincian bahan");
+              break;
+            }
+
+            const targetExpId = intent.transactionId.trim();
+            const targetItemName = intent.itemName.trim();
+
+            const foundItem = await googleSheetsService.findExpenseChildItem(
+              bCtx.unitConfig.spreadsheetId,
+              targetExpId,
+              targetItemName
+            );
+
+            if (!foundItem.found) {
+              const otherHint = foundItem.otherItems && foundItem.otherItems.length > 0
+                ? `\n\n💡 <i>Bahan yang terdaftar pada transaksi ${escapeHtml(targetExpId || "-")}:</i>\n` +
+                  foundItem.otherItems.map((b) => `• <b>${escapeHtml(b)}</b>`).join("\n")
+                : "";
+
+              await ctx.reply(
+                `❌ Rincian bahan "<b>${escapeHtml(targetItemName)}</b>" tidak ditemukan pada transaksi <code>${escapeHtml(targetExpId || "-")}</code> di unit <b>${escapeHtml(bCtx.unitConfig.name)}</b>.${otherHint}`,
+                { parse_mode: "HTML" }
+              );
+              break;
+            }
+
+            // Save in user state for callback reference
+            state.activeDeleteItem = {
+              expenseId: foundItem.expenseId,
+              itemName: foundItem.itemName,
+              itemIndex: foundItem.itemIndex,
+              rowIndex: foundItem.rowIndex,
+              qty: foundItem.qty,
+              unit: foundItem.unit,
+              price: foundItem.price,
+              total: foundItem.total,
+              supplier: foundItem.supplier,
+            };
+
+            const warningOnlyItem = foundItem.isOnlyItemInExpense
+              ? `\n⚠️ <b>Catatan:</b> Ini adalah satu-satunya bahan dalam transaksi <code>${escapeHtml(foundItem.expenseId)}</code>. Total tagihan nota ini di Tab 04 akan menjadi Rp 0. Jika ingin membatalkan seluruh nota faktur, gunakan: <code>hapus ${escapeHtml(foundItem.expenseId)}</code>.\n`
+              : "";
+
+            const nonPaguBadge = foundItem.isNonPagu ? " <code>[NON-PAGU]</code>" : "";
+
+            const confirmMsgText = [
+              `🗑️ <b>KONFIRMASI HAPUS RINCIAN BELANJA</b>`,
+              `Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>`,
+              `------------------------------------------`,
+              `• <b>Transaksi:</b> <code>Nota Supplier (${escapeHtml(foundItem.expenseId)})</code>`,
+              `• <b>Bahan yang Dihapus:</b> <b>${escapeHtml(foundItem.itemName)}</b>${nonPaguBadge}`,
+              `• <b>Rincian:</b> ${foundItem.qty} ${escapeHtml(foundItem.unit)} @ ${formatRupiah(foundItem.price)}`,
+              `• <b>Subtotal:</b> <b>${formatRupiah(foundItem.total)}</b>`,
+              `• <b>Supplier:</b> ${escapeHtml(foundItem.supplier || "Supplier")}`,
+              `------------------------------------------`,
+              `📍 Baris rincian ini akan dihapus dari <b>Tab 05_RINCIAN_PENGELUARAN</b>.`,
+              `📉 Total tagihan di Tab 04 dan Dashboard otomatis berkurang <b>${formatRupiah(foundItem.total)}</b>.`,
+              `🔄 Evaluasi margin di Tab 06 otomatis disesuaikan.`,
+              warningOnlyItem,
+              `<i>Apakah Anda yakin ingin menghapus rincian bahan ini?</i>`,
+            ].filter(Boolean).join("\n");
+
+            const confirmMsg = await ctx.reply(confirmMsgText, {
+              parse_mode: "HTML",
+              reply_markup: buildDeleteChildItemKeyboard(foundItem.expenseId, foundItem.itemIndex),
             });
             state.activeDraftMsgId = confirmMsg.message_id;
             break;
