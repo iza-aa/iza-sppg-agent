@@ -45,9 +45,9 @@ describe("Interactive Pagu Selection Logic", () => {
     const poButtons = buttons.filter((b) => b.callback_data?.startsWith("v:pagu_set:draft_test_123:0"));
     expect(poButtons.length).toBe(2);
     expect(poButtons[0].text).toContain("01/05/09/26");
-    expect(poButtons[0].text).toContain("Sisa 50 kg");
+    expect(poButtons[0].text).toContain("Menu");
     expect(poButtons[1].text).toContain("02/09/09/26");
-    expect(poButtons[1].text).toContain("Sisa 150 kg");
+    expect(poButtons[1].text).toContain("Menu");
 
     // Check non-pagu option
     const nonPaguBtn = buttons.find((b) => b.callback_data === "v:pagu_set:draft_test_123:-");

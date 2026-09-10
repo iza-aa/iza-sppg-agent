@@ -51,8 +51,12 @@ export function buildPaguSelectorKeyboard(
   candidates: Array<{ sppg_ref_no: string; order_date: string; item_name: string; remaining_qty: number; unit: string; supplier_name: string }>
 ): InlineKeyboard {
   const kb = new InlineKeyboard();
+  const seen = new Set<string>();
   candidates.slice(0, 5).forEach((c) => {
-    const label = `📅 ${c.order_date || "Menu"} - Kurang ${c.remaining_qty} ${c.unit}`;
+    if (seen.has(c.sppg_ref_no)) return;
+    seen.add(c.sppg_ref_no);
+    const dateLabel = c.order_date ? c.order_date.replace(/^\d{4}-/, "") : "Menu";
+    const label = `📅 PO ${c.sppg_ref_no} (Menu ${dateLabel})`;
     kb.text(label, `v:pagu_set:${draftId}:${c.sppg_ref_no}`).row();
   });
   kb.text("🚫 Belanja Tambahan (Tanpa Pagu)", `v:pagu_set:${draftId}:-`).row();
@@ -70,7 +74,7 @@ export function buildPaguPromptKeyboard(
     if (seen.has(c.sppg_ref_no)) return;
     seen.add(c.sppg_ref_no);
     const dateLabel = c.order_date ? c.order_date.replace(/^\d{4}-/, "") : "Menu";
-    const label = `📅 PO ${c.sppg_ref_no} (${dateLabel} - Sisa ${c.remaining_qty} ${c.unit})`;
+    const label = `📅 Alokasikan ke PO ${c.sppg_ref_no} (Menu ${dateLabel})`;
     kb.text(label, `v:pagu_set:${draftId}:${c.sppg_ref_no}`).row();
   });
   kb.text("🚫 Belanja Tambahan (Non-Pagu)", `v:pagu_set:${draftId}:-`).row();

@@ -244,8 +244,8 @@ describe("Google Sheets 5-Tab Engine", () => {
     const texts = flatButtons.map((b) => b.text);
     const callbacks = flatButtons.map((b) => ("callback_data" in b ? b.callback_data : ""));
 
-    expect(texts.some((t) => t.includes("2026-08-31") && t.includes("115 Rak"))).toBe(true);
-    expect(texts.some((t) => t.includes("2026-09-01") && t.includes("120 Rak"))).toBe(true);
+    expect(texts.some((t) => t.includes("03/31/08/26") && t.includes("Menu 08-31"))).toBe(true);
+    expect(texts.some((t) => t.includes("04/01/09/26") && t.includes("Menu 09-01"))).toBe(true);
     expect(callbacks).toContain("v:pagu_set:draft_test:03/31/08/26");
     expect(callbacks).toContain("v:pagu_set:draft_test:04/01/09/26");
     expect(callbacks).toContain("v:pagu_set:draft_test:-");
