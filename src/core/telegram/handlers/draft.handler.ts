@@ -62,10 +62,24 @@ export async function enrichReceiptWithPaguContext(
       return false;
     }
 
-    const candidates = await googleSheetsService.getPaguCandidatesForCommodity(
-      spreadsheetId,
-      firstItem.item_name
-    );
+    // 2. Gather candidates across ALL items in the receipt (not just firstItem)
+    const items: Array<{ item_name: string; qty: number; unit?: string }> = receipt?.items || [];
+    const allCandidatesMap = new Map<string, any>();
+
+    for (const it of items) {
+      if (!it.item_name) continue;
+      const cands = await googleSheetsService.getPaguCandidatesForCommodity(
+        spreadsheetId,
+        it.item_name
+      );
+      for (const c of cands) {
+        if (!allCandidatesMap.has(c.sppg_ref_no)) {
+          allCandidatesMap.set(c.sppg_ref_no, c);
+        }
+      }
+    }
+
+    const candidates = Array.from(allCandidatesMap.values());
 
     // 2. No active unfulfilled candidates found in 06_PERBANDINGAN_MARGIN
     if (candidates.length === 0) {
