@@ -361,4 +361,34 @@ export function buildPaguItemPickForReplaceKeyboard(
   return kb;
 }
 
+/**
+ * 1-Shot Conversational: Unbudgeted expense item options (Non-Pagu vs Register to Pagu First)
+ */
+export function buildUnbudgetedExpenseKeyboard(draftId: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("📦 Simpan sbg Belanja Non-Pagu", `v:p1s_np:${draftId}`)
+    .row()
+    .text("➕ Daftarkan ke Pagu Anggaran Dulu", `v:p1s_regp:${draftId}`)
+    .row()
+    .text("❌ Batalkan", `v:p1s_c:${draftId}`);
+}
+
+/**
+ * 1-Shot Conversational: Quick pagu ceiling price picker
+ */
+export function buildPaguPricePickerKeyboard(draftId: string, basePrice: number): InlineKeyboard {
+  const p10 = Math.round(basePrice * 1.1);
+  const p15 = Math.round(basePrice * 1.15);
+  const fmt = (n: number) => `Rp ${n.toLocaleString("id-ID")}`;
+
+  return new InlineKeyboard()
+    .text(`💡 Sama dg Beli (${fmt(basePrice)})`, `v:p1s_sp:${draftId}:${basePrice}`)
+    .row()
+    .text(`📈 Plafon +10% (${fmt(p10)})`, `v:p1s_sp:${draftId}:${p10}`)
+    .row()
+    .text(`📈 Plafon +15% (${fmt(p15)})`, `v:p1s_sp:${draftId}:${p15}`)
+    .row()
+    .text("❌ Batalkan", `v:p1s_c:${draftId}`);
+}
+
 

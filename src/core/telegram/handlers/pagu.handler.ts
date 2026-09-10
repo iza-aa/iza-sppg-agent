@@ -13,6 +13,7 @@ import {
   buildPaguItemActionKeyboard,
   buildPaguOneShotConfirmKeyboard,
   buildPaguItemPickForReplaceKeyboard,
+  buildPaguPricePickerKeyboard,
 } from "../keyboards.js";
 
 export async function sendPaguOrders(bCtx: BotContext, ctx: Context) {
@@ -474,6 +475,210 @@ export function registerPaguHandlers(bCtx: BotContext) {
       });
     } catch (err: any) {
       logger.error({ err: err?.message, draftId }, "Error applying 1-shot pagu change");
+      await safeEditMessageText(ctx, `❌ Terjadi kesalahan: ${escapeHtml(err?.message || err)}`, {
+        parse_mode: "HTML",
+      });
+    }
+  });
+
+  // User chose: Simpan sebagai Belanja Non-Pagu / Taktis
+  bCtx.bot.callbackQuery(/^v:p1s_np:(.+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const draft = pendingPaguModifications.get(draftId);
+
+    if (!draft) {
+      await ctx.answerCallbackQuery({ text: "Sesi konfirmasi telah kadaluarsa.", show_alert: true });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: "Menyimpan belanja non-pagu..." });
+
+    try {
+      if (!draft.isExpense || !draft.expenseId) {
+        await ctx.answerCallbackQuery({ text: "Bukan transaksi belanja pengeluaran.", show_alert: true });
+        return;
+      }
+
+      const result = await googleSheetsService.addExpenseItemToTransaction(
+        draft.spreadsheetId,
+        draft.expenseId,
+        {
+          itemName: draft.itemName,
+          qty: draft.qty,
+          unit: draft.unit,
+          price: draft.price,
+          supplier: draft.supplier,
+          notes: "[NON-PAGU]",
+        },
+        draft.updatedBy,
+        { isNonPagu: true }
+      );
+
+      if (!result.success) {
+        await safeEditMessageText(ctx, `❌ Gagal menyimpan ke Google Sheets: ${escapeHtml(result.message)}`, {
+          parse_mode: "HTML",
+        });
+        return;
+      }
+
+      pendingPaguModifications.delete(draftId);
+
+      const subtotal = draft.qty * draft.price;
+      const card = [
+        `⚠️ <b>RINCIAN BELANJA NON-PAGU TERCATAT!</b>`,
+        `Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>`,
+        `------------------------------------------`,
+        `• <b>Transaksi Belanja:</b> <code>${escapeHtml(draft.orderLabel || draft.expenseId)}</code>`,
+        `• <b>Bahan Belanja:</b> <b>${escapeHtml(draft.itemName)}</b> [Non-Pagu]`,
+        `• <b>Kuantitas:</b> <b>${draft.qty} ${escapeHtml(draft.unit)}</b>`,
+        `• <b>Harga Satuan:</b> <b>${formatRupiah(draft.price)}</b>`,
+        `• <b>Total Belanja:</b> <b>${formatRupiah(subtotal)}</b>`,
+        draft.supplier ? `• <b>Supplier:</b> ${escapeHtml(draft.supplier)}` : "",
+        `------------------------------------------`,
+        `🔄 <i>Bahan belanja disisipkan rapi di bawah transaksi ${escapeHtml(draft.expenseId)} pada Tab 05_RINCIAN_PENGELUARAN.</i>`,
+        `📉 <i>Otomatis dicatat ke Tab 06_PERBANDINGAN_MARGIN dengan status 🔴 <b>NON-PAGU</b> (memotong margin keuntungan dapur SPPG sebesar ${formatRupiah(subtotal)}).</i>`,
+      ].filter(Boolean).join("\n");
+
+      const kb = new InlineKeyboard()
+        .text("🔍 Detail Transaksi", `t:det:${draft.expenseId}`)
+        .row()
+        .text("🏠 Menu Utama", "qa:start");
+
+      await safeEditMessageText(ctx, card, {
+        parse_mode: "HTML",
+        reply_markup: kb,
+      });
+    } catch (err: any) {
+      logger.error({ err: err?.message, draftId }, "Error saving non-pagu expense item");
+      await safeEditMessageText(ctx, `❌ Terjadi kesalahan: ${escapeHtml(err?.message || err)}`, {
+        parse_mode: "HTML",
+      });
+    }
+  });
+
+  // User chose: Daftarkan ke Pagu Anggaran Dulu (Prompt Plafon Pagu Price)
+  bCtx.bot.callbackQuery(/^v:p1s_regp:(.+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const draft = pendingPaguModifications.get(draftId);
+
+    if (!draft) {
+      await ctx.answerCallbackQuery({ text: "Sesi konfirmasi telah kadaluarsa.", show_alert: true });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: "Pilih plafon harga pagu..." });
+
+    const promptText = [
+      `➕ <b>DAFTARKAN BAHAN KE PAGU RESMI BGN</b>`,
+      `Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>`,
+      draft.orderNo && draft.orderNo !== "-" ? `PO Target: <code>${escapeHtml(draft.orderNo)}</code>` : "",
+      `------------------------------------------`,
+      `• <b>Bahan Belanja:</b> <b>${escapeHtml(draft.itemName)}</b>`,
+      `• <b>Kuantitas Dibeli:</b> <b>${draft.qty} ${escapeHtml(draft.unit)}</b>`,
+      `• <b>Harga Beli Riil:</b> <b>${formatRupiah(draft.price)} / ${escapeHtml(draft.unit)}</b>`,
+      `------------------------------------------`,
+      `Berapa estimasi/plafon harga pagu resmi BGN per ${escapeHtml(draft.unit)} untuk bahan ini?`,
+      `<i>Pilih rekomendasi plafon pagu di bawah untuk mendaftarkan ke Tab 03 & Tab 06:</i>`,
+    ].filter(Boolean).join("\n");
+
+    await safeEditMessageText(ctx, promptText, {
+      parse_mode: "HTML",
+      reply_markup: buildPaguPricePickerKeyboard(draftId, draft.price),
+    });
+  });
+
+  // User selected Pagu ceiling price -> Apply to Pagu Tab 03/06 and then record to Expense Tab 05/06
+  bCtx.bot.callbackQuery(/^v:p1s_sp:(.+):(\d+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const paguPrice = parseInt(ctx.match[2], 10);
+    const draft = pendingPaguModifications.get(draftId);
+
+    if (!draft) {
+      await ctx.answerCallbackQuery({ text: "Sesi konfirmasi telah kadaluarsa.", show_alert: true });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: "Mendaftarkan ke pagu & mencatat belanja..." });
+
+    try {
+      // 1. Add item to Tab 03 (Pagu PO) and Tab 06
+      const paguResult = await googleSheetsService.addPaguItemToOrder(
+        draft.spreadsheetId,
+        draft.orderNo,
+        {
+          itemName: draft.itemName,
+          qty: draft.qty,
+          unit: draft.unit,
+          price: paguPrice,
+          supplier: draft.supplier,
+        },
+        draft.updatedBy
+      );
+
+      if (!paguResult.success) {
+        await safeEditMessageText(ctx, `❌ Gagal mendaftarkan bahan ke Pagu: ${escapeHtml(paguResult.message)}`, {
+          parse_mode: "HTML",
+        });
+        return;
+      }
+
+      // 2. Add item to Tab 05 (Expense Transaction) and reconcile Tab 06
+      let expenseMsg = "";
+      if (draft.isExpense && draft.expenseId) {
+        const expResult = await googleSheetsService.addExpenseItemToTransaction(
+          draft.spreadsheetId,
+          draft.expenseId,
+          {
+            itemName: draft.itemName,
+            qty: draft.qty,
+            unit: draft.unit,
+            price: draft.price,
+            supplier: draft.supplier,
+          },
+          draft.updatedBy,
+          { isNonPagu: false }
+        );
+        expenseMsg = expResult.success ? "" : ` (Catatan: ${expResult.message})`;
+      }
+
+      pendingPaguModifications.delete(draftId);
+
+      const totalPagu = draft.qty * paguPrice;
+      const totalBelanja = draft.qty * draft.price;
+      const margin = totalPagu - totalBelanja;
+      const marginText = margin > 0
+        ? `🟢 HEMAT ${formatRupiah(margin)}`
+        : (margin === 0 ? `🟢 PAS (Sesuai Pagu)` : `🔴 DEFISIT ${formatRupiah(Math.abs(margin))}`);
+
+      const successCard = [
+        `🎉 <b>BAHAN DIDAFTARKAN KE PAGU & BELANJA TERCATAT!</b>`,
+        `Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>`,
+        `PO Terkait: <code>${escapeHtml(draft.orderNo)}</code>`,
+        `------------------------------------------`,
+        `• <b>Bahan:</b> <b>${escapeHtml(draft.itemName)}</b> (${draft.qty} ${escapeHtml(draft.unit)})`,
+        `• <b>Plafon Pagu BGN:</b> <b>${formatRupiah(paguPrice)}</b> (Total: ${formatRupiah(totalPagu)})`,
+        `• <b>Realisasi Belanja:</b> <b>${formatRupiah(draft.price)}</b> (Total: ${formatRupiah(totalBelanja)})`,
+        `• <b>Status Efisiensi:</b> <b>${marginText}</b>`,
+        draft.supplier ? `• <b>Supplier:</b> ${escapeHtml(draft.supplier)}` : "",
+        `------------------------------------------`,
+        `✅ <b>Tab 02 & Tab 03:</b> Pagu anggaran resmi BGN bertambah rapi.`,
+        `✅ <b>Tab 04 & Tab 05:</b> Rincian nota tersimpan di bawah ${escapeHtml(draft.expenseId || draft.orderNo)}.`,
+        `✅ <b>Tab 06:</b> Terhubung dengan evaluasi margin dan sah masuk klaim SPJ BGN!`,
+      ].filter(Boolean).join("\n");
+
+      const kb = new InlineKeyboard();
+      if (draft.isExpense && draft.expenseId) {
+        kb.text("🔍 Detail Transaksi", `t:det:${draft.expenseId}`).row();
+      }
+      kb.text("📋 Rincian PO", `v:pagu_ord:${draft.orderNo}`).row();
+      kb.text("🏠 Menu Utama", "qa:start");
+
+      await safeEditMessageText(ctx, successCard, {
+        parse_mode: "HTML",
+        reply_markup: kb,
+      });
+    } catch (err: any) {
+      logger.error({ err: err?.message, draftId }, "Error registering pagu and recording expense");
       await safeEditMessageText(ctx, `❌ Terjadi kesalahan: ${escapeHtml(err?.message || err)}`, {
         parse_mode: "HTML",
       });

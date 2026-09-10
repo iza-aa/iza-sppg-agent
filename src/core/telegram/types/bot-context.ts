@@ -13,6 +13,10 @@ export interface PaguOneShotDraft {
   action: "UPDATE" | "ADD";
   isExpense?: boolean;
   expenseId?: string;
+  isUnbudgeted?: boolean;
+  isNonPagu?: boolean;
+  matchedPaguItem?: any;
+  paguPrice?: number;
   itemRowIndex?: number;
   origItemName?: string;
   supplier?: string;
@@ -33,9 +37,32 @@ export function renderPaguOneShotCard(draft: PaguOneShotDraft, unitName: string)
   const newSubtotal = draft.qty * draft.price;
 
   if (draft.isExpense) {
+    if (draft.isUnbudgeted) {
+      return [
+        `⚠️ <b>BAHAN BELUM TERDAFTAR DI PAGU RESMI BGN</b>`,
+        `Unit: <b>${escapeHtml(unitName)}</b>`,
+        draft.orderNo && draft.orderNo !== "-" ? `PO Terkait: <code>${escapeHtml(draft.orderNo)}</code>` : "",
+        `------------------------------------------`,
+        `• <b>Transaksi Belanja:</b> <code>${escapeHtml(draft.orderLabel || draft.expenseId || draft.orderNo)}</code>`,
+        `• <b>Bahan Belanja:</b> <b>${escapeHtml(draft.itemName)}</b>`,
+        `• <b>Kuantitas:</b> <b>${draft.qty} ${escapeHtml(draft.unit)}</b>`,
+        `• <b>Harga Satuan:</b> <b>${formatRupiah(draft.price)}</b>`,
+        `• <b>Total Belanja:</b> <b>${formatRupiah(newSubtotal)}</b>`,
+        draft.supplier ? `• <b>Supplier:</b> <b>${escapeHtml(draft.supplier)}</b>` : "",
+        `------------------------------------------`,
+        `⚠️ <b>PERHATIAN:</b> Bahan "<b>${escapeHtml(draft.itemName)}</b>" <u>TIDAK DITEMUKAN</u> dalam daftar pagu resmi PO <code>${escapeHtml(draft.orderNo)}</code>.`,
+        ``,
+        `💡 <i>Jika disimpan sebagai <b>Non-Pagu</b>, biaya ini memotong margin keuntungan dapur SPPG karena tidak dapat ditagihkan resmi ke BGN.</i>`,
+        `💡 <i>Atau Anda dapat <b>mendaftarkannya ke Pagu</b> terlebih dahulu agar memiliki plafon resmi BGN dan dapat di-SPJ-kan.</i>`,
+        ``,
+        `Pilih perlakuan untuk bahan ini:`,
+      ].filter(Boolean).join("\n");
+    }
+
     return [
       `📋 <b>KONFIRMASI PENAMBAHAN RINCIAN BELANJA (PENGELUARAN)</b>`,
       `Unit: <b>${escapeHtml(unitName)}</b>`,
+      draft.orderNo && draft.orderNo !== "-" ? `PO Terkait: <code>${escapeHtml(draft.orderNo)}</code>` : "",
       `------------------------------------------`,
       `• <b>Transaksi Belanja:</b> <code>${escapeHtml(draft.orderLabel || draft.expenseId || draft.orderNo)}</code>`,
       `• <b>Bahan Belanja:</b> <b>${escapeHtml(draft.itemName)}</b>`,

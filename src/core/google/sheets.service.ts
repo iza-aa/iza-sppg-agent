@@ -474,9 +474,12 @@ export class GoogleSheetsService {
       supplier?: string;
       notes?: string;
     },
-    addedBy = "Telegram User"
+    addedBy = "Telegram User",
+    options?: {
+      isNonPagu?: boolean;
+    }
   ) {
-    return this.expense.addExpenseItemToTransaction(spreadsheetId, expenseId, item, addedBy);
+    return this.expense.addExpenseItemToTransaction(spreadsheetId, expenseId, item, addedBy, options);
   }
 }
 

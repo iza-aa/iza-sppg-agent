@@ -18,6 +18,7 @@ import {
   buildPaguItemListKeyboard,
   buildPaguItemEditConfirmKeyboard,
   buildPaguOneShotConfirmKeyboard,
+  buildUnbudgetedExpenseKeyboard,
   buildPaguClarifyAddOrReplaceKeyboard,
   buildEditConfirmKeyboard,
   buildDeleteConfirmKeyboard,
@@ -492,10 +493,32 @@ export function registerTextRouterHandler(bCtx: BotContext) {
               const expenseTrx = await googleSheetsService.findTransactionById(bCtx.unitConfig.spreadsheetId, req.orderRef!);
               if (expenseTrx.found && expenseTrx.type === "expense") {
                 const draftId = `p1s_${Math.random().toString(36).slice(2, 9)}`;
+                const orderNo = expenseTrx.orderNo || "-";
+
+                // Cross-check against Pagu PO
+                let isUnbudgeted = false;
+                let matchedPaguItem: any = undefined;
+
+                if (orderNo && orderNo !== "-") {
+                  const paguCheck = await googleSheetsService.findPaguItemByQuery(
+                    bCtx.unitConfig.spreadsheetId,
+                    orderNo,
+                    targetName
+                  ).catch(() => null);
+
+                  if (!paguCheck || paguCheck.matchingItems.length === 0) {
+                    isUnbudgeted = true;
+                  } else {
+                    matchedPaguItem = paguCheck.foundItem || paguCheck.matchingItems[0];
+                  }
+                } else {
+                  isUnbudgeted = true;
+                }
+
                 const draft: PaguOneShotDraft = {
                   draftId,
                   spreadsheetId: bCtx.unitConfig.spreadsheetId,
-                  orderNo: expenseTrx.orderNo || "-",
+                  orderNo,
                   orderLabel: `Nota Supplier (${expenseTrx.id})`,
                   action: "ADD",
                   itemName: targetName || "Bahan Baru",
@@ -507,14 +530,20 @@ export function registerTextRouterHandler(bCtx: BotContext) {
                   createdAt: Date.now(),
                   isExpense: true,
                   expenseId: expenseTrx.id,
+                  isUnbudgeted,
+                  matchedPaguItem,
                 };
 
                 pendingPaguModifications.set(draftId, draft);
 
                 const cardText = renderPaguOneShotCard(draft, bCtx.unitConfig.name);
+                const keyboard = isUnbudgeted
+                  ? buildUnbudgetedExpenseKeyboard(draftId)
+                  : buildPaguOneShotConfirmKeyboard(draftId);
+
                 const confirmMsg = await ctx.reply(cardText, {
                   parse_mode: "HTML",
-                  reply_markup: buildPaguOneShotConfirmKeyboard(draftId),
+                  reply_markup: keyboard,
                 });
                 state.activeDraftMsgId = confirmMsg.message_id;
                 break;

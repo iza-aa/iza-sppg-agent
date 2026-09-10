@@ -995,6 +995,186 @@ export class ExpenseSheetsService {
   }
 
   /**
+  /**
+   * Reconciles Tab 06 after adding an expense item to an existing transaction.
+   */
+  private async reconcileTab06AfterItemAdd(
+    spreadsheetId: string,
+    expenseId: string,
+    sppgRefNo: string,
+    supplierName: string,
+    item: {
+      itemName: string;
+      qty: number;
+      unit?: string;
+      price: number;
+      supplier?: string;
+      notes?: string;
+    },
+    isNonPagu?: boolean
+  ): Promise<void> {
+    const client = await this.getClient();
+    const cleanRefNo = (sppgRefNo || "-").trim();
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const itemCleanName = item.itemName.toLowerCase().trim();
+    const supplier = item.supplier || supplierName || "Supplier";
+    const unit = item.unit || "satuan";
+    const itemTotal = item.qty * item.price;
+
+    const rekapRes = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A:M`,
+    });
+    const rekapRows = rekapRes.data.values || [];
+
+    if (isNonPagu) {
+      // Find where to insert in Tab 06 (either after last row of cleanRefNo, or append at end)
+      let lastRekapRowIndex = -1;
+      if (cleanRefNo !== "-") {
+        for (let i = 0; i < rekapRows.length; i++) {
+          const row = rekapRows[i];
+          if (String(row[0] || "").trim().toLowerCase() === cleanRefNo.toLowerCase()) {
+            lastRekapRowIndex = i + 1; // 1-based
+          }
+        }
+      }
+
+      const meta = await client.spreadsheets.get({ spreadsheetId });
+      const sheetMap = new Map<string, number>();
+      meta.data.sheets?.forEach((s) => {
+        if (s.properties?.title && typeof s.properties?.sheetId === "number") {
+          sheetMap.set(s.properties.title, s.properties.sheetId);
+        }
+      });
+      const rekapSheetId = sheetMap.get(SHEET_NAMES.PERBANDINGAN_MARGIN) ?? SHEET_IDS.PERBANDINGAN_MARGIN;
+
+      if (lastRekapRowIndex > 0) {
+        const targetRow = lastRekapRowIndex + 1;
+        await client.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [
+              {
+                insertDimension: {
+                  range: {
+                    sheetId: rekapSheetId,
+                    dimension: "ROWS",
+                    startIndex: lastRekapRowIndex,
+                    endIndex: lastRekapRowIndex + 1,
+                  },
+                  inheritFromBefore: true,
+                },
+              },
+            ],
+          },
+        });
+
+        const newRow = [
+          cleanRefNo,
+          dateStr,
+          supplier,
+          `${item.itemName} [Non-Pagu]`,
+          item.qty,
+          unit,
+          0,
+          0,
+          item.price,
+          itemTotal,
+          `=IF(J${targetRow}=""; ""; H${targetRow}-J${targetRow})`,
+          `=IF(OR(H${targetRow}=""; J${targetRow}=""); ""; IFERROR(K${targetRow}/H${targetRow}; 0))`,
+          "🔴 NON-PAGU",
+        ];
+
+        await client.spreadsheets.values.update({
+          spreadsheetId,
+          range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A${targetRow}:M${targetRow}`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: { values: [newRow] },
+        });
+      } else {
+        const targetRow = rekapRows.length + 1;
+        const newRow = [
+          cleanRefNo,
+          dateStr,
+          supplier,
+          `${item.itemName} [Non-Pagu]`,
+          item.qty,
+          unit,
+          0,
+          0,
+          item.price,
+          itemTotal,
+          `=IF(J${targetRow}=""; ""; H${targetRow}-J${targetRow})`,
+          `=IF(OR(H${targetRow}=""; J${targetRow}=""); ""; IFERROR(K${targetRow}/H${targetRow}; 0))`,
+          "🔴 NON-PAGU",
+        ];
+        await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PERBANDINGAN_MARGIN, [newRow]);
+      }
+      return;
+    }
+
+    // Normal In-Pagu reconciliation
+    for (let rIdx = 1; rIdx < rekapRows.length; rIdx++) {
+      const row = rekapRows[rIdx];
+      const rowSppgRef = String(row[0] || "").trim();
+      const rowItemName = String(row[3] || "").toLowerCase().trim();
+
+      const nameMatches = rowItemName.includes(itemCleanName) || itemCleanName.includes(rowItemName);
+      const refMatches = cleanRefNo === "-" || !rowSppgRef || rowSppgRef.toLowerCase() === cleanRefNo.toLowerCase();
+
+      if (nameMatches && refMatches) {
+        const actualRow = rIdx + 1; // 1-based
+        const targetQty = parseCurrencyNumber(row[4]);
+        const prevRealisasi = parseCurrencyNumber(row[9]);
+        const statusStr = String(row[12] || "").trim();
+
+        let prevFulfilledQty = 0;
+        const belumMatch = statusStr.match(/BELUM LENGKAP \((\d+(?:\.\d+)?)\//i);
+        if (belumMatch) {
+          prevFulfilledQty = parseFloat(belumMatch[1]) || 0;
+        } else if (prevRealisasi > 0 && parseCurrencyNumber(row[8]) > 0) {
+          prevFulfilledQty = Math.round(prevRealisasi / parseCurrencyNumber(row[8]));
+        }
+
+        const newAccumulatedQty = prevFulfilledQty + (item.qty || 1);
+        const newAccumulatedRealisasi = prevRealisasi + itemTotal;
+
+        const batchUpdates: { range: string; values: any[][] }[] = [];
+        if (targetQty > 0 && newAccumulatedQty < targetQty) {
+          const statusText = `🟠 BELUM LENGKAP (${newAccumulatedQty}/${targetQty} ${unit})`;
+          batchUpdates.push({
+            range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!I${actualRow}:J${actualRow}`,
+            values: [[item.price, newAccumulatedRealisasi]],
+          });
+          batchUpdates.push({
+            range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!M${actualRow}`,
+            values: [[statusText]],
+          });
+        } else {
+          const formulaStatus = `=IF(K${actualRow}>0; "🟢 HEMAT"; IF(K${actualRow}=0; "🟢 PAS"; "🔴 OVER BUDGET"))`;
+          batchUpdates.push({
+            range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!I${actualRow}:J${actualRow}`,
+            values: [[item.price, newAccumulatedRealisasi]],
+          });
+          batchUpdates.push({
+            range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!M${actualRow}`,
+            values: [[formulaStatus]],
+          });
+        }
+
+        await client.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            valueInputOption: "USER_ENTERED",
+            data: batchUpdates,
+          },
+        });
+        break;
+      }
+    }
+  }
+
+  /**
    * Adds a single expense item directly to an existing expense transaction in 05_RINCIAN_PENGELUARAN
    * (Auto-groups under the last item of that transaction via insertDimension).
    * Automatically updates Tab 06 reconciliation if the expense is tied to an SPPG PO.
@@ -1010,7 +1190,10 @@ export class ExpenseSheetsService {
       supplier?: string;
       notes?: string;
     },
-    addedBy = "Telegram User"
+    addedBy = "Telegram User",
+    options?: {
+      isNonPagu?: boolean;
+    }
   ): Promise<{
     success: boolean;
     message: string;
@@ -1018,7 +1201,14 @@ export class ExpenseSheetsService {
     matchedExpenseId?: string;
   }> {
     try {
-      const result = await this.appendOrInsertRincianPengeluaranRows(spreadsheetId, expenseId, [item]);
+      const itemToInsert = { ...item };
+      if (options?.isNonPagu && !itemToInsert.notes?.includes("NON-PAGU")) {
+        itemToInsert.notes = itemToInsert.notes && itemToInsert.notes !== "-"
+          ? `[NON-PAGU] ${itemToInsert.notes}`
+          : "[NON-PAGU]";
+      }
+
+      const result = await this.appendOrInsertRincianPengeluaranRows(spreadsheetId, expenseId, [itemToInsert]);
 
       const unitName = this.getUnitNameFromSpreadsheetId(spreadsheetId);
       await this.appendMasterAuditLogsBatch([
@@ -1027,20 +1217,38 @@ export class ExpenseSheetsService {
           editor: `${addedBy} (Expense Item Adder)`,
           sheetTab: SHEET_NAMES.RINCIAN_PENGELUARAN,
           refId: result.matchedExpenseId,
-          columnEdited: `Sisip Rincian Belanja di ${result.matchedExpenseId} (Baris ${result.startRow}) - ${item.itemName}`,
+          columnEdited: `Sisip Rincian Belanja di ${result.matchedExpenseId} (Baris ${result.startRow}) - ${item.itemName}${options?.isNonPagu ? " [Non-Pagu]" : ""}`,
           oldValue: "-",
           newValue: `${item.qty} ${item.unit || "unit"} @ Rp ${item.price}`,
-          sourceAction: "Expense Item Add (Auto Grouping Insert)",
+          sourceAction: options?.isNonPagu ? "Expense Item Add (Non-Pagu)" : "Expense Item Add (Auto Grouping Insert)",
         },
       ]).catch(() => {});
+
+      // Reconcile Tab 06
+      const trxInfo = await this.findTransactionById(spreadsheetId, expenseId).catch(() => null);
+      const sppgRef = (trxInfo && trxInfo.found && trxInfo.orderNo) ? trxInfo.orderNo : "-";
+      const suppName = (trxInfo && trxInfo.found && trxInfo.supplierOrUnit) ? trxInfo.supplierOrUnit : (item.supplier || "Supplier");
+
+      await this.reconcileTab06AfterItemAdd(
+        spreadsheetId,
+        expenseId,
+        sppgRef,
+        suppName,
+        item,
+        options?.isNonPagu
+      ).catch((err) => {
+        logger.warn({ err: err?.message || err }, "Note during Tab 06 reconciliation after item add");
+      });
 
       const modeMsg = result.mode === "INSERT"
         ? `disisipkan rapi di bawah ${result.matchedExpenseId} (Baris ke-${result.startRow})`
         : `ditambahkan di baris ke-${result.startRow}`;
 
+      const nonPaguNote = options?.isNonPagu ? " [Non-Pagu dicatat ke Tab 06]" : "";
+
       return {
         success: true,
-        message: `Bahan "${item.itemName}" berhasil ${modeMsg} pada Tab 05_RINCIAN_PENGELUARAN. Total tagihan di Tab 04 otomatis diperbarui.`,
+        message: `Bahan "${item.itemName}" berhasil ${modeMsg} pada Tab 05_RINCIAN_PENGELUARAN${nonPaguNote}. Total tagihan di Tab 04 dan evaluasi Tab 06 otomatis diperbarui.`,
         targetRow: result.startRow,
         matchedExpenseId: result.matchedExpenseId,
       };
@@ -1050,3 +1258,4 @@ export class ExpenseSheetsService {
     }
   }
 }
+
