@@ -321,7 +321,7 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
           startRowIndex: 1,
           endRowIndex: 5000,
           startColumnIndex: 0,
-          endColumnIndex: 9,
+          endColumnIndex: 10,
         },
         cell: {
           userEnteredFormat: {
@@ -634,10 +634,10 @@ export function createHeaderStylingBatchRequests(sheetMap?: Map<string, number>)
       sheetId: resolveSheetId(sheetMap, SHEET_NAMES.PAGU_PENGELUARAN, SHEET_IDS.PAGU_PENGELUARAN),
       widths: [130, 140, 110, 150, 130, 140, 110, 120, 130, 180]
     },
-    // Tab 05: RINCIAN_PENGELUARAN (9 Kolom)
+    // Tab 05: RINCIAN_PENGELUARAN (10 Kolom)
     {
       sheetId: resolveSheetId(sheetMap, SHEET_NAMES.RINCIAN_PENGELUARAN, SHEET_IDS.RINCIAN_PENGELUARAN),
-      widths: [130, 150, 70, 180, 260, 95, 90, 140, 150]
+      widths: [130, 150, 70, 180, 260, 95, 90, 140, 150, 180]
     },
     // Tab 06: PERBANDINGAN_MARGIN (13 Kolom)
     {
