@@ -561,7 +561,7 @@ export class ExpenseSheetsService {
         picName || "PIC Dapur",
         "LUNAS",
       ];
-      await this.recordToMasterConsolidated([masterRow]).catch((err) => {
+      this.recordToMasterConsolidated([masterRow]).catch((err) => {
         logger.warn({ err: err?.message || err }, "Failed forwarding expense to Master Dashboard");
       });
     }
@@ -845,7 +845,7 @@ export class ExpenseSheetsService {
 
     // 3. Forward all to Master Dashboard in one batch
     if (masterRows.length > 0) {
-      await this.recordToMasterConsolidated(masterRows).catch((err) => {
+      this.recordToMasterConsolidated(masterRows).catch((err) => {
         logger.warn({ err: err?.message || err }, "Failed batch forwarding expenses to Master Dashboard");
       });
     }

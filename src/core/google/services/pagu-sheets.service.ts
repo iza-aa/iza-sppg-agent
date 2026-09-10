@@ -203,7 +203,7 @@ export class PaguSheetsService {
         order.signed_by || picName || "Admin SPPG",
         "LENGKAP",
       ];
-      await this.recordToMasterConsolidated([masterRow]).catch((err) => {
+      this.recordToMasterConsolidated([masterRow]).catch((err) => {
         logger.warn({ err: err?.message || err }, "Failed forwarding order to Master Dashboard");
       });
     }

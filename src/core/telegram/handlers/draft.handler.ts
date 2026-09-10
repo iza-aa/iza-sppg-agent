@@ -182,7 +182,12 @@ export function registerDraftHandlers(bCtx: BotContext) {
       show_alert: false,
     });
 
-    await safeEditMessageText(ctx, ctx.callbackQuery.message?.text || "Menyimpan...", {
+    const currentText = ctx.callbackQuery.message?.text || "";
+    const processingText = currentText.includes("STATUS:")
+      ? currentText.replace(/STATUS:.*$/im, "STATUS: SEDANG MENYIMPAN KE GOOGLE SHEETS... ⏳")
+      : (currentText ? currentText + "\n\n⏳ <b>STATUS: SEDANG MENYIMPAN KE GOOGLE SHEETS...</b>" : "⏳ Sedang menyimpan ke Google Sheets...");
+
+    await safeEditMessageText(ctx, processingText, {
       reply_markup: undefined,
     });
 
