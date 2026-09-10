@@ -528,6 +528,7 @@ export class GoogleSheetsService {
           : [];
 
         if (matchedItems.length > 0) {
+          let matchedSum = 0;
           matchedItems.forEach((m, idx) => {
             const itemName = String(m[3] || "Bahan Makanan").trim();
             const qty = parseCurrencyNumber(m[4]) || 1;
@@ -535,6 +536,7 @@ export class GoogleSheetsService {
             const realPrice = parseCurrencyNumber(m[8]) || (parseCurrencyNumber(m[9]) / qty);
             const targetRowIdx = tab05NewRows.length + 2;
             const subtotalFormula = `=F${targetRowIdx}*H${targetRowIdx}`;
+            matchedSum += qty * realPrice;
 
             tab05NewRows.push([
               sppgRef,
@@ -548,6 +550,23 @@ export class GoogleSheetsService {
               subtotalFormula,
             ]);
           });
+
+          // If there is an unitemized remainder between matched items and the total invoice
+          if (totalAmount > matchedSum) {
+            const diff = totalAmount - matchedSum;
+            const targetRowIdx = tab05NewRows.length + 2;
+            tab05NewRows.push([
+              sppgRef,
+              trxId,
+              matchedItems.length + 1,
+              supplierName,
+              "Belanja Bahan Tambahan Pasar / Lain-lain",
+              1,
+              "Paket",
+              diff,
+              `=F${targetRowIdx}*H${targetRowIdx}`,
+            ]);
+          }
         } else {
           // Unitemized fallback entry
           const targetRowIdx = tab05NewRows.length + 2;
