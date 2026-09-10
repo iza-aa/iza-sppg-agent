@@ -13,6 +13,8 @@ import {
   getOperationalDashboardValues,
   createOperationalDashboardStylingRequests,
   createOperationalDashboardChartRequest,
+  getGuidelineTabValues,
+  createGuidelineTabStylingRequests,
   SHEET_NAMES,
   SHEET_IDS,
   hexToRgbColor,
@@ -220,6 +222,8 @@ export class SheetsClientProvider {
         requestBody: { requests: stylingRequests },
       });
 
+      await this.ensureGuidelineTab(spreadsheetId, unitName, force);
+
       logger.info({ spreadsheetId, unitName }, "Successfully established BGN visual dashboard and clean headers");
     } catch (err: any) {
       logger.warn({ err: err?.message || err, spreadsheetId }, "Note writing dashboard headers and formulas");
@@ -258,4 +262,71 @@ export class SheetsClientProvider {
       });
     }
   }
+
+  /**
+   * Ensures Tab 00_PANDUAN_OPERASIONAL exists and is populated with BGN guideline content.
+   * Creates tab at index 0 if missing; skips data re-write unless force=true.
+   */
+  async ensureGuidelineTab(spreadsheetId: string, unitName = "SPPG Unit", force = false): Promise<void> {
+    const client = await this.getClient();
+    try {
+      const meta = await client.spreadsheets.get({ spreadsheetId });
+      const sheets = meta.data.sheets || [];
+      const guidelineSheet = sheets.find((s) => s.properties?.title === SHEET_NAMES.PANDUAN);
+      const existingSheetIds = new Set(sheets.map((s) => s.properties?.sheetId));
+
+      let sheetId: number;
+
+      if (!guidelineSheet) {
+        // Create tab at index 0 (leftmost position)
+        const targetSheetId = existingSheetIds.has(SHEET_IDS.PANDUAN) ? undefined : SHEET_IDS.PANDUAN;
+        const res = await client.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [{
+              addSheet: {
+                properties: {
+                  ...(targetSheetId ? { sheetId: targetSheetId } : {}),
+                  title: SHEET_NAMES.PANDUAN,
+                  index: 0,
+                  tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.DEEP_NAVY) },
+                  gridProperties: { rowCount: 100, columnCount: 10, frozenRowCount: 2 },
+                },
+              },
+            }],
+          },
+        });
+        sheetId = res.data.replies?.[0]?.addSheet?.properties?.sheetId as number;
+        logger.info({ spreadsheetId, sheetId }, "Created 00_PANDUAN_OPERASIONAL tab");
+      } else {
+        sheetId = guidelineSheet.properties!.sheetId as number;
+        // Skip data rewrite unless force=true
+        if (!force) {
+          logger.debug({ spreadsheetId }, "00_PANDUAN_OPERASIONAL already exists, skipping");
+          return;
+        }
+      }
+
+      if (typeof sheetId !== "number") return;
+
+      const values = getGuidelineTabValues(unitName);
+      await client.spreadsheets.values.update({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.PANDUAN}'!A1:F${values.length}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values },
+      });
+
+      const stylingReqs = createGuidelineTabStylingRequests(sheetId, values.length);
+      await client.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: { requests: stylingReqs },
+      });
+
+      logger.info({ spreadsheetId, unitName }, "00_PANDUAN_OPERASIONAL tab populated and styled");
+    } catch (err: any) {
+      logger.warn({ err: err?.message || err, spreadsheetId }, "Note ensuring guideline tab");
+    }
+  }
 }
+

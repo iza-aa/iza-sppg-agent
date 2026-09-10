@@ -5,6 +5,7 @@ import { escapeHtml } from "../formatter.js";
 import {
   buildStartQuickActionKeyboard,
   buildInviteRolePickerKeyboard,
+  buildPanduanKeyboard,
 } from "../keyboards.js";
 
 export async function sendMyId(bCtx: BotContext, ctx: Context) {
@@ -107,6 +108,54 @@ export async function handleInviteCommand(bCtx: BotContext, ctx: Context, target
   ].join("\n");
 
   await ctx.reply(replyText, { parse_mode: "HTML" });
+}
+
+/**
+ * Mengirimkan panduan ringkas (cheat-sheet) bot Telegram MBG ke chat.
+ * Tampilkan tombol pintasan ke fitur utama dan link ke spreadsheet panduan.
+ */
+export async function sendPanduan(bCtx: BotContext, ctx: Context) {
+  const sheetUrl = `https://docs.google.com/spreadsheets/d/${bCtx.unitConfig.spreadsheetId}/edit#gid=1000`;
+  const panduanLines = [
+    `📖 <b>PANDUAN RINGKAS ASISTEN MBG</b>`,
+    `Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>`,
+    `------------------------------------------`,
+    ``,
+    `<b>✍️ CATAT BELANJA</b>`,
+    `<code>Beli [bahan] [qty] [satuan] harga [harga] di [toko] tunai</code>`,
+    `<i>Contoh: "Beli daging ayam 120 kg harga 36000 di Pasar tunai"</i>`,
+    ``,
+    `<b>📋 CATAT MULTI-BAHAN (1 Nota):</b>`,
+    `<code>Catat belanja [toko] tunai:\n1. Ayam 120 kg harga 36000\n2. Beras 150 kg harga 13000</code>`,
+    ``,
+    `<b>📸 FOTO STRUK / NOTA:</b>`,
+    `Kirim langsung → AI baca otomatis (OCR)`,
+    ``,
+    `<b>🗑️ HAPUS TRANSAKSI (Admin):</b>`,
+    `<code>hapus EI001</code> → hapus nota + rincian (cascade)`,
+    `<code>hapus Sayur Sop dari EI002</code> → hapus 1 bahan`,
+    `<code>hapus Sayur Sop dan Minyak dari EI002</code> → multi-bahan`,
+    ``,
+    `<b>📊 LAPORAN & REKAP (Admin):</b>`,
+    `<code>rekap</code> | <code>margin</code> — ringkasan KPI margin`,
+    `<code>pdf</code> | <code>cetak spj</code> — dokumen SPJ PDF`,
+    `<code>sheets</code> | <code>buka sheet</code> — link spreadsheet`,
+    ``,
+    `<b>📋 KELOLA PAGU (Admin):</b>`,
+    `<code>pagu</code> — daftar & edit Surat Pesanan (PO)`,
+    `<code>Buat pagu tanggal 2026-09-10 no PO-2026/09/SPPG2-01</code>`,
+    ``,
+    `<b>🎟️ UNDANG STAF (Admin/Super):</b>`,
+    `<code>/invite [Nama] [admin/member]</code>`,
+    ``,
+    `------------------------------------------`,
+    `📗 Panduan lengkap 6-Tab tersedia di Tab <b>00_PANDUAN_OPERASIONAL</b> spreadsheet.`,
+  ];
+
+  await ctx.reply(panduanLines.join("\n"), {
+    parse_mode: "HTML",
+    reply_markup: buildPanduanKeyboard(sheetUrl, bCtx.unitConfig.id),
+  });
 }
 
 export function registerCommonHandlers(bCtx: BotContext) {
@@ -290,6 +339,16 @@ export function registerCommonHandlers(bCtx: BotContext) {
     const args = ctx.match?.trim().split(/\s+/) || [];
     await handleInviteCommand(bCtx, ctx, args[0], args[1]);
   });
+
+  // /panduan | /help | /bantuan — Cheat-sheet ringkas & link panduan lengkap
+  for (const cmd of ["panduan", "help", "bantuan"]) {
+    bCtx.bot.command(cmd, async (ctx) => {
+      if (!ctx.from) return;
+      const isAllowed = await bCtx.userRepo.isAllowed(ctx.from.id);
+      if (!isAllowed) return;
+      await sendPanduan(bCtx, ctx);
+    });
+  }
 
   // Quick Action Buttons Callback Router
   bCtx.bot.callbackQuery(/^qa:(.+)$/, async (ctx) => {

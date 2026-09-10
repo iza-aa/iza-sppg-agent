@@ -28,7 +28,7 @@ import {
 import { enrichReceiptWithPaguContext, getDraftConfirmationReplyMarkup } from "./draft.handler.js";
 import { sendSheets, sendRekap, sendPdf } from "./report.handler.js";
 import { sendRecentTransactions, sendTransactionDetail } from "./transaction.handler.js";
-import { sendMyId, handleInviteCommand } from "./common.handler.js";
+import { sendMyId, handleInviteCommand, sendPanduan } from "./common.handler.js";
 
 export function registerTextRouterHandler(bCtx: BotContext) {
   bCtx.bot.on("message:text", async (ctx) => {
@@ -389,6 +389,10 @@ export function registerTextRouterHandler(bCtx: BotContext) {
 
           case "GET_MY_ID":
             await sendMyId(bCtx, ctx);
+            break;
+
+          case "GET_PANDUAN":
+            await sendPanduan(bCtx, ctx);
             break;
 
           case "LIST_TRANSACTIONS":

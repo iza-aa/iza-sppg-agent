@@ -420,4 +420,19 @@ export function buildPaguPricePickerKeyboard(draftId: string, basePrice: number)
     .text("❌ Batalkan", `v:p1s_c:${draftId}`);
 }
 
-
+/**
+ * Panduan keyboard — displayed after /panduan /help /bantuan command.
+ * Provides 1-tap shortcuts to all major features and link to full guideline sheet.
+ */
+export function buildPanduanKeyboard(sheetUrl: string, unitId: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("✍️ Format Belanja", "qa:format_belanja")
+    .text("📊 Rekap Margin", "qa:rekap")
+    .row()
+    .text("📋 Kelola Pagu", "qa:pagu")
+    .text("🗑️ Hapus Transaksi", "qa:transaksi")
+    .row()
+    .url("📗 Buka Panduan Lengkap (Sheets)", sheetUrl)
+    .row()
+    .text("🏠 Menu Utama", "qa:menu");
+}

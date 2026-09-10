@@ -10,6 +10,7 @@ export type MetaAgentIntent =
   | { type: "GET_PDF" }
   | { type: "GET_SHEETS" }
   | { type: "GET_MY_ID" }
+  | { type: "GET_PANDUAN" }
   | { type: "LIST_TRANSACTIONS"; limit?: number }
   | { type: "DETAIL_TRANSACTION"; transactionId: string }
   | { type: "DELETE_TRANSACTION"; transactionId: string }
@@ -89,6 +90,25 @@ export class MetaAgent {
       lower === "cek akses"
     ) {
       return { type: "GET_MY_ID" };
+    }
+
+    // Panduan / Bantuan / Help
+    if (
+      lower === "panduan" ||
+      lower === "bantuan" ||
+      lower === "help" ||
+      lower === "cara pakai" ||
+      lower === "cara gunakan" ||
+      lower.includes("cara input") ||
+      lower.includes("cara belanja") ||
+      lower.includes("cara catat") ||
+      lower.includes("cara hapus") ||
+      lower.includes("format belanja") ||
+      lower.includes("perintah bot") ||
+      lower.includes("panduan bot") ||
+      lower.includes("bantuan bot")
+    ) {
+      return { type: "GET_PANDUAN" };
     }
 
     // Detail Transaction: e.g. "detail EI002", "cek EI002", "lihat SPPG0126-EI002", "rincian EI002", or standalone code "EI002"

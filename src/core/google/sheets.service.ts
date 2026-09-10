@@ -277,6 +277,10 @@ export class GoogleSheetsService {
     return this.masterSync.ensureMasterDashboardStructure(spreadsheetId, force);
   }
 
+  async ensureGuidelineTab(spreadsheetId: string, unitName?: string, force = false): Promise<void> {
+    return this.clientProvider.ensureGuidelineTab(spreadsheetId, unitName, force);
+  }
+
   async appendMasterAuditLog(entry: MasterAuditLogEntry): Promise<void> {
     return this.masterSync.appendMasterAuditLog(entry);
   }
