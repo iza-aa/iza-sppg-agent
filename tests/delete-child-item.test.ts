@@ -99,4 +99,26 @@ describe("Delete Child Item Intent & Keyboard Tests", () => {
     expect(Buffer.byteLength(yesCallback, "utf8")).toBeLessThanOrEqual(64);
     expect(Buffer.byteLength(noCallback, "utf8")).toBeLessThanOrEqual(64);
   });
+
+  it("should classify hapus pagu item correctly without pagu prefix in itemName", async () => {
+    const res = await metaAgent.classifyAndRoute("hapus pagu ceker ayam dari PO-2026/09/SPPG2-01");
+    expect(res).toEqual({
+      type: "DELETE_ITEM",
+      transactionId: "PO-2026/09/SPPG2-01",
+      itemName: "ceker ayam",
+    });
+  });
+
+  it("should generate inline keyboard for pagu deletion within Telegram 64-byte limit", () => {
+    const kb = buildDeleteChildItemKeyboard("PO-2026/09/SPPG2-01", 6);
+    expect(kb).toBeDefined();
+    const inlineButtons = kb.inline_keyboard[0];
+    expect(inlineButtons).toHaveLength(2);
+
+    const yesCallback = inlineButtons[0].callback_data;
+    const noCallback = inlineButtons[1].callback_data;
+
+    expect(Buffer.byteLength(yesCallback, "utf8")).toBeLessThanOrEqual(64);
+    expect(Buffer.byteLength(noCallback, "utf8")).toBeLessThanOrEqual(64);
+  });
 });

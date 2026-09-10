@@ -164,6 +164,15 @@ export function buildDeleteChildItemKeyboard(expenseId: string, itemIndex: numbe
 }
 
 /**
+ * Confirmation keyboard before deleting a specific child item from Tab 03 (Pagu)
+ */
+export function buildDeletePaguItemKeyboard(orderNo: string, itemIndex: number): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("🗑️ Ya, Hapus Pagu", `v:delpg_yes:${orderNo}:${itemIndex}`)
+    .text("❌ Batalkan", `v:delpg_no:${orderNo}`);
+}
+
+/**
  * Confirmation keyboard before applying an edit to Google Sheets
  */
 export function buildEditConfirmKeyboard(transactionId: string, newAmount: number): InlineKeyboard {

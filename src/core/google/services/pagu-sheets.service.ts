@@ -941,4 +941,323 @@ export class PaguSheetsService {
   }
 
   insertPaguItemToOrder = this.addPaguItemToOrder;
+
+  /**
+   * Searches for a specific child item in 03_RINCIAN_PENDAPATAN by orderNo and itemName
+   */
+  async findPaguChildItem(
+    spreadsheetId: string,
+    orderNo: string,
+    itemName: string
+  ): Promise<PaguChildItemFound> {
+    await this.ensure5TabStructure(spreadsheetId);
+    const client = await this.getClient();
+
+    const cleanOrderNo = (orderNo || "").trim().toLowerCase();
+    const cleanTargetName = (itemName || "").trim().toLowerCase();
+
+    const rincianRes = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A:J`,
+    });
+    const rincianRows = rincianRes.data.values || [];
+
+    const orderRows: Array<{
+      rowIndex: number;
+      itemIndex: number;
+      orderNo: string;
+      transactionId: string;
+      supplier: string;
+      itemName: string;
+      qty: number;
+      unit: string;
+      price: number;
+      total: number;
+      notes: string;
+    }> = [];
+
+    for (let i = 1; i < rincianRows.length; i++) {
+      const row = rincianRows[i];
+      const rowOrderNo = String(row[0] || "").trim();
+      const rowTrxId = String(row[1] || "").trim();
+      const matchesOrder =
+        !cleanOrderNo ||
+        rowOrderNo.toLowerCase() === cleanOrderNo ||
+        rowTrxId.toLowerCase() === cleanOrderNo ||
+        (cleanOrderNo.length >= 4 && (rowOrderNo.toLowerCase().includes(cleanOrderNo) || cleanOrderNo.includes(rowOrderNo.toLowerCase())));
+
+      if (matchesOrder) {
+        const itemIdx = parseInt(String(row[2] || "1"), 10) || 1;
+        const qtyVal = parseCurrencyNumber(row[5]) || 0;
+        const priceVal = parseCurrencyNumber(row[7]) || 0;
+        const totalVal = parseCurrencyNumber(row[8]) || (qtyVal * priceVal);
+        orderRows.push({
+          rowIndex: i + 1,
+          itemIndex: itemIdx,
+          orderNo: rowOrderNo,
+          transactionId: rowTrxId,
+          supplier: String(row[3] || ""),
+          itemName: String(row[4] || ""),
+          qty: qtyVal,
+          unit: String(row[6] || "satuan"),
+          price: priceVal,
+          total: totalVal,
+          notes: String(row[9] || ""),
+        });
+      }
+    }
+
+    if (orderRows.length === 0) {
+      return {
+        found: false,
+        rowIndex: 0,
+        itemIndex: 0,
+        orderNo: orderNo.trim(),
+        transactionId: "-",
+        supplier: "Supplier",
+        itemName,
+        qty: 0,
+        unit: "unit",
+        price: 0,
+        total: 0,
+        notes: "-",
+        isOnlyItemInOrder: false,
+        siblingCount: 0,
+      };
+    }
+
+    let matched = orderRows.find((r) => {
+      const cleanRowName = r.itemName.toLowerCase().trim();
+      return (
+        cleanRowName === cleanTargetName ||
+        cleanRowName.includes(cleanTargetName) ||
+        cleanTargetName.includes(cleanRowName)
+      );
+    });
+
+    if (!matched) {
+      return {
+        found: false,
+        rowIndex: 0,
+        itemIndex: 0,
+        orderNo: orderRows[0]?.orderNo || orderNo.trim(),
+        transactionId: orderRows[0]?.transactionId || "-",
+        supplier: "Supplier",
+        itemName,
+        qty: 0,
+        unit: "unit",
+        price: 0,
+        total: 0,
+        notes: "-",
+        isOnlyItemInOrder: orderRows.length === 1,
+        siblingCount: orderRows.length,
+        otherItems: orderRows.map((r) => r.itemName),
+      };
+    }
+
+    const otherItems = orderRows
+      .filter((r) => r.rowIndex !== matched!.rowIndex)
+      .map((r) => r.itemName);
+
+    return {
+      found: true,
+      rowIndex: matched.rowIndex,
+      itemIndex: matched.itemIndex,
+      orderNo: matched.orderNo,
+      transactionId: matched.transactionId,
+      supplier: matched.supplier,
+      itemName: matched.itemName,
+      qty: matched.qty,
+      unit: matched.unit,
+      price: matched.price,
+      total: matched.total,
+      notes: matched.notes,
+      isOnlyItemInOrder: orderRows.length === 1,
+      siblingCount: orderRows.length,
+      otherItems,
+    };
+  }
+
+  /**
+   * Deletes a specific child item row from 03_RINCIAN_PENDAPATAN, reconciles Tab 06,
+   * renumbers remaining items, and logs to Master Audit Trail.
+   */
+  async deletePaguChildItem(
+    spreadsheetId: string,
+    orderNo: string,
+    itemName: string,
+    deletedBy = "Telegram User"
+  ): Promise<{
+    success: boolean;
+    message: string;
+    deletedItem?: PaguChildItemFound;
+  }> {
+    try {
+      const client = await this.getClient();
+      const foundItem = await this.findPaguChildItem(spreadsheetId, orderNo, itemName);
+
+      if (!foundItem.found) {
+        const otherHint = foundItem.otherItems && foundItem.otherItems.length > 0
+          ? `\n\nBahan yang terdaftar pada ${orderNo}: ${foundItem.otherItems.map(b => `"${b}"`).join(", ")}`
+          : "";
+        return {
+          success: false,
+          message: `Rincian bahan "${itemName}" tidak ditemukan pada pagu ${orderNo}.${otherHint}`,
+        };
+      }
+
+      // 1. Get sheetIds for Tab 03 and Tab 06
+      const meta = await client.spreadsheets.get({ spreadsheetId });
+      const sheetMap = new Map<string, number>();
+      meta.data.sheets?.forEach((s) => {
+        if (s.properties?.title && typeof s.properties?.sheetId === "number") {
+          sheetMap.set(s.properties.title, s.properties.sheetId);
+        }
+      });
+      const rincianSheetId = sheetMap.get(SHEET_NAMES.RINCIAN_PENDAPATAN) ?? SHEET_IDS.RINCIAN_PENDAPATAN;
+      const rekapSheetId = sheetMap.get(SHEET_NAMES.PERBANDINGAN_MARGIN) ?? SHEET_IDS.PERBANDINGAN_MARGIN;
+
+      // 2. Delete row from Tab 03 (03_RINCIAN_PENDAPATAN)
+      await client.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              deleteDimension: {
+                range: {
+                  sheetId: rincianSheetId,
+                  dimension: "ROWS",
+                  startIndex: foundItem.rowIndex - 1, // 0-based
+                  endIndex: foundItem.rowIndex,
+                },
+              },
+            },
+          ],
+        },
+      });
+
+      // 3. Renumber remaining items under foundItem.orderNo in Tab 03
+      const rincianPostRes = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A:C`,
+      });
+      const postRows = rincianPostRes.data.values || [];
+      const cleanMatchedOrder = foundItem.orderNo.trim().toLowerCase();
+
+      const renumberUpdates: { range: string; values: any[][] }[] = [];
+      let nextNo = 1;
+      for (let r = 1; r < postRows.length; r++) {
+        const rowOrd = String(postRows[r][0] || "").trim().toLowerCase();
+        if (rowOrd === cleanMatchedOrder) {
+          const sheetRow = r + 1;
+          renumberUpdates.push({
+            range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!C${sheetRow}`,
+            values: [[nextNo++]],
+          });
+        }
+      }
+      if (renumberUpdates.length > 0) {
+        await client.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            valueInputOption: "USER_ENTERED",
+            data: renumberUpdates,
+          },
+        });
+      }
+
+      // 4. Delete matching row from Tab 06 (06_PERBANDINGAN_MARGIN)
+      const rekapRes = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A:D`,
+      });
+      const rekapRows = rekapRes.data.values || [];
+      const itemCleanName = foundItem.itemName.toLowerCase().trim();
+
+      for (let r = 1; r < rekapRows.length; r++) {
+        const row = rekapRows[r];
+        const rowRef = String(row[0] || "").trim().toLowerCase();
+        const rowName = String(row[3] || "").toLowerCase().trim();
+
+        if (
+          rowRef === cleanMatchedOrder &&
+          (rowName === itemCleanName || rowName.includes(itemCleanName) || itemCleanName.includes(rowName))
+        ) {
+          await client.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+              requests: [
+                {
+                  deleteDimension: {
+                    range: {
+                      sheetId: rekapSheetId,
+                      dimension: "ROWS",
+                      startIndex: r,
+                      endIndex: r + 1,
+                    },
+                  },
+                },
+              ],
+            },
+          });
+          break;
+        }
+      }
+
+      // 5. Update Master Consolidator if applicable
+      if (env.GOOGLE_SHEET_ID_MASTER && spreadsheetId !== env.GOOGLE_SHEET_ID_MASTER) {
+        try {
+          const itemsInOrder = await this.getPaguOrderItems(spreadsheetId, foundItem.orderNo);
+          const newTotal = itemsInOrder.reduce((acc, it) => acc + it.totalAmount, 0);
+          await this.masterSyncService.updateMasterTransactionRow(foundItem.orderNo, { total_amount: newTotal });
+        } catch (_) {}
+      }
+
+      // 6. Record Master Audit Log
+      const unitName = this.clientProvider.getUnitNameFromSpreadsheetId(spreadsheetId);
+      await this.appendMasterAuditLogsBatch([
+        {
+          unitName,
+          editor: `${deletedBy} (Pagu Child Item Deletion)`,
+          sheetTab: SHEET_NAMES.RINCIAN_PENDAPATAN,
+          refId: foundItem.orderNo,
+          columnEdited: `Hapus Bahan Pagu di ${foundItem.orderNo} (Baris ${foundItem.rowIndex}) - ${foundItem.itemName}`,
+          oldValue: `${foundItem.qty} ${foundItem.unit} @ Rp ${foundItem.price} (Total: Rp ${foundItem.total})`,
+          newValue: "[DIHAPUS]",
+          sourceAction: "Pagu Child Item Delete",
+        },
+      ]).catch(() => {});
+
+      return {
+        success: true,
+        message: `Bahan "${foundItem.itemName}" berhasil dihapus dari pagu ${foundItem.orderNo}. Total alokasi pagu berkurang Rp ${foundItem.total.toLocaleString("id-ID")}.`,
+        deletedItem: foundItem,
+      };
+    } catch (err: any) {
+      logger.error({ err: err?.message, spreadsheetId, orderNo, itemName }, "Failed to delete pagu child item");
+      return {
+        success: false,
+        message: `Gagal menghapus bahan pagu: ${err?.message || err}`,
+      };
+    }
+  }
 }
+
+export interface PaguChildItemFound {
+  found: boolean;
+  rowIndex: number;       // 1-based row index in Tab 03
+  itemIndex: number;      // Col C (No Urut Item)
+  orderNo: string;        // Col A
+  transactionId: string;  // Col B
+  supplier: string;       // Col D
+  itemName: string;       // Col E
+  qty: number;            // Col F
+  unit: string;           // Col G
+  price: number;          // Col H
+  total: number;          // Col I
+  notes: string;          // Col J
+  isOnlyItemInOrder: boolean;
+  siblingCount: number;
+  otherItems?: string[];
+}
+

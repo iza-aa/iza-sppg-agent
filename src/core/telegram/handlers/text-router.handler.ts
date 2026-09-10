@@ -23,6 +23,7 @@ import {
   buildEditConfirmKeyboard,
   buildDeleteConfirmKeyboard,
   buildDeleteChildItemKeyboard,
+  buildDeletePaguItemKeyboard,
 } from "../keyboards.js";
 import { enrichReceiptWithPaguContext, getDraftConfirmationReplyMarkup } from "./draft.handler.js";
 import { sendSheets, sendRekap, sendPdf } from "./report.handler.js";
@@ -486,23 +487,132 @@ export function registerTextRouterHandler(bCtx: BotContext) {
               break;
             }
 
-            const targetExpId = intent.transactionId.trim();
+            const targetRef = intent.transactionId.trim();
             const targetItemName = intent.itemName.trim();
+            const isPaguTarget =
+              /\bpagu\b/i.test(text) ||
+              /^PO-/i.test(targetRef) ||
+              /^\d{2}\/\d{2}\/\d{2}\/\d{2}$/.test(targetRef);
 
+            if (isPaguTarget) {
+              const foundPagu = await googleSheetsService.findPaguChildItem(
+                bCtx.unitConfig.spreadsheetId,
+                targetRef,
+                targetItemName
+              );
+
+              if (!foundPagu.found) {
+                const otherHint = foundPagu.otherItems && foundPagu.otherItems.length > 0
+                  ? `\n\n💡 <i>Bahan yang terdaftar pada pagu ${escapeHtml(targetRef || "-")}:</i>\n` +
+                    foundPagu.otherItems.map((b) => `• <b>${escapeHtml(b)}</b>`).join("\n")
+                  : "";
+
+                await ctx.reply(
+                  `❌ Bahan "<b>${escapeHtml(targetItemName)}</b>" tidak ditemukan pada pagu <code>${escapeHtml(targetRef || "-")}</code> di unit <b>${escapeHtml(bCtx.unitConfig.name)}</b>.${otherHint}`,
+                  { parse_mode: "HTML" }
+                );
+                break;
+              }
+
+              state.activeDeleteItem = {
+                expenseId: foundPagu.orderNo,
+                itemName: foundPagu.itemName,
+                itemIndex: foundPagu.itemIndex,
+                rowIndex: foundPagu.rowIndex,
+                qty: foundPagu.qty,
+                unit: foundPagu.unit,
+                price: foundPagu.price,
+                total: foundPagu.total,
+                supplier: foundPagu.supplier,
+              };
+
+              const warningOnlyItem = foundPagu.isOnlyItemInOrder
+                ? `\n⚠️ <b>Catatan:</b> Ini adalah satu-satunya bahan dalam pesanan pagu <code>${escapeHtml(foundPagu.orderNo)}</code>. Total alokasi pesanan ini di Tab 02 akan menjadi Rp 0. Jika ingin membatalkan seluruh pesanan pagu, gunakan: <code>hapus ${escapeHtml(foundPagu.orderNo)}</code>.\n`
+                : "";
+
+              const confirmMsgText = [
+                `🗑️ <b>KONFIRMASI HAPUS BAHAN DARI PAGU RESMI</b>`,
+                `Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>`,
+                `------------------------------------------`,
+                `• <b>Surat Pesanan:</b> <code>${escapeHtml(foundPagu.orderNo)}</code>`,
+                `• <b>Bahan yang Dihapus:</b> <b>${escapeHtml(foundPagu.itemName)}</b>`,
+                `• <b>Alokasi Pagu:</b> ${foundPagu.qty} ${escapeHtml(foundPagu.unit)} @ ${formatRupiah(foundPagu.price)}`,
+                `• <b>Total Pagu:</b> <b>${formatRupiah(foundPagu.total)}</b>`,
+                `• <b>Supplier:</b> ${escapeHtml(foundPagu.supplier || "Supplier")}`,
+                `------------------------------------------`,
+                `📍 Baris bahan ini akan dihapus dari <b>Tab 03_RINCIAN_PENDAPATAN</b>.`,
+                `📉 Total pagu di <b>Tab 02_PAGU_PENERIMAAN</b> otomatis berkurang <b>${formatRupiah(foundPagu.total)}</b>.`,
+                `🔄 Baris evaluasi di <b>Tab 06_PERBANDINGAN_MARGIN</b> akan dihapus.`,
+                warningOnlyItem,
+                `<i>Apakah Anda yakin ingin menghapus bahan ini dari pagu resmi?</i>`,
+              ].filter(Boolean).join("\n");
+
+              const confirmMsg = await ctx.reply(confirmMsgText, {
+                parse_mode: "HTML",
+                reply_markup: buildDeletePaguItemKeyboard(foundPagu.orderNo, foundPagu.itemIndex),
+              });
+              state.activeDraftMsgId = confirmMsg.message_id;
+              break;
+            }
+
+            // Otherwise, Expense Child Item (Tab 05)
             const foundItem = await googleSheetsService.findExpenseChildItem(
               bCtx.unitConfig.spreadsheetId,
-              targetExpId,
+              targetRef,
               targetItemName
             );
 
+            // Fallback: If not found in Tab 05, check Tab 03 just in case
+            if (!foundItem.found) {
+              const fallbackPagu = await googleSheetsService.findPaguChildItem(
+                bCtx.unitConfig.spreadsheetId,
+                targetRef,
+                targetItemName
+              );
+              if (fallbackPagu.found) {
+                state.activeDeleteItem = {
+                  expenseId: fallbackPagu.orderNo,
+                  itemName: fallbackPagu.itemName,
+                  itemIndex: fallbackPagu.itemIndex,
+                  rowIndex: fallbackPagu.rowIndex,
+                  qty: fallbackPagu.qty,
+                  unit: fallbackPagu.unit,
+                  price: fallbackPagu.price,
+                  total: fallbackPagu.total,
+                  supplier: fallbackPagu.supplier,
+                };
+                const confirmMsgText = [
+                  `🗑️ <b>KONFIRMASI HAPUS BAHAN DARI PAGU RESMI</b>`,
+                  `Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>`,
+                  `------------------------------------------`,
+                  `• <b>Surat Pesanan:</b> <code>${escapeHtml(fallbackPagu.orderNo)}</code>`,
+                  `• <b>Bahan yang Dihapus:</b> <b>${escapeHtml(fallbackPagu.itemName)}</b>`,
+                  `• <b>Alokasi Pagu:</b> ${fallbackPagu.qty} ${escapeHtml(fallbackPagu.unit)} @ ${formatRupiah(fallbackPagu.price)}`,
+                  `• <b>Total Pagu:</b> <b>${formatRupiah(fallbackPagu.total)}</b>`,
+                  `• <b>Supplier:</b> ${escapeHtml(fallbackPagu.supplier || "Supplier")}`,
+                  `------------------------------------------`,
+                  `📍 Baris bahan ini akan dihapus dari <b>Tab 03_RINCIAN_PENDAPATAN</b>.`,
+                  `📉 Total pagu di <b>Tab 02_PAGU_PENERIMAAN</b> otomatis berkurang <b>${formatRupiah(fallbackPagu.total)}</b>.`,
+                  `🔄 Baris evaluasi di <b>Tab 06_PERBANDINGAN_MARGIN</b> akan dihapus.`,
+                  `\n<i>Apakah Anda yakin ingin menghapus bahan ini dari pagu?</i>`,
+                ].join("\n");
+                const confirmMsg = await ctx.reply(confirmMsgText, {
+                  parse_mode: "HTML",
+                  reply_markup: buildDeletePaguItemKeyboard(fallbackPagu.orderNo, fallbackPagu.itemIndex),
+                });
+                state.activeDraftMsgId = confirmMsg.message_id;
+                break;
+              }
+            }
+
             if (!foundItem.found) {
               const otherHint = foundItem.otherItems && foundItem.otherItems.length > 0
-                ? `\n\n💡 <i>Bahan yang terdaftar pada transaksi ${escapeHtml(targetExpId || "-")}:</i>\n` +
+                ? `\n\n💡 <i>Bahan yang terdaftar pada transaksi ${escapeHtml(targetRef || "-")}:</i>\n` +
                   foundItem.otherItems.map((b) => `• <b>${escapeHtml(b)}</b>`).join("\n")
                 : "";
 
               await ctx.reply(
-                `❌ Rincian bahan "<b>${escapeHtml(targetItemName)}</b>" tidak ditemukan pada transaksi <code>${escapeHtml(targetExpId || "-")}</code> di unit <b>${escapeHtml(bCtx.unitConfig.name)}</b>.${otherHint}`,
+                `❌ Rincian bahan "<b>${escapeHtml(targetItemName)}</b>" tidak ditemukan pada transaksi <code>${escapeHtml(targetRef || "-")}</code> di unit <b>${escapeHtml(bCtx.unitConfig.name)}</b>.${otherHint}`,
                 { parse_mode: "HTML" }
               );
               break;

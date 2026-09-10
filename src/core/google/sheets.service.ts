@@ -498,6 +498,19 @@ export class GoogleSheetsService {
   ) {
     return this.expense.deleteExpenseChildItem(spreadsheetId, expenseId, itemName, deletedBy);
   }
+
+  async findPaguChildItem(spreadsheetId: string, orderNo: string, itemName: string) {
+    return this.pagu.findPaguChildItem(spreadsheetId, orderNo, itemName);
+  }
+
+  async deletePaguChildItem(
+    spreadsheetId: string,
+    orderNo: string,
+    itemName: string,
+    deletedBy = "Telegram User"
+  ) {
+    return this.pagu.deletePaguChildItem(spreadsheetId, orderNo, itemName, deletedBy);
+  }
 }
 
 export const googleSheetsService = new GoogleSheetsService();

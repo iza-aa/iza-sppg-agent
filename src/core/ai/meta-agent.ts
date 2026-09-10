@@ -109,23 +109,25 @@ export class MetaAgent {
       return { type: "DETAIL_TRANSACTION", transactionId: specificIdInText[1] };
     }
 
-    // Delete Child Item: e.g. "hapus rincian ceker ayam dari EI001", "hapus bahan ceker ayam di EI001", "hapus ceker ayam dari EI001"
+    // Delete Child Item: e.g. "hapus rincian ceker ayam dari EI001", "hapus pagu ceker ayam dari PO-2026/09/SPPG2-01"
     const deleteChildItemMatch = text.match(
-      /\b(?:hapus|delete|batal(?:kan)?)\s+(?:rincian\s+|bahan\s+|item\s+belanja\s+|item\s+)?(.+?)\s+(?:dari|di|pada|ke)\s+(?:transaksi\s+|nota\s+|po\s+)?([A-Za-z0-9_/-]{3,35})\b/i
+      /\b(?:hapus|delete|batal(?:kan)?)\s+(?:rincian\s+|bahan\s+|pagu\s+|item\s+belanja\s+|item\s+)?(.+?)\s+(?:dari|di|pada|ke)\s+(?:transaksi\s+|nota\s+|po\s+|pagu\s+)?([A-Za-z0-9_/-]{3,35})\b/i
     );
     const deleteChildItemInvertedMatch = text.match(
-      /\b(?:hapus|delete|batal(?:kan)?)\s+(?:dari|di|pada|ke)\s+(?:transaksi\s+|nota\s+|po\s+)?([A-Za-z0-9_/-]{3,35})\s+(?:rincian\s+|bahan\s+|item\s+belanja\s+|item\s+)?(.+)\b/i
+      /\b(?:hapus|delete|batal(?:kan)?)\s+(?:dari|di|pada|ke)\s+(?:transaksi\s+|nota\s+|po\s+|pagu\s+)?([A-Za-z0-9_/-]{3,35})\s+(?:rincian\s+|bahan\s+|pagu\s+|item\s+belanja\s+|item\s+)?(.+)\b/i
     );
 
     if (deleteChildItemMatch) {
-      const candidateItem = deleteChildItemMatch[1].trim();
+      let candidateItem = deleteChildItemMatch[1].trim();
       const candidateId = deleteChildItemMatch[2].trim();
+      candidateItem = candidateItem.replace(/^(?:pagu|bahan|rincian|item)\s+/i, "").trim();
       if (candidateItem && candidateId) {
         return { type: "DELETE_ITEM", transactionId: candidateId, itemName: candidateItem };
       }
     } else if (deleteChildItemInvertedMatch) {
       const candidateId = deleteChildItemInvertedMatch[1].trim();
-      const candidateItem = deleteChildItemInvertedMatch[2].trim();
+      let candidateItem = deleteChildItemInvertedMatch[2].trim();
+      candidateItem = candidateItem.replace(/^(?:pagu|bahan|rincian|item)\s+/i, "").trim();
       if (candidateItem && candidateId) {
         return { type: "DELETE_ITEM", transactionId: candidateId, itemName: candidateItem };
       }
@@ -133,10 +135,11 @@ export class MetaAgent {
 
     // Delete Child Item without transaction ID: e.g. "hapus rincian ceker ayam"
     const deleteItemOnlyMatch = text.match(
-      /\b(?:hapus|delete|batal(?:kan)?)\s+(?:rincian\s+|bahan\s+|item\s+belanja\s+|item\s+)(.+)\b/i
+      /\b(?:hapus|delete|batal(?:kan)?)\s+(?:rincian\s+|bahan\s+|pagu\s+|item\s+belanja\s+|item\s+)(.+)\b/i
     );
     if (deleteItemOnlyMatch) {
-      const candidate = deleteItemOnlyMatch[1].trim();
+      let candidate = deleteItemOnlyMatch[1].trim();
+      candidate = candidate.replace(/^(?:pagu|bahan|rincian|item)\s+/i, "").trim();
       const isCode = /^(?:SPPG\d*[-_])?(?:[EI][A-Z]|TRX)\d+$/i.test(candidate) || /^PO-/i.test(candidate);
       if (isCode) {
         return { type: "DELETE_TRANSACTION", transactionId: candidate };
