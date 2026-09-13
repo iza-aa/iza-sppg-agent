@@ -62,7 +62,7 @@ export class SheetsClientProvider {
 
   getUnitNameFromSpreadsheetId(spreadsheetId: string): string {
     if (spreadsheetId === env.GOOGLE_SHEET_ID_PATILA) return "SPPG Patila";
-    if (spreadsheetId === env.GOOGLE_SHEET_ID_UNIT2) return "SPPG Dapur Unit 2";
+    if (spreadsheetId === env.GOOGLE_SHEET_ID_UNIT2) return "SPPG Buangin";
     if (spreadsheetId === env.GOOGLE_SHEET_ID_UNIT3) return "SPPG Dapur Unit 3";
     return "SPPG Unit";
   }

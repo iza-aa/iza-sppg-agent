@@ -173,13 +173,13 @@ export class MasterSyncService {
         ],
         [
           "sppg-unit2",
-          "SPPG Dapur Unit 2",
-          "Wilayah Operasional Unit 2",
+          "SPPG Buangin",
+          "Wilayah Operasional Buangin",
           "AKTIF BEROPERASI",
-          "Admin Dapur Unit 2",
+          "Admin SPPG Buangin",
           "@sppg2bot",
           3000,
-          `=HYPERLINK("https://docs.google.com/spreadsheets/d/${env.GOOGLE_SHEET_ID_UNIT2}/edit"; "Buka Spreadsheet Unit 2")`,
+          `=HYPERLINK("https://docs.google.com/spreadsheets/d/${env.GOOGLE_SHEET_ID_UNIT2}/edit"; "Buka Spreadsheet Buangin")`,
         ],
         [
           "sppg-unit3",
@@ -442,7 +442,7 @@ export class MasterSyncService {
 
     const unitList = [
       { id: env.GOOGLE_SHEET_ID_PATILA, name: "SPPG Patila" },
-      { id: env.GOOGLE_SHEET_ID_UNIT2, name: "SPPG Dapur Unit 2" },
+      { id: env.GOOGLE_SHEET_ID_UNIT2, name: "SPPG Buangin" },
       { id: env.GOOGLE_SHEET_ID_UNIT3, name: "SPPG Dapur Unit 3" },
     ];
 

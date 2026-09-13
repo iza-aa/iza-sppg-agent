@@ -198,7 +198,7 @@ export function buildMultiSheetSelectorKeyboard(currentUnitId?: string): InlineK
 
   kb.url("📊 SPPG Patila (Unit 1)", patilaUrl);
   if (unit2Url) {
-    kb.row().url("🏢 SPPG Dapur Unit 2", unit2Url);
+    kb.row().url("🏢 SPPG Buangin", unit2Url);
   }
   if (unit3Url) {
     kb.row().url("🏢 SPPG Dapur Unit 3", unit3Url);

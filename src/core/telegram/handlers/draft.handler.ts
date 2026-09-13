@@ -1037,7 +1037,7 @@ export function registerDraftHandlers(bCtx: BotContext) {
 
     const promptText =
       draft.action_type === "SPPG_ORDER"
-        ? "Ketik <b>nama unit baru</b> (contoh: <i>SPPG Dapur Unit 2</i>):"
+        ? "Ketik <b>nama unit baru</b> (contoh: <i>SPPG Buangin</i>):"
         : "Ketik <b>nama supplier atau unit baru</b> (contoh: <i>Hj Muliadi</i>):";
 
     const prompt = await ctx.reply(promptText, {

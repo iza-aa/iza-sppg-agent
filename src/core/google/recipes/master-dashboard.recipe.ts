@@ -334,15 +334,15 @@ export function getMasterDashboardValues() {
       `=REPT("█"; ROUND(I10*28)) & REPT("░"; 28-ROUND(I10*28))`,
       ''
     ],
-    // R11: SPPG Dapur Unit 2
+    // R11: SPPG Buangin
     [
       '',
-      'SPPG Dapur Unit 2',
+      'SPPG Buangin',
       '',
       '',
-      `=IFERROR(SUMIFS('02_SEMUA_TRANSAKSI'!$H:$H; '02_SEMUA_TRANSAKSI'!$C:$C; "SPPG Dapur Unit 2"; '02_SEMUA_TRANSAKSI'!$D:$D; "PENGELUARAN"; '02_SEMUA_TRANSAKSI'!$B:$B; ">="&$M$1; '02_SEMUA_TRANSAKSI'!$B:$B; "<="&$M$2); 0)`,
+      `=IFERROR(SUMIFS('02_SEMUA_TRANSAKSI'!$H:$H; '02_SEMUA_TRANSAKSI'!$C:$C; "SPPG Buangin"; '02_SEMUA_TRANSAKSI'!$D:$D; "PENGELUARAN"; '02_SEMUA_TRANSAKSI'!$B:$B; ">="&$M$1; '02_SEMUA_TRANSAKSI'!$B:$B; "<="&$M$2); 0)`,
       '',
-      'SPPG Dapur Unit 2',
+      'SPPG Buangin',
       '=E11',
       `=IFERROR(H11/$H$15; 0)`,
       `=REPT("█"; ROUND(I11*28)) & REPT("░"; 28-ROUND(I11*28))`,

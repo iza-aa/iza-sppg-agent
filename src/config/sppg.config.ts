@@ -20,7 +20,7 @@ export const SPPG_UNITS: SPPGUnitConfig[] = [
   },
   {
     id: "sppg_unit2",
-    name: "SPPG Dapur Unit 2",
+    name: "SPPG Buangin",
     token: env.TELEGRAM_BOT_TOKEN_UNIT2,
     spreadsheetId: env.GOOGLE_SHEET_ID_UNIT2,
     driveFolderId: env.GOOGLE_DRIVE_FOLDER_ID,
