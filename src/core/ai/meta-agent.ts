@@ -188,8 +188,10 @@ export class MetaAgent {
     } else if (deleteChildItemDirectMatch) {
       const candidateRaw = deleteChildItemDirectMatch[1].trim();
       const candidateId = deleteChildItemDirectMatch[2].trim();
+      const isDescriptorOnly = /^(?:transaksi|nota|pendapatan|pengeluaran|pagu|pesanan|belanja|faktur|data|rincian|bahan|item|kode|id)$/i.test(candidateRaw);
+      const containsTrxCode = candidateRaw.split(/\s+/).some((token) => isTrxCode(token));
       const items = extractItemNames(candidateRaw);
-      if (items.length > 0 && candidateId) {
+      if (items.length > 0 && candidateId && !isDescriptorOnly && !containsTrxCode) {
         return {
           type: "DELETE_ITEM",
           transactionId: candidateId,

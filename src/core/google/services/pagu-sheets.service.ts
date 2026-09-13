@@ -1165,7 +1165,12 @@ export class PaguSheetsService {
         !cleanOrderNo ||
         rowOrderNo.toLowerCase() === cleanOrderNo ||
         rowTrxId.toLowerCase() === cleanOrderNo ||
-        (cleanOrderNo.length >= 4 && (rowOrderNo.toLowerCase().includes(cleanOrderNo) || cleanOrderNo.includes(rowOrderNo.toLowerCase())));
+        (cleanOrderNo.length >= 3 && (
+          rowOrderNo.toLowerCase().includes(cleanOrderNo) ||
+          cleanOrderNo.includes(rowOrderNo.toLowerCase()) ||
+          rowTrxId.toLowerCase().includes(cleanOrderNo) ||
+          cleanOrderNo.includes(rowTrxId.toLowerCase())
+        ));
 
       if (matchesOrder) {
         const itemIdx = parseInt(String(row[2] || "1"), 10) || 1;
@@ -1358,10 +1363,12 @@ export class PaguSheetsService {
       for (let r = 1; r < rekapRows.length; r++) {
         const row = rekapRows[r];
         const rowRef = String(row[0] || "").trim().toLowerCase();
+        const rowTrx = String(row[1] || "").trim().toLowerCase();
+        const cleanMatchedTrx = foundItem.transactionId ? foundItem.transactionId.trim().toLowerCase() : "";
         const rowName = String(row[5] || "").toLowerCase().trim();
 
         if (
-          rowRef === cleanMatchedOrder &&
+          (rowRef === cleanMatchedOrder || (cleanMatchedTrx && rowTrx === cleanMatchedTrx)) &&
           (rowName === itemCleanName || rowName.includes(itemCleanName) || itemCleanName.includes(rowName))
         ) {
           await client.spreadsheets.batchUpdate({
