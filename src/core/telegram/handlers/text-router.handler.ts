@@ -1232,7 +1232,8 @@ export function registerTextRouterHandler(bCtx: BotContext) {
             const isPaguTarget =
               /\bpagu\b/i.test(text) ||
               /^PO-/i.test(targetRef) ||
-              /^\d{2}\/\d{2}\/\d{2}\/\d{2}$/.test(targetRef);
+              /^\d{2}\/\d{2}\/\d{2}\/\d{2}$/.test(targetRef) ||
+              /^(?:SPPG\d*[-_])?I[A-Z]\d+$/i.test(targetRef);
 
             // MULTI-ITEM DELETION BRANCH (2+ Items)
             if (targetNames.length > 1) {
