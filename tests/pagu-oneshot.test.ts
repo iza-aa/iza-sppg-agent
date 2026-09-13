@@ -73,6 +73,20 @@ describe("1-Shot Conversational Pagu Modification", () => {
       expect(result?.supplier).toBe("CV Sayur Segar");
     });
 
+    it("should parse addition without supplier leaving supplier undefined", () => {
+      const text = "Tambahkan telur ayam 20 rak 55rb ke pagu ii001";
+      const result = staticParsePaguModification(text);
+
+      expect(result).not.toBeNull();
+      expect(result?.orderRef?.toLowerCase()).toBe("ii001");
+      expect(result?.actionIntent).toBe("ADD");
+      expect(result?.newItemName?.toLowerCase()).toBe("telur ayam");
+      expect(result?.qty).toBe(20);
+      expect(result?.unit).toBe("rak");
+      expect(result?.price).toBe(55000);
+      expect(result?.supplier).toBeUndefined();
+    });
+
     it("should return null for non-pagu or non-modification text", () => {
       expect(staticParsePaguModification("rekap")).toBeNull();
       expect(staticParsePaguModification("halo apa kabar?")).toBeNull();

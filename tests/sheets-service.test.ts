@@ -95,18 +95,22 @@ describe("Google Sheets 5-Tab Engine", () => {
   it("should verify 6-Tab operational constants in sheets-recipes", async () => {
     const { SHEET_NAMES, SHEET_IDS } = await import("../src/core/google/sheets-recipes.js");
     expect(SHEET_NAMES.DASHBOARD).toBe("01_DASHBOARD");
-    expect(SHEET_NAMES.PAGU_PENERIMAAN).toBe("02_PAGU_PENERIMAAN");
+    expect(SHEET_NAMES.PENDAPATAN).toBe("02_PENDAPATAN");
     expect(SHEET_NAMES.RINCIAN_PENDAPATAN).toBe("03_RINCIAN_PENDAPATAN");
-    expect(SHEET_NAMES.PAGU_PENGELUARAN).toBe("04_PAGU_PENGELUARAN");
+    expect(SHEET_NAMES.PENGELUARAN).toBe("04_PENGELUARAN");
     expect(SHEET_NAMES.RINCIAN_PENGELUARAN).toBe("05_RINCIAN_PENGELUARAN");
-    expect(SHEET_NAMES.PERBANDINGAN_MARGIN).toBe("06_PERBANDINGAN_MARGIN");
-    expect(SHEET_NAMES.MASTER_DATA).toBe("07_MASTER_DATA");
+    expect(SHEET_NAMES.MARGIN).toBe("06_MARGIN");
+    expect(SHEET_NAMES.LOG_AKTIVITAS).toBe("07_AKTIVITAS");
+    expect(SHEET_NAMES.MASTER_DATA).toBe("08_MASTER_DATA");
 
     // Backward compatibility aliases
-    expect(SHEET_NAMES.PAGU_RINGKASAN).toBe("02_PAGU_PENERIMAAN");
+    expect(SHEET_NAMES.PAGU_PENERIMAAN).toBe("02_PENDAPATAN");
+    expect(SHEET_NAMES.PAGU_PENGELUARAN).toBe("04_PENGELUARAN");
+    expect(SHEET_NAMES.PERBANDINGAN_MARGIN).toBe("06_MARGIN");
+    expect(SHEET_NAMES.PAGU_RINGKASAN).toBe("02_PENDAPATAN");
     expect(SHEET_NAMES.PAGU_RINCIAN).toBe("03_RINCIAN_PENDAPATAN");
-    expect(SHEET_NAMES.PENGELUARAN_SUPPLIER).toBe("04_PAGU_PENGELUARAN");
-    expect(SHEET_NAMES.REKAP_MARGIN).toBe("06_PERBANDINGAN_MARGIN");
+    expect(SHEET_NAMES.PENGELUARAN_SUPPLIER).toBe("04_PENGELUARAN");
+    expect(SHEET_NAMES.REKAP_MARGIN).toBe("06_MARGIN");
 
     expect(SHEET_IDS.DASHBOARD).toBe(1001);
     expect(SHEET_IDS.PAGU_PENERIMAAN).toBe(1002);
@@ -114,7 +118,8 @@ describe("Google Sheets 5-Tab Engine", () => {
     expect(SHEET_IDS.PAGU_PENGELUARAN).toBe(1004);
     expect(SHEET_IDS.RINCIAN_PENGELUARAN).toBe(1005);
     expect(SHEET_IDS.PERBANDINGAN_MARGIN).toBe(1006);
-    expect(SHEET_IDS.MASTER_DATA).toBe(1007);
+    expect(SHEET_IDS.LOG_AKTIVITAS).toBe(1007);
+    expect(SHEET_IDS.MASTER_DATA).toBe(1008);
   });
 
   it("should verify Telegram UI drill-down card and keyboard", async () => {
@@ -184,7 +189,7 @@ describe("Google Sheets 5-Tab Engine", () => {
     };
 
     expect(mockDetail03.isProtected).toBe(true);
-    expect(mockDetail03.sheetName).toBe("03_RINCIAN_PENDAPATAN");
+    expect(mockDetail03.sheetName).toBe(SHEET_NAMES.RINCIAN_PENDAPATAN);
 
     // Mock detail object representing a row found in Tab 05
     const mockDetail05 = {
@@ -197,7 +202,7 @@ describe("Google Sheets 5-Tab Engine", () => {
     };
 
     expect(mockDetail05.isProtected).toBe(true);
-    expect(mockDetail05.sheetName).toBe("05_RINCIAN_PENGELUARAN");
+    expect(mockDetail05.sheetName).toBe(SHEET_NAMES.RINCIAN_PENGELUARAN);
   });
 
   it("should render partial fulfillment indicator in supplier expense draft card", async () => {
@@ -303,6 +308,98 @@ describe("Google Sheets 5-Tab Engine", () => {
     it("should export findTransactionById alias on GoogleSheetsService", () => {
       expect(typeof googleSheetsService.findTransactionById).toBe("function");
       expect(googleSheetsService.findTransactionById).toBe(googleSheetsService.getTransactionDetail);
+    });
+
+    it("should have correct standardized headers for Mazhab Eksekutif (Penanggung Jawab, Pengguna, and Log Aktivitas)", async () => {
+      const { getOperationalDashboardValues } = await import("../src/core/google/recipes/operational-dashboard.recipe.js");
+      const values = getOperationalDashboardValues("Unit Test");
+
+      // Tab 02: 10 columns (Mazhab Eksekutif: Col H / index 7 is Penanggung Jawab, Col I / index 8 is Waktu Input)
+      expect(values.tabPaguPenerimaanHeaders[0][7]).toBe("Penanggung Jawab");
+      expect(values.tabPaguPenerimaanHeaders[0][8]).toBe("Waktu Input");
+      expect(values.tabPaguPenerimaanHeaders[0][2]).toBe("Tanggal");
+      expect(values.tabPaguPenerimaanHeaders[0][3]).toBe("Jumlah Bahan");
+      expect(values.tabPaguPenerimaanHeaders[0][5]).toBe("Total Pendapatan");
+      expect(values.tabPaguPenerimaanHeaders[0].length).toBe(10);
+
+      // Tab 03: 12 columns (Mazhab Eksekutif: Col H / index 7 is Harga Satuan, Col J / index 9 is Pengguna, Col K / index 10 is Waktu Input)
+      expect(values.tabRincianPendapatanHeaders[0][7]).toBe("Harga Satuan");
+      expect(values.tabRincianPendapatanHeaders[0][9]).toBe("Pengguna");
+      expect(values.tabRincianPendapatanHeaders[0][10]).toBe("Waktu Input");
+      expect(values.tabRincianPendapatanHeaders[0].length).toBe(12);
+
+      // Tab 04: 12 columns (Mazhab Eksekutif: Col D / index 3 is Tanggal, Col G / index 6 is Total Tagihan, Col H / index 7 is Metode, Col J / index 9 is Pengguna)
+      expect(values.tabPaguPengeluaranHeaders[0][3]).toBe("Tanggal");
+      expect(values.tabPaguPengeluaranHeaders[0][6]).toBe("Total Tagihan");
+      expect(values.tabPaguPengeluaranHeaders[0][7]).toBe("Metode");
+      expect(values.tabPaguPengeluaranHeaders[0][9]).toBe("Pengguna");
+      expect(values.tabPaguPengeluaranHeaders[0][10]).toBe("Waktu Input");
+      expect(values.tabPaguPengeluaranHeaders[0].length).toBe(12);
+
+      // Tab 05: 13 columns (Mazhab Eksekutif: Col I / index 8 is Harga Satuan, Col K / index 10 is Pengguna, Col L / index 11 is Waktu Input)
+      expect(values.tabRincianPengeluaranHeaders[0][8]).toBe("Harga Satuan");
+      expect(values.tabRincianPengeluaranHeaders[0][10]).toBe("Pengguna");
+      expect(values.tabRincianPengeluaranHeaders[0][11]).toBe("Waktu Input");
+      expect(values.tabRincianPengeluaranHeaders[0].length).toBe(13);
+
+      // Tab 08: 9 columns
+      expect(values.tabLogAktivitasHeaders[0]).toEqual([
+        "Timestamp",
+        "User ID",
+        "Pengguna",
+        "Role",
+        "Tipe Media",
+        "Pesan Pengguna",
+        "Aksi Sistem",
+        "ID Ref",
+        "Status",
+      ]);
+
+      // Dashboard: 52 rows (including 20 activity log rows)
+      expect(values.valuesDashboard.length).toBe(52);
+      expect(values.valuesDashboard[30][1]).toBe("LOG AKTIVITAS BOT & OPERASIONAL TERAKHIR");
+      expect(values.valuesDashboard[31][1]).toBe("Waktu");
+      expect(values.valuesDashboard[31][2]).toBe("Pengguna");
+      expect(values.valuesDashboard[31][3]).toBe("Tipe");
+      expect(values.valuesDashboard[31][4]).toBe("Pesan Pengguna");
+      expect(values.valuesDashboard[31][7]).toBe("Aksi & Respon Sistem");
+      expect(values.valuesDashboard[31][10]).toBe("Status");
+    });
+
+    it("should properly queue and flush bot activity log via BotActivityLoggerService", async () => {
+      const { BotActivityLoggerService } = await import("../src/core/google/services/bot-activity-logger.service.js");
+      const appendedRows: any[] = [];
+      const mockProvider = {
+        appendRowsSafely: async (spreadsheetId: string, sheetName: string, rows: any[][]) => {
+          appendedRows.push({ spreadsheetId, sheetName, rows });
+          return 2;
+        },
+      } as any;
+
+      const logger = new BotActivityLoggerService(mockProvider);
+      logger.logActivity("test-sheet-id", {
+        userId: 12345,
+        userName: "Heizaaa",
+        role: "ADMIN",
+        mediaType: "Teks",
+        userMessage: "Beli Beras 10kg",
+        systemAction: "Draf Belanja Dibuat",
+        refId: "EXP-001",
+        status: "SUKSES",
+      });
+
+      await logger.flush();
+      expect(appendedRows.length).toBe(1);
+      expect(appendedRows[0].spreadsheetId).toBe("test-sheet-id");
+      expect(appendedRows[0].sheetName).toBe("07_AKTIVITAS");
+      expect(appendedRows[0].rows[0][1]).toBe("12345");
+      expect(appendedRows[0].rows[0][2]).toBe("Heizaaa");
+      expect(appendedRows[0].rows[0][3]).toBe("ADMIN");
+      expect(appendedRows[0].rows[0][4]).toBe("Teks");
+      expect(appendedRows[0].rows[0][5]).toBe("Beli Beras 10kg");
+      expect(appendedRows[0].rows[0][6]).toBe("Draf Belanja Dibuat");
+      expect(appendedRows[0].rows[0][7]).toBe("EXP-001");
+      expect(appendedRows[0].rows[0][8]).toBe("SUKSES");
     });
   });
 });

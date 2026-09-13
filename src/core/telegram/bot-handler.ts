@@ -5,6 +5,7 @@ import { UserRepository } from "../db/repositories/user.repository.js";
 import { PendingActionRepository } from "../db/repositories/pending-action.repository.js";
 import { logger } from "../utils/logger.js";
 import { escapeHtml, cleanMarkdownToTelegramHtml } from "./formatter.js";
+import { googleSheetsService } from "../google/sheets.service.js";
 import {
   type BotContext,
   type UserInteractionState,
@@ -57,12 +58,15 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     activeKeyboardMessages.get(chatId)!.add(msgId);
   }
 
-  async function clearAllActiveKeyboards(chatId?: number) {
+  async function clearAllActiveKeyboards(chatId?: number, preserveMsgIds: number[] = []) {
     if (!chatId) return;
     const set = activeKeyboardMessages.get(chatId);
     if (set && set.size > 0) {
-      const ids = Array.from(set);
-      set.clear();
+      const preserveSet = new Set(preserveMsgIds);
+      const ids = Array.from(set).filter((id) => !preserveSet.has(id));
+      for (const id of ids) {
+        set.delete(id);
+      }
       await Promise.all(
         ids.map((msgId) =>
           bot.api.editMessageReplyMarkup(chatId, msgId, {
@@ -73,8 +77,15 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     }
   }
 
-  // Automatic API Transformer: whenever bot sends/edits ANY message with inline_keyboard, track it!
+  // Automatic API Transformer: whenever bot sends/edits ANY message:
+  // 1. Disable link preview by default to prevent desktop bubble squeezing
+  // 2. Track inline_keyboard messages to clear them when needed
   bot.api.config.use(async (prev, method, payload, signal) => {
+    if (method === "sendMessage" || method === "editMessageText") {
+      if (payload && !(payload as any).link_preview_options) {
+        (payload as any).link_preview_options = { is_disabled: true };
+      }
+    }
     const res = await prev(method, payload, signal);
     try {
       if (
@@ -106,10 +117,16 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     return next();
   });
 
-  // Global Middleware 2: Jika user memutuskan chat ketik, kirim foto, nota, atau voice note, SEMUA tombol lama langsung hilang!
+  // Global Middleware 2: Jika user memutuskan chat ketik, kirim foto, nota, atau voice note, tombol menu lama hilang, tapi draf yang masih PENDING tetap aman!
   bot.on("message", async (ctx, next) => {
     if (ctx.chat?.id) {
-      await clearAllActiveKeyboards(ctx.chat.id);
+      const userId = ctx.from?.id;
+      const state = userId ? userStates.get(userId) : undefined;
+      const preserve: number[] = [];
+      if (state?.activeDraftMsgId) {
+        preserve.push(state.activeDraftMsgId);
+      }
+      await clearAllActiveKeyboards(ctx.chat.id, preserve);
     }
     return next();
   });
@@ -175,22 +192,104 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
   // Button Hygiene Helper: Remove obsolete inline keyboards on chat or action transition
   async function clearObsoleteKeyboards(ctx: Context, state?: UserInteractionState) {
     if (!ctx.chat) return;
-    await clearAllActiveKeyboards(ctx.chat.id);
+    const preserve: number[] = [];
+    if (state?.activeDraftMsgId) {
+      preserve.push(state.activeDraftMsgId);
+    }
+    await clearAllActiveKeyboards(ctx.chat.id, preserve);
     if (state && state.activeQuickActionMsgId) {
       await bot.api.editMessageReplyMarkup(ctx.chat.id, state.activeQuickActionMsgId, {
         reply_markup: { inline_keyboard: [] },
       }).catch(() => {});
       state.activeQuickActionMsgId = undefined;
     }
-    if (state && state.activeDraftMsgId && state.activeDraftId) {
-      const draft = await pendingRepo.getById(state.activeDraftId);
-      if (draft && draft.status === "PENDING") {
-        await bot.api.editMessageReplyMarkup(ctx.chat.id, state.activeDraftMsgId, {
-          reply_markup: { inline_keyboard: [] },
-        }).catch(() => {});
+  }
+
+  // Bot Activity Logging Helper
+  async function logActivity(
+    ctx: Context,
+    details: {
+      mediaType?: string;
+      userMessage?: string;
+      systemAction: string;
+      refId?: string;
+      status?: "SUKSES" | "GAGAL" | "PENDING" | "DITOLAK" | string;
+    }
+  ) {
+    try {
+      (ctx as any)._activityLogged = true;
+      const userId = ctx.from?.id || 0;
+      const fullName = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ");
+      const userName = fullName || ctx.from?.username || (userId === 7546537134 ? "Heizaaa" : "Pengguna");
+      let role = "-";
+      if (userId) {
+        const u = await userRepo.getUser(userId).catch(() => null);
+        if (u?.role) role = u.role.toUpperCase();
       }
+
+      let mediaType = details.mediaType;
+      if (!mediaType) {
+        if (ctx.callbackQuery) mediaType = "Tombol";
+        else if (ctx.message?.photo) mediaType = "Foto Nota";
+        else if (ctx.message?.voice) mediaType = "Voice Note";
+        else if (ctx.message?.document) mediaType = "Dokumen";
+        else mediaType = "Teks";
+      }
+
+      let userMsg = details.userMessage;
+      if (!userMsg) {
+        if (ctx.callbackQuery) userMsg = `Klik [${ctx.callbackQuery.data}]`;
+        else if (ctx.message?.photo) userMsg = ctx.message.caption || "[Foto Nota]";
+        else if (ctx.message?.voice) userMsg = "[Voice Note]";
+        else if (ctx.message?.document) userMsg = ctx.message.caption || `[Dokumen: ${ctx.message.document.file_name || ""}]`;
+        else if (ctx.message?.text) userMsg = ctx.message.text;
+        else userMsg = "-";
+      }
+
+      googleSheetsService.logBotActivity(unitConfig.spreadsheetId, {
+        userId,
+        userName,
+        role,
+        mediaType,
+        userMessage: userMsg,
+        systemAction: details.systemAction,
+        refId: details.refId || "-",
+        status: details.status || "SUKSES",
+      });
+    } catch (err: any) {
+      logger.warn({ err: err?.message || err }, "Error recording bot activity log");
     }
   }
+
+  // Global Middleware 3: Automatic activity logger fallback for unlogged user interactions
+  bot.use(async (ctx, next) => {
+    await next();
+    if (!(ctx as any)._activityLogged && ctx.from && !ctx.from.is_bot) {
+      if (ctx.callbackQuery) {
+        // Ignore internal wizard / draft callbacks (v:*) from creating duplicate fallback log rows
+        if (ctx.callbackQuery.data?.startsWith("v:")) return;
+        await logActivity(ctx, {
+          mediaType: "Tombol",
+          systemAction: `Akses Menu [${ctx.callbackQuery.data}]`,
+          status: "SUKSES",
+        });
+      } else if (ctx.message) {
+        const text = ctx.message.text || ctx.message.caption || "";
+        if (text.startsWith("/")) {
+          await logActivity(ctx, {
+            mediaType: "Teks",
+            systemAction: `Perintah ${text.split(" ")[0]} dijalankan`,
+            status: "SUKSES",
+          });
+        } else if (text) {
+          await logActivity(ctx, {
+            systemAction: "Pesan diproses bot",
+            status: "SUKSES",
+          });
+        }
+      }
+    }
+  });
 
   // Assemble Bot Context
   const bCtx: BotContext = {
@@ -215,6 +314,9 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     sendRecentTransactions: (ctx: Context, limit?: number) => sendRecentTransactions(bCtx, ctx, limit),
     sendTransactionDetail: (ctx: Context, transactionId: string) => sendTransactionDetail(bCtx, ctx, transactionId),
     sendPaguOrders: (ctx: Context) => sendPaguOrders(bCtx, ctx),
+    logActivity: (ctx: Context, details: any) => logActivity(ctx, details),
+    updateActivityStatus: (refId: string, newStatus: string, updatedAction?: string, newUserMessage?: string) =>
+      googleSheetsService.updateBotActivityStatus(unitConfig.spreadsheetId, refId, newStatus, updatedAction, newUserMessage),
   };
 
   // Register Handlers

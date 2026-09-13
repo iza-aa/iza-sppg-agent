@@ -44,7 +44,7 @@ export class MarginSheetsService {
     try {
       const res = await client.spreadsheets.values.get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.REKAP_MARGIN}'!A2:M`,
+        range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A2:O`,
       });
       const rows = res.data?.values || [];
       const cleanItem = itemName.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -52,16 +52,20 @@ export class MarginSheetsService {
 
       for (let rIdx = 0; rIdx < rows.length; rIdx++) {
         const row = rows[rIdx];
-        if (!row || !row[3]) continue;
-        const rowItem = String(row[3]).toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (!row) continue;
+        const rawItem = String(row[5] || row[3] || "");
+        if (!rawItem) continue;
+        const rowItem = rawItem.toLowerCase().replace(/[^a-z0-9]/g, "");
         if (!rowItem.includes(cleanItem) && !cleanItem.includes(rowItem)) continue;
 
-        const targetQty = parseCurrencyNumber(row[4]);
-        const unit = String(row[5] || "").trim();
-        const paguPrice = parseCurrencyNumber(row[6]);
-        const paguTotal = parseCurrencyNumber(row[7]);
-        const fulfilledTotal = parseCurrencyNumber(row[9]);
-        const status = String(row[12] || "").trim();
+        const is15Col = row.length >= 15 || row[14] !== undefined;
+        const targetQty = parseCurrencyNumber(is15Col ? row[6] : row[4]);
+        const unit = String((is15Col ? row[7] : row[5]) || "").trim();
+        const paguPrice = parseCurrencyNumber(is15Col ? row[8] : row[6]);
+        const paguTotal = parseCurrencyNumber(is15Col ? row[9] : row[7]);
+        const invoicePrice = parseCurrencyNumber(is15Col ? row[10] : row[8]);
+        const fulfilledTotal = parseCurrencyNumber(is15Col ? row[11] : row[9]);
+        const status = String((is15Col ? row[14] : row[12]) || "").trim();
 
         // Extract already fulfilled quantity
         let fulfilledQty = 0;
@@ -70,8 +74,8 @@ export class MarginSheetsService {
           fulfilledQty = parseFloat(m[1]) || 0;
         } else if (status.includes("MENUNGGU INVOICE") || !fulfilledTotal) {
           fulfilledQty = 0;
-        } else if (row[8] && parseCurrencyNumber(row[8]) > 0) {
-          fulfilledQty = Math.round(fulfilledTotal / parseCurrencyNumber(row[8]));
+        } else if (invoicePrice > 0) {
+          fulfilledQty = Math.round(fulfilledTotal / invoicePrice);
         }
 
         const remainingQty = targetQty > 0 ? Math.max(0, targetQty - fulfilledQty) : 0;
@@ -85,9 +89,9 @@ export class MarginSheetsService {
           candidates.push({
             rowIndex: rIdx + 2,
             sppg_ref_no: String(row[0] || "").trim(),
-            order_date: String(row[1] || "").trim(),
-            supplier_name: String(row[2] || "").trim(),
-            item_name: String(row[3] || "").trim(),
+            order_date: String((is15Col ? row[3] : row[1]) || "").trim(),
+            supplier_name: String((is15Col ? row[4] : row[2]) || "").trim(),
+            item_name: rawItem.trim(),
             target_qty: targetQty,
             unit,
             pagu_price: paguPrice,
@@ -102,7 +106,7 @@ export class MarginSheetsService {
 
       return candidates;
     } catch (err: any) {
-      logger.warn({ err: err?.message || err }, "Error searching Pagu candidates in 05_REKAP_MARGIN");
+      logger.warn({ err: err?.message || err }, "Error searching Pagu candidates in 06_PERBANDINGAN_MARGIN");
       return [];
     }
   }
@@ -122,30 +126,31 @@ export class MarginSheetsService {
     try {
       const rekapRes = await client.spreadsheets.values.get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A2:G`,
+        range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A2:I`,
       });
       const rekapRows = rekapRes.data.values || [];
       const cleanOrder = orderNo.trim();
       const cleanOrigName = origItemName.toLowerCase().trim();
 
       // Column mapping from Tab 03 (colIndex 0-based) to Tab 06 (letter)
-      // colIndex 3 (Col D Tab 03: Target Supplier) -> Col C Tab 06
-      // colIndex 4 (Col E Tab 03: Uraian Bahan)    -> Col D Tab 06
-      // colIndex 5 (Col F Tab 03: Kuantitas)       -> Col E Tab 06
-      // colIndex 6 (Col G Tab 03: Satuan)          -> Col F Tab 06
-      // colIndex 7 (Col H Tab 03: Harga Pagu)      -> Col G Tab 06
+      // Tab 03:
+      // colIndex 3 (Col D Tab 03: Uraian Bahan)    -> Col F Tab 06
+      // colIndex 4 (Col E Tab 03: Target Supplier) -> Col E Tab 06
+      // colIndex 5 (Col F Tab 03: Kuantitas)       -> Col G Tab 06
+      // colIndex 6 (Col G Tab 03: Satuan)          -> Col H Tab 06
+      // colIndex 7 (Col H Tab 03: Harga Pagu)      -> Col I Tab 06
       let targetColLetter = "";
-      if (colIndex === 3) targetColLetter = "C";
-      else if (colIndex === 4) targetColLetter = "D";
-      else if (colIndex === 5) targetColLetter = "E";
-      else if (colIndex === 6) targetColLetter = "F";
-      else if (colIndex === 7) targetColLetter = "G";
+      if (colIndex === 3) targetColLetter = "F";
+      else if (colIndex === 4) targetColLetter = "E";
+      else if (colIndex === 5) targetColLetter = "G";
+      else if (colIndex === 6) targetColLetter = "H";
+      else if (colIndex === 7) targetColLetter = "I";
       else return false;
 
       for (let idx = 0; idx < rekapRows.length; idx++) {
         const r = rekapRows[idx];
         const rOrder = String(r[0] || "").trim();
-        const rItem = String(r[3] || "").toLowerCase().trim();
+        const rItem = String(r[5] || r[3] || "").toLowerCase().trim();
 
         if (rOrder === cleanOrder && (rItem === cleanOrigName || cleanOrigName.includes(rItem) || rItem.includes(cleanOrigName))) {
           const rekapRowNum = idx + 2;
@@ -181,20 +186,21 @@ export class MarginSheetsService {
     newValue: any
   ): Promise<boolean> {
     // Column mapping from Tab 05 (colIndex 0-based) to Tab 06 (letter)
-    // colIndex 7 (Col H Tab 05: Harga Satuan Invoice)        -> Col I Tab 06
-    // colIndex 8 (Col I Tab 05: Total Belanja)               -> Col J Tab 06
-    // NOTE: We NEVER overwrite Col C (Supplier) or Col D (Uraian Bahan) in Tab 06
+    // Tab 05:
+    // colIndex 8 (Col I Tab 05: Harga Satuan Invoice)        -> Col K Tab 06
+    // colIndex 9 (Col J Tab 05: Total Belanja)               -> Col L Tab 06
+    // NOTE: We NEVER overwrite Col E (Supplier) or Col F (Uraian Bahan) in Tab 06
     // because they are strictly Pagu definitions from Tab 03, not expense items.
     let targetColLetter = "";
-    if (colIndex === 7) targetColLetter = "I";
-    else if (colIndex === 8) targetColLetter = "J";
+    if (colIndex === 8) targetColLetter = "K";
+    else if (colIndex === 9) targetColLetter = "L";
     else return false;
 
     const client = await this.getClient();
     try {
       const rekapRes = await client.spreadsheets.values.get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A2:J`,
+        range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A2:L`,
       });
       const rekapRows = rekapRes.data.values || [];
       const cleanOrder = orderNo.trim();
@@ -203,7 +209,7 @@ export class MarginSheetsService {
       for (let idx = 0; idx < rekapRows.length; idx++) {
         const r = rekapRows[idx];
         const rOrder = String(r[0] || "").trim();
-        const rItem = String(r[3] || "").toLowerCase().trim();
+        const rItem = String(r[5] || r[3] || "").toLowerCase().trim();
 
         if (
           (!cleanOrder || cleanOrder === "-" || rOrder === cleanOrder) &&
@@ -217,16 +223,16 @@ export class MarginSheetsService {
             requestBody: { values: [[newValue]] },
           });
 
-          // Also update status formula if Total Belanja (Col J) changed
-          if (targetColLetter === "J") {
+          // Also update status formula if Total Belanja (Col L) changed
+          if (targetColLetter === "L") {
             const numVal = parseCurrencyNumber(newValue);
             const statusFormula =
               numVal <= 0
                 ? "🟡 MENUNGGU INVOICE"
-                : `=IF(K${rekapRowNum}>0; "🟢 HEMAT"; IF(K${rekapRowNum}=0; "🟢 PAS"; "🔴 OVER BUDGET"))`;
+                : `=IF(L${rekapRowNum}=""; "🟡 MENUNGGU INVOICE"; IF(M${rekapRowNum}>0; "🟢 HEMAT"; IF(M${rekapRowNum}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`;
             await client.spreadsheets.values.update({
               spreadsheetId,
-              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!M${rekapRowNum}`,
+              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!O${rekapRowNum}`,
               valueInputOption: "USER_ENTERED",
               requestBody: { values: [[statusFormula]] },
             });

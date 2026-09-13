@@ -62,17 +62,17 @@ export function renderPaguOneShotCard(draft: PaguOneShotDraft, unitName: string)
     return [
       `📋 <b>KONFIRMASI PENAMBAHAN RINCIAN BELANJA (PENGELUARAN)</b>`,
       `Unit: <b>${escapeHtml(unitName)}</b>`,
-      draft.orderNo && draft.orderNo !== "-" ? `PO Terkait: <code>${escapeHtml(draft.orderNo)}</code>` : "",
+      draft.orderNo && draft.orderNo !== "-" ? `No SPPG Ref: <code>${escapeHtml(draft.orderNo)}</code>` : "",
       `------------------------------------------`,
-      `• <b>Transaksi Belanja:</b> <code>${escapeHtml(draft.orderLabel || draft.expenseId || draft.orderNo)}</code>`,
-      `• <b>Bahan Belanja:</b> <b>${escapeHtml(draft.itemName)}</b>`,
+      `• <b>ID Transaksi Belanja:</b> <code>${escapeHtml(draft.orderLabel || draft.expenseId || draft.orderNo)}</code>`,
+      `• <b>Uraian Bahan Belanja:</b> <b>${escapeHtml(draft.itemName)}</b>`,
       `• <b>Kuantitas:</b> <b>${draft.qty} ${escapeHtml(draft.unit)}</b>`,
-      `• <b>Harga Satuan:</b> <b>${formatRupiah(draft.price)}</b>`,
+      `• <b>Harga Satuan Invoice:</b> <b>${formatRupiah(draft.price)}</b>`,
       `• <b>Total Belanja:</b> <b>${formatRupiah(newSubtotal)}</b>`,
-      draft.supplier ? `• <b>Supplier:</b> <b>${escapeHtml(draft.supplier)}</b>` : "",
+      draft.supplier ? `• <b>Nama Supplier:</b> <b>${escapeHtml(draft.supplier)}</b>` : "",
       `------------------------------------------`,
       `📍 <i>Bahan akan disisipkan rapi mengelompok di bawah transaksi ${escapeHtml(draft.expenseId || draft.orderNo)} pada Tab 05 (baris di bawahnya bergeser otomatis).</i>`,
-      `📈 <i>Total nominal tagihan di Tab 04_PAGU_PENGELUARAN otomatis terakumulasi.</i>`,
+      `📈 <i>Total tagihan di Tab 04_PENGELUARAN otomatis terakumulasi.</i>`,
       ``,
       `Apakah Anda ingin menulis rincian belanja ini ke spreadsheet?`,
     ].filter(Boolean).join("\n");
@@ -86,18 +86,18 @@ export function renderPaguOneShotCard(draft: PaguOneShotDraft, unitName: string)
       `📋 <b>KONFIRMASI PERUBAHAN PAGU BAHAN (1-SHOT)</b>`,
       `Unit: <b>${escapeHtml(unitName)}</b>`,
       `------------------------------------------`,
-      `• <b>Surat Pesanan:</b> <code>${escapeHtml(draft.orderLabel || draft.orderNo)}</code>`,
-      `• <b>Bahan:</b> <b>${escapeHtml(draft.itemName)}</b>`,
+      `• <b>No SPPG Ref:</b> <code>${escapeHtml(draft.orderLabel || draft.orderNo)}</code>`,
+      `• <b>Uraian Bahan:</b> <b>${escapeHtml(draft.itemName)}</b>`,
       `------------------------------------------`,
       `<b>DATA LAMA:</b>`,
       `• Kuantitas: ${draft.oldQty || "-"} ${escapeHtml(draft.unit)} @ ${formatRupiah(draft.oldPrice || 0)}`,
-      `• Subtotal: ${formatRupiah(oldSubtotal)}`,
-      draft.oldSupplier ? `• Rekanan: ${escapeHtml(draft.oldSupplier)}` : "",
+      `• Total Pagu: ${formatRupiah(oldSubtotal)}`,
+      draft.oldSupplier ? `• Target Supplier: ${escapeHtml(draft.oldSupplier)}` : "",
       ``,
       `<b>DATA BARU:</b>`,
       `• Kuantitas: <b>${draft.qty} ${escapeHtml(draft.unit)}</b> @ <b>${formatRupiah(draft.price)}</b>`,
-      `• Subtotal: <b>${formatRupiah(newSubtotal)}</b> <i>(${diffSign})</i>`,
-      draft.supplier ? `• Rekanan: <b>${escapeHtml(draft.supplier)}</b>` : "",
+      `• Total Pagu: <b>${formatRupiah(newSubtotal)}</b> <i>(${diffSign})</i>`,
+      draft.supplier ? `• Target Supplier: <b>${escapeHtml(draft.supplier)}</b>` : "",
       `------------------------------------------`,
       `🔄 <i>Tab 03_RINCIAN_PENDAPATAN dan Tab 06_PERBANDINGAN_MARGIN akan otomatis disinkronkan.</i>`,
       `Apakah perubahan ini sudah sesuai dan siap ditulis ke spreadsheet?`,
@@ -107,12 +107,12 @@ export function renderPaguOneShotCard(draft: PaguOneShotDraft, unitName: string)
       `📋 <b>KONFIRMASI PENAMBAHAN BAHAN BARU KE PAGU</b>`,
       `Unit: <b>${escapeHtml(unitName)}</b>`,
       `------------------------------------------`,
-      `• <b>Surat Pesanan:</b> <code>${escapeHtml(draft.orderLabel || draft.orderNo)}</code>`,
-      `• <b>Bahan Baru:</b> <b>${escapeHtml(draft.itemName)}</b>`,
+      `• <b>No SPPG Ref:</b> <code>${escapeHtml(draft.orderLabel || draft.orderNo)}</code>`,
+      `• <b>Uraian Bahan:</b> <b>${escapeHtml(draft.itemName)}</b>`,
       `• <b>Kuantitas:</b> <b>${draft.qty} ${escapeHtml(draft.unit)}</b>`,
-      `• <b>Harga Satuan:</b> <b>${formatRupiah(draft.price)}</b>`,
-      `• <b>Total Pagu Bahan:</b> <b>${formatRupiah(newSubtotal)}</b>`,
-      draft.supplier ? `• <b>Target Rekanan:</b> <b>${escapeHtml(draft.supplier)}</b>` : `• <b>Target Rekanan:</b> Lainnya`,
+      `• <b>Harga Pagu Satuan:</b> <b>${formatRupiah(draft.price)}</b>`,
+      `• <b>Total Pagu:</b> <b>${formatRupiah(newSubtotal)}</b>`,
+      `• <b>Target Supplier:</b> <b>${escapeHtml(draft.supplier || "-")}</b>`,
       `------------------------------------------`,
       `📍 <i>Bahan baru akan disisipkan di posisi paling bawah pesanan ini (baris pesanan lain di bawahnya bergeser otomatis).</i>`,
       `📈 <i>Tab 03_RINCIAN_PENDAPATAN dan Tab 06_PERBANDINGAN_MARGIN akan disinkronkan, serta total anggaran Tab 02 bertambah.</i>`,
@@ -122,13 +122,52 @@ export function renderPaguOneShotCard(draft: PaguOneShotDraft, unitName: string)
   }
 }
 
+export interface PendingLinkExpenseState {
+  linkId: string;
+  expenseId: string;
+  paguId: string;
+  orderNo: string;
+  unitName: string;
+  supplier: string;
+  amount: number;
+  items: Array<{
+    itemName: string;
+    qty: number;
+    unit: string;
+    price: number;
+    total: number;
+    supplier?: string;
+  }>;
+  callerName: string;
+  newItemCount?: number;
+  newSupplierCount?: number;
+  promptMsgId?: number;
+}
+
+export const pendingLinkRequests = new Map<string, PendingLinkExpenseState>();
+
+export interface PendingItemAdditionState {
+  orderNo: string;
+  orderLabel?: string;
+  action: "ADD";
+  isExpense?: boolean;
+  expenseId?: string;
+  itemName?: string;
+  qty?: number;
+  unit?: string;
+  price?: number;
+  supplier?: string;
+  promptMsgId?: number;
+}
+
 export interface UserInteractionState {
   activeDraftId?: string;
   activeDraftMsgId?: number;
   activeQuickActionMsgId?: number;
-  editingField?: "nominal" | "name" | "pagu" | null;
+  editingField?: "nominal" | "name" | "pagu" | "orderno" | "date" | "signer" | "method" | "item" | null;
   editingTransactionId?: string;
   promptMsgId?: number;
+  pendingItemAddition?: PendingItemAdditionState | null;
   editingPagu?: {
     orderNo: string;
     rowIndex: number;
@@ -161,6 +200,15 @@ export interface UserInteractionState {
     total?: number;
     supplier?: string;
   }> | null;
+  activeDeleteBatchTransactions?: Array<{
+    transactionId: string;
+    sheetName: string;
+    orderNo?: string;
+    amount?: number;
+    supplierOrUnit?: string;
+    rincianCount?: number;
+    expenseCount?: number;
+  }> | null;
 }
 
 export interface BotContext {
@@ -172,7 +220,7 @@ export interface BotContext {
   userStates: Map<number, UserInteractionState>;
   activeKeyboardMessages: Map<number, Set<number>>;
   trackKeyboardMessage: (chatId: number, msgId: number) => void;
-  clearAllActiveKeyboards: (chatId?: number) => Promise<void>;
+  clearAllActiveKeyboards: (chatId?: number, preserveMsgIds?: number[]) => Promise<void>;
   getState: (userId: number) => UserInteractionState;
   withTyping: <T>(ctx: Context, action: () => Promise<T>) => Promise<T>;
   isCallerMember: (userId?: number) => Promise<boolean>;
@@ -185,4 +233,20 @@ export interface BotContext {
   sendRecentTransactions: (ctx: Context, limit?: number) => Promise<void>;
   sendTransactionDetail: (ctx: Context, transactionId: string) => Promise<void>;
   sendPaguOrders: (ctx: Context) => Promise<void>;
+  logActivity: (
+    ctx: Context,
+    details: {
+      mediaType?: string;
+      userMessage?: string;
+      systemAction: string;
+      refId?: string;
+      status?: "SUKSES" | "GAGAL" | "PENDING" | "DITOLAK" | string;
+    }
+  ) => Promise<void>;
+  updateActivityStatus: (
+    refId: string,
+    newStatus: string,
+    updatedAction?: string,
+    newUserMessage?: string
+  ) => Promise<boolean>;
 }

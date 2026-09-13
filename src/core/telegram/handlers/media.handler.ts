@@ -2,10 +2,11 @@ import { Context, InlineKeyboard } from "grammy";
 import type { BotContext } from "../types/bot-context.js";
 import { parseSppgOrderFromImage } from "../../ai/parsers/sppg-order.parser.js";
 import { parseSupplierReceiptFromImage } from "../../ai/parsers/supplier-receipt.parser.js";
+import { parseImageDocument } from "../../document-parser/image.parser.js";
 import { parseSpreadsheetBuffer } from "../../document-parser/spreadsheet.parser.js";
 import { parseVoiceNote } from "../../document-parser/voice.parser.js";
 import { parsePdfDocument } from "../../document-parser/pdf.parser.js";
-import { googleDriveService } from "../../google/drive.service.js";
+import { mediaVaultService, mediaBufferCache } from "../../storage/media-vault.service.js";
 import { googleSheetsService } from "../../google/sheets.service.js";
 import { staticImageFailureMessage } from "../../ai/static-fallback.js";
 import { logger } from "../../utils/logger.js";
@@ -21,12 +22,16 @@ import {
 import {
   enrichReceiptWithPaguContext,
   getDraftConfirmationReplyMarkup,
+  cancelPreviousActiveDraftIfAny,
+  scheduleDraftAutoExpiry,
 } from "./draft.handler.js";
+import { getWibTimeOnly } from "../../utils/date-time.js";
 
 export async function handleIncomingImage(bCtx: BotContext, ctx: Context, fileId: string) {
   if (!ctx.from || !ctx.chat) return;
   const userId = ctx.from.id;
   const chatId = ctx.chat.id;
+  const caption = ctx.message?.caption?.trim() || "";
   const state = bCtx.getState(userId);
 
   // Button Hygiene: Strip previous active keyboards if user sends a new photo
@@ -41,40 +46,39 @@ export async function handleIncomingImage(bCtx: BotContext, ctx: Context, fileId
 
     logger.info({ userId, fileSize: imageBuffer.length }, "Processing incoming image document...");
 
-    // 2. Classify document using OCR/AI logic
+    // 2. Classify and parse document using Unified AI Vision Parser
     let sppgOrderResult = null;
     let supplierReceiptResult = null;
     let actionType: "SPPG_ORDER" | "SUPPLIER_EXPENSE" = "SUPPLIER_EXPENSE";
 
-    // Attempt parsing as SPPG Order first
-    try {
-      sppgOrderResult = await parseSppgOrderFromImage(imageBuffer);
-      if (sppgOrderResult && sppgOrderResult.items && sppgOrderResult.items.length >= 2) {
-        actionType = "SPPG_ORDER";
-      }
-    } catch {
-      // Fallback to supplier receipt
-    }
+    const parsedDoc = await parseImageDocument(imageBuffer, "image/jpeg", bCtx.unitConfig.name, caption);
 
-    if (actionType !== "SPPG_ORDER") {
+    if (parsedDoc) {
+      if (parsedDoc.type === "SPPG_ORDER") {
+        actionType = "SPPG_ORDER";
+        sppgOrderResult = parsedDoc.data;
+      } else {
+        actionType = "SUPPLIER_EXPENSE";
+        supplierReceiptResult = parsedDoc.data;
+      }
+    } else {
+      // Fallback to supplier receipt parser
       try {
         supplierReceiptResult = await parseSupplierReceiptFromImage(imageBuffer);
       } catch (supplierErr) {
-        logger.warn({ supplierErr }, "Failed parsing image with both SPPG Order and Supplier Receipt parsers");
+        logger.warn({ supplierErr }, "Failed parsing image with both image parser and supplier receipt parser");
 
-        // Always upload to Google Drive Vault so the photo is safe even during AI outage
+        // Always upload to Media Vault so the photo is safe even during AI outage
         const now = new Date();
-        const year = String(now.getFullYear());
-        const month = `${String(now.getMonth() + 1).padStart(2, "0")}-${now.toLocaleString("id-ID", { month: "long" })}`;
         try {
-          const destFolderId = await googleDriveService.resolveDestinationFolder(bCtx.unitConfig.id, year, month, "02_Kwitansi_Supplier");
-          await googleDriveService.uploadReceipt(
+          await mediaVaultService.uploadReceipt(
             imageBuffer,
             `${now.toISOString().slice(0, 10)}_${Date.now().toString().slice(-4)}`,
-            destFolderId
+            bCtx.unitConfig.id,
+            "02_Kwitansi_Supplier"
           );
-        } catch (driveErr) {
-          logger.warn({ driveErr }, "Could not upload image to Drive during OCR failure");
+        } catch (vaultErr) {
+          logger.warn({ vaultErr }, "Could not upload image to Media Vault during OCR failure");
         }
 
         await ctx.reply(staticImageFailureMessage(), { parse_mode: "HTML" });
@@ -93,34 +97,22 @@ export async function handleIncomingImage(bCtx: BotContext, ctx: Context, fileId
       return;
     }
 
-    // 3. Upload to Google Drive Vault
-    const now = new Date();
-    const year = String(now.getFullYear());
-    const month = `${String(now.getMonth() + 1).padStart(2, "0")}-${now.toLocaleString("id-ID", { month: "long" })}`;
-    const subFolderType = actionType === "SPPG_ORDER" ? "01_Nota_Pesanan_SPPG" : "02_Kwitansi_Supplier";
-
-    let driveLink = "";
-    try {
-      const destFolderId = await googleDriveService.resolveDestinationFolder(bCtx.unitConfig.id, year, month, subFolderType);
-      const uploadRes = await googleDriveService.uploadReceipt(
-        imageBuffer,
-        `${now.toISOString().slice(0, 10)}_${Date.now().toString().slice(-4)}`,
-        destFolderId
-      );
-      driveLink = uploadRes.webViewLink;
-    } catch (driveErr) {
-      logger.warn({ driveErr }, "Could not upload to Google Drive, proceeding with draft");
-    }
-
     // Enrich with Pagu candidates if supplier receipt
     let hasMultiplePagu = false;
     if (actionType === "SUPPLIER_EXPENSE" && supplierReceiptResult) {
       hasMultiplePagu = await enrichReceiptWithPaguContext(bCtx.unitConfig.spreadsheetId, supplierReceiptResult);
     }
 
-    // 4. Create Pending Action Draft in State Machine
+    // 4. Create Pending Action Draft in State Machine (Lazy Upload: store telegram_file_id, upload only upon confirmation)
     const draftId = `draft_${Date.now()}`;
     const payload = actionType === "SPPG_ORDER" ? sppgOrderResult : supplierReceiptResult;
+    if (payload) {
+      (payload as any).notes = caption;
+      (payload as any).raw_user_input = caption;
+      (payload as any).telegram_file_id = fileId;
+    }
+
+    await cancelPreviousActiveDraftIfAny(bCtx, ctx, chatId, state);
 
     await bCtx.pendingRepo.create({
       id: draftId,
@@ -129,25 +121,46 @@ export async function handleIncomingImage(bCtx: BotContext, ctx: Context, fileId
       telegram_chat_id: chatId,
       action_type: actionType,
       payload,
-      media_url: driveLink,
+      media_url: undefined,
+    });
+
+    mediaBufferCache.set(draftId, {
+      buffer: imageBuffer,
+      fileName: "foto_nota.png",
+      mimeType: "image/jpeg",
     });
 
     state.activeDraftId = draftId;
 
-    // 5. Render Card and Send
+    // 5. Render Card and Send (No external preview URL, preventing desktop bubble squishing)
     const cardText =
       actionType === "SPPG_ORDER"
         ? renderSppgOrderDraftCard(sppgOrderResult!, draftId, "PENDING")
-        : renderSupplierExpenseDraftCard(supplierReceiptResult!, draftId, "PENDING", driveLink);
+        : renderSupplierExpenseDraftCard(supplierReceiptResult!, draftId, "PENDING", undefined);
 
     const itemsCount = actionType === "SPPG_ORDER" ? sppgOrderResult?.items?.length || 0 : undefined;
 
     const sentMsg = await ctx.reply(cardText, {
       parse_mode: "HTML",
       reply_markup: getDraftConfirmationReplyMarkup(draftId, actionType, payload, itemsCount, hasMultiplePagu),
+      link_preview_options: { is_disabled: true },
     });
 
     state.activeDraftMsgId = sentMsg.message_id;
+    (payload as any).message_id = sentMsg.message_id;
+    await bCtx.pendingRepo.updatePayload(draftId, payload);
+    scheduleDraftAutoExpiry(bCtx, draftId, chatId, sentMsg.message_id);
+
+    const timeOnly = getWibTimeOnly();
+    await bCtx.logActivity(ctx, {
+      mediaType: "Foto Nota",
+      userMessage: `[${timeOnly}] ${caption ? `Kirim Foto Nota (Keterangan: "${caption}")` : "Kirim Foto Nota"}`,
+      systemAction: `[${timeOnly}] ${actionType === "SPPG_ORDER"
+        ? `OCR Berhasil: Draf Pendapatan PO ${(payload as any)?.order_no || ""}`
+        : `OCR Berhasil: Draf Belanja ${(payload as any)?.supplier_name || "Supplier"} (Rp ${Number((payload as any)?.total_amount || 0).toLocaleString("id-ID")})`}`,
+      refId: draftId,
+      status: "PENDING",
+    });
   });
 }
 
@@ -200,6 +213,8 @@ export function registerMediaHandlers(bCtx: BotContext) {
           hasMultiplePagu = await enrichReceiptWithPaguContext(bCtx.unitConfig.spreadsheetId, result.transaction.data);
         }
 
+        await cancelPreviousActiveDraftIfAny(bCtx, ctx, chatId, state);
+
         const draftId = `draft_${Date.now()}`;
         await bCtx.pendingRepo.create({
           id: draftId,
@@ -230,6 +245,20 @@ export function registerMediaHandlers(bCtx: BotContext) {
           }
         );
         state.activeDraftMsgId = sentMsg.message_id;
+        (result.transaction.data as any).message_id = sentMsg.message_id;
+        await bCtx.pendingRepo.updatePayload(draftId, result.transaction.data);
+        scheduleDraftAutoExpiry(bCtx, draftId, chatId, sentMsg.message_id);
+
+        const timeOnly = getWibTimeOnly();
+        await bCtx.logActivity(ctx, {
+          mediaType: "Voice Note",
+          userMessage: `[${timeOnly}] ${result.transcription ? `Pesan Suara ("${result.transcription}")` : "Pesan Suara"}`,
+          systemAction: `[${timeOnly}] ${result.transaction.type === "SPPG_ORDER"
+            ? `Transkripsi Suara: Draf Pendapatan PO ${(result.transaction.data as any)?.order_no || ""}`
+            : `Transkripsi Suara: Draf Belanja ${(result.transaction.data as any)?.supplier_name || "Supplier"} (Rp ${Number((result.transaction.data as any)?.total_amount || 0).toLocaleString("id-ID")})`}`,
+          refId: draftId,
+          status: "PENDING",
+        });
       } else {
         await ctx.reply(
           `🎙️ <b>Transkripsi Pesan Suara:</b>\n<i>"${escapeHtml(result.transcription)}"</i>\n\n💡 <i>Jika ingin mencatat belanja dari suara, sebutkan nama bahan, harga, dan toko (contoh: "Beli ayam 250rb di pasar ayam tunai").</i>`,
@@ -272,6 +301,20 @@ export function registerMediaHandlers(bCtx: BotContext) {
         const response = await fetch(fileUrl);
         const buffer = Buffer.from(await response.arrayBuffer());
 
+        // Upload spreadsheet file to Media Vault so transactions have Link Bukti Dokumen
+        let driveLink = "";
+        try {
+          const uploadRes = await mediaVaultService.uploadReceipt(
+            buffer,
+            doc.file_name || `Data_${Date.now()}.${fileName.endsWith(".csv") ? "csv" : "xlsx"}`,
+            bCtx.unitConfig.id,
+            "04_Spreadsheet_Excel"
+          );
+          driveLink = uploadRes.webViewLink;
+        } catch (vaultErr) {
+          logger.warn({ vaultErr }, "Could not upload spreadsheet to Media Vault");
+        }
+
         try {
           const parsed = parseSpreadsheetBuffer(buffer, "Supplier Rekanan");
           if (parsed.transactions.length === 0) {
@@ -281,6 +324,9 @@ export function registerMediaHandlers(bCtx: BotContext) {
 
           if (parsed.transactions.length === 1) {
             const trx = parsed.transactions[0];
+            (trx as any).driveLink = driveLink;
+            await cancelPreviousActiveDraftIfAny(bCtx, ctx, chatId, state);
+
             const draftId = `draft_${Date.now()}`;
             await bCtx.pendingRepo.create({
               id: draftId,
@@ -289,6 +335,7 @@ export function registerMediaHandlers(bCtx: BotContext) {
               telegram_chat_id: chatId,
               action_type: "SUPPLIER_EXPENSE",
               payload: trx,
+              media_url: driveLink || undefined,
             });
             state.activeDraftId = draftId;
             const cardText = renderSupplierExpenseDraftCard(trx, draftId, "PENDING");
@@ -297,8 +344,16 @@ export function registerMediaHandlers(bCtx: BotContext) {
               reply_markup: buildDraftConfirmationKeyboard(draftId, "SUPPLIER_EXPENSE"),
             });
             state.activeDraftMsgId = sentMsg.message_id;
+            (trx as any).message_id = sentMsg.message_id;
+            await bCtx.pendingRepo.updatePayload(draftId, trx);
+            scheduleDraftAutoExpiry(bCtx, draftId, chatId, sentMsg.message_id);
             return;
           }
+
+          // Attach driveLink to each batch transaction
+          parsed.transactions.forEach((t) => {
+            (t as any).driveLink = driveLink;
+          });
 
           const totalSum = parsed.transactions.reduce((acc, t) => acc + t.total_amount, 0);
           const lines = [
@@ -322,7 +377,7 @@ export function registerMediaHandlers(bCtx: BotContext) {
             parsed.transactions,
             ctx.from?.first_name || "Admin"
           );
-          await ctx.reply(`✅ <b>Berhasil Menyimpan ${parsed.transactions.length} Transaksi ke Tab 04_PAGU_PENGELUARAN & Tab 05_RINCIAN_PENGELUARAN!</b>`, { parse_mode: "HTML" });
+          await ctx.reply(`✅ <b>Berhasil Menyimpan ${parsed.transactions.length} Transaksi ke Tab 04 (Pengeluaran) & Tab 05 (Rincian Pengeluaran)!</b>`, { parse_mode: "HTML" });
         } catch (parseErr: any) {
           logger.error({ parseErr }, "Spreadsheet parsing error");
           await ctx.reply(`❌ Gagal membaca file spreadsheet: ${escapeHtml(parseErr?.message || parseErr)}`, { parse_mode: "HTML" });
@@ -339,28 +394,10 @@ export function registerMediaHandlers(bCtx: BotContext) {
         const response = await fetch(fileUrl);
         const buffer = Buffer.from(await response.arrayBuffer());
 
-        const now = new Date();
-        const year = String(now.getFullYear());
-        const month = `${String(now.getMonth() + 1).padStart(2, "0")}-${now.toLocaleString("id-ID", { month: "long" })}`;
-        let driveLink = "";
-        try {
-          const destFolderId = await googleDriveService.resolveDestinationFolder(
-            bCtx.unitConfig.id,
-            year,
-            month,
-            "03_Dokumen_PDF"
-          );
-          const baseName = (doc.file_name || `Dokumen_${now.toISOString().slice(0, 10)}`).replace(/\.[^/.]+$/, "");
-          const uploadRes = await googleDriveService.uploadReceipt(buffer, `${baseName}_${Date.now().toString().slice(-4)}.pdf`, destFolderId);
-          driveLink = uploadRes.webViewLink;
-        } catch (driveErr) {
-          logger.warn({ driveErr }, "Could not upload PDF to Drive");
-        }
-
-        const parsedPdf = await parsePdfDocument(buffer, bCtx.unitConfig.name);
+        const parsedPdf = await parsePdfDocument(buffer, bCtx.unitConfig.name, ctx.message?.caption?.trim());
         if (!parsedPdf) {
           await ctx.reply(
-            `📄 <b>Dokumen PDF Diterima</b>\n\n• File: <code>${escapeHtml(doc.file_name || "dokumen.pdf")}</code>\n• Drive: <a href="${driveLink}">Buka di Google Drive</a>\n\n⚠️ AI OCR saat ini tidak dapat membaca rincian tabel secara otomatis. Silakan input ringkasan pesanan atau transaksi via chat teks.`,
+            `📄 <b>Dokumen PDF Diterima</b>\n\n• File: <code>${escapeHtml(doc.file_name || "dokumen.pdf")}</code>\n\n⚠️ AI OCR saat ini tidak dapat membaca rincian tabel secara otomatis. Silakan input ringkasan pesanan atau transaksi via chat teks.`,
             { parse_mode: "HTML" }
           );
           return;
@@ -382,7 +419,15 @@ export function registerMediaHandlers(bCtx: BotContext) {
           hasMultiplePagu = await enrichReceiptWithPaguContext(bCtx.unitConfig.spreadsheetId, parsedPdf.data);
         }
 
+        await cancelPreviousActiveDraftIfAny(bCtx, ctx, chatId, state);
+
         const draftId = `draft_${Date.now()}`;
+        if (parsedPdf.data) {
+          (parsedPdf.data as any).telegram_file_id = doc.file_id;
+          (parsedPdf.data as any).file_name = doc.file_name;
+          (parsedPdf.data as any).mime_type = "application/pdf";
+        }
+
         await bCtx.pendingRepo.create({
           id: draftId,
           sppg_id: bCtx.unitConfig.id,
@@ -390,21 +435,42 @@ export function registerMediaHandlers(bCtx: BotContext) {
           telegram_chat_id: chatId,
           action_type: parsedPdf.type,
           payload: parsedPdf.data,
-          media_url: driveLink,
+          media_url: undefined,
+        });
+
+        mediaBufferCache.set(draftId, {
+          buffer,
+          fileName: doc.file_name || "dokumen.pdf",
+          mimeType: "application/pdf",
         });
 
         state.activeDraftId = draftId;
         const cardText =
           parsedPdf.type === "SPPG_ORDER"
             ? renderSppgOrderDraftCard(parsedPdf.data as any, draftId, "PENDING")
-            : renderSupplierExpenseDraftCard(parsedPdf.data as any, draftId, "PENDING", driveLink);
+            : renderSupplierExpenseDraftCard(parsedPdf.data as any, draftId, "PENDING", undefined);
 
         const itemsCount = parsedPdf.type === "SPPG_ORDER" ? (parsedPdf.data as any)?.items?.length || 0 : undefined;
         const sentMsg = await ctx.reply(cardText, {
           parse_mode: "HTML",
           reply_markup: getDraftConfirmationReplyMarkup(draftId, parsedPdf.type, parsedPdf.data, itemsCount, hasMultiplePagu),
+          link_preview_options: { is_disabled: true },
         });
         state.activeDraftMsgId = sentMsg.message_id;
+        (parsedPdf.data as any).message_id = sentMsg.message_id;
+        await bCtx.pendingRepo.updatePayload(draftId, parsedPdf.data);
+        scheduleDraftAutoExpiry(bCtx, draftId, chatId, sentMsg.message_id);
+
+        const timeOnly = getWibTimeOnly();
+        await bCtx.logActivity(ctx, {
+          mediaType: "Dokumen",
+          userMessage: `[${timeOnly}] ${doc.file_name ? `Kirim Dokumen PDF (${doc.file_name})` : "Kirim Dokumen PDF"}`,
+          systemAction: `[${timeOnly}] ${parsedPdf.type === "SPPG_ORDER"
+            ? `OCR PDF: Draf Pendapatan PO ${(parsedPdf.data as any)?.order_no || ""}`
+            : `OCR PDF: Draf Belanja ${(parsedPdf.data as any)?.supplier_name || "Supplier"} (Rp ${Number((parsedPdf.data as any)?.total_amount || 0).toLocaleString("id-ID")})`}`,
+          refId: draftId,
+          status: "PENDING",
+        });
       });
       return;
     }

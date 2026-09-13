@@ -105,6 +105,38 @@ export class SheetsClientProvider {
     const startRow = Math.max(existingRows + 1, 2);
     const endRow = startRow + rows.length - 1;
 
+    // Auto-Expand Grid: Check if endRow exceeds current sheet grid rowCount to prevent exceeds grid limits error
+    try {
+      const meta = await client.spreadsheets.get({
+        spreadsheetId,
+        fields: "sheets(properties(sheetId,title,gridProperties(rowCount)))",
+      });
+      const sheetObj = meta.data.sheets?.find((s) => s.properties?.title === sheetName);
+      if (sheetObj?.properties?.gridProperties?.rowCount && sheetObj.properties.sheetId !== undefined) {
+        const currentMax = sheetObj.properties.gridProperties.rowCount;
+        if (endRow >= currentMax) {
+          const addRows = Math.max(1000, endRow - currentMax + 500);
+          await client.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+              requests: [
+                {
+                  appendDimension: {
+                    sheetId: sheetObj.properties.sheetId,
+                    dimension: "ROWS",
+                    length: addRows,
+                  },
+                },
+              ],
+            },
+          });
+          logger.info({ sheetName, added: addRows, newTotal: currentMax + addRows }, "Auto-expanded sheet grid rows");
+        }
+      }
+    } catch (expandErr: any) {
+      logger.warn({ expandErr: expandErr?.message || expandErr }, "Grid expansion check notice");
+    }
+
     await client.spreadsheets.values.update({
       spreadsheetId,
       range: `'${sheetName}'!A${startRow}`,
@@ -138,7 +170,8 @@ export class SheetsClientProvider {
           })
           .catch(() => ({ data: { values: null } }));
 
-        if (check.data?.values?.[0]?.[0]?.includes("DASHBOARD KEUANGAN")) {
+        const val = check.data?.values?.[0]?.[0] || "";
+        if (val.includes("DASHBOARD KEUANGAN") || val.includes("MONITORING REALISASI")) {
           return;
         }
       }
@@ -176,6 +209,7 @@ export class SheetsClientProvider {
         client.spreadsheets.values.clear({ spreadsheetId, range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!A1:Z1` }).catch(() => {}),
         client.spreadsheets.values.clear({ spreadsheetId, range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A1:Z1` }).catch(() => {}),
         client.spreadsheets.values.clear({ spreadsheetId, range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A1:Z1` }).catch(() => {}),
+        client.spreadsheets.values.clear({ spreadsheetId, range: `'${SHEET_NAMES.LOG_AKTIVITAS}'!A1:Z1` }).catch(() => {}),
       ]);
 
       const {
@@ -187,6 +221,7 @@ export class SheetsClientProvider {
         tabRincianPengeluaranHeaders,
         tabPerbandinganMarginHeaders,
         tabMasterDataHeaders,
+        tabLogAktivitasHeaders,
       } = getOperationalDashboardValues(unitName);
 
       await client.spreadsheets.values.batchUpdate({
@@ -194,33 +229,47 @@ export class SheetsClientProvider {
         requestBody: {
           valueInputOption: "USER_ENTERED",
           data: [
-            { range: `'${SHEET_NAMES.DASHBOARD}'!A1:K29`, values: valuesDashboard },
+            { range: `'${SHEET_NAMES.DASHBOARD}'!A1:K52`, values: valuesDashboard },
             { range: `'${SHEET_NAMES.DASHBOARD}'!M1:M4`, values: valuesHelper },
-            { range: `'${SHEET_NAMES.PAGU_PENERIMAAN}'!A1:J1`, values: tabPaguPenerimaanHeaders },
-            { range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A1:J1`, values: tabRincianPendapatanHeaders },
-            { range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!A1:J1`, values: tabPaguPengeluaranHeaders },
-            { range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A1:J1`, values: tabRincianPengeluaranHeaders },
-            { range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A1:M1`, values: tabPerbandinganMarginHeaders },
+            { range: `'${SHEET_NAMES.PENDAPATAN}'!A1:J1`, values: tabPaguPenerimaanHeaders },
+            { range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A1:L1`, values: tabRincianPendapatanHeaders },
+            { range: `'${SHEET_NAMES.PENGELUARAN}'!A1:L1`, values: tabPaguPengeluaranHeaders },
+            { range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A1:M1`, values: tabRincianPengeluaranHeaders },
+            { range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A1:O1`, values: tabPerbandinganMarginHeaders },
             { range: `'${SHEET_NAMES.MASTER_DATA}'!A1:C1`, values: tabMasterDataHeaders },
+            { range: `'${SHEET_NAMES.LOG_AKTIVITAS}'!A1:I1`, values: tabLogAktivitasHeaders },
           ],
         },
       });
 
-      const chartRequest = createOperationalDashboardChartRequest(firstId);
-      const stylingRequests = [
+      // 1. Dashboard styling & chart
+      const dashRequests: sheets_v4.Schema$Request[] = [
         ...createOperationalDashboardStylingRequests(firstId),
+      ];
+      if (existingChartIds.length === 0) {
+        dashRequests.push(createOperationalDashboardChartRequest(firstId));
+      }
+
+      await client.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: { requests: dashRequests },
+      });
+
+      // 2. Tab headers, number formatting, validations, and banding
+      const generalRequests: sheets_v4.Schema$Request[] = [
         ...createHeaderStylingBatchRequests(sheetMap),
         ...createNumberFormattingBatchRequests(sheetMap),
         ...createDataValidationBatchRequests(sheetMap),
         ...createConditionalFormattingBatchRequests(sheetMap),
         ...createBandingBatchRequests(sheetMap, existingBandedSheetIds),
-        chartRequest,
       ];
 
-      await client.spreadsheets.batchUpdate({
-        spreadsheetId,
-        requestBody: { requests: stylingRequests },
-      });
+      if (generalRequests.length > 0) {
+        await client.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: { requests: generalRequests },
+        });
+      }
 
       await this.ensureGuidelineTab(spreadsheetId, unitName, force);
 
@@ -327,6 +376,126 @@ export class SheetsClientProvider {
     } catch (err: any) {
       logger.warn({ err: err?.message || err, spreadsheetId }, "Note ensuring guideline tab");
     }
+  }
+
+  /**
+   * Melakukan migrasi penamaan tabset ke format ringkas (Title Case) dan standarisasi header Kolom K (Waktu Input)
+   */
+  async migrateTabNamesAndHeaders(spreadsheetId: string, unitName = "SPPG Unit"): Promise<{ renamedCount: number }> {
+    const client = await this.getClient();
+    const meta = await client.spreadsheets.get({ spreadsheetId });
+    const sheets = meta.data.sheets || [];
+    const renameRequests: sheets_v4.Schema$Request[] = [];
+
+    const renamePairs: [string[], string][] = [
+      [["02_PAGU_PENERIMAAN", "02_PENDAPATAN_SPPG", "02_PAGU_RINGKASAN"], SHEET_NAMES.PENDAPATAN],
+      [["03_RINCIAN_PENDAPATAN", "03_PAGU_RINCIAN"], SHEET_NAMES.RINCIAN_PENDAPATAN],
+      [["04_PAGU_PENGELUARAN", "03_PENGELUARAN_SUPPLIER", "04_PENGELUARAN_SUPPLIER"], SHEET_NAMES.PENGELUARAN],
+      [["05_RINCIAN_PENGELUARAN"], SHEET_NAMES.RINCIAN_PENGELUARAN],
+      [["06_PERBANDINGAN_MARGIN", "06_REKAP_MARGIN", "04_REKAP_MARGIN"], SHEET_NAMES.MARGIN],
+      [["07_MASTER_DATA", "06_MASTER_DATA", "05_MASTER_DATA"], SHEET_NAMES.MASTER_DATA],
+      [["08_LOG_AKTIVITAS", "07_LOG_AKTIVITAS"], SHEET_NAMES.LOG_AKTIVITAS],
+    ];
+
+    for (const [oldTitles, targetTitle] of renamePairs) {
+      const alreadyHasTarget = sheets.some((s) => s.properties?.title === targetTitle);
+      if (!alreadyHasTarget) {
+        for (const old of oldTitles) {
+          const matched = sheets.find((s) => s.properties?.title?.toLowerCase() === old.toLowerCase());
+          if (matched && matched.properties?.sheetId !== undefined) {
+            renameRequests.push({
+              updateSheetProperties: {
+                properties: {
+                  sheetId: matched.properties.sheetId,
+                  title: targetTitle,
+                },
+                fields: "title",
+              },
+            });
+            logger.info({ oldTitle: matched.properties.title, targetTitle }, "Renaming tab in spreadsheet");
+            break;
+          }
+        }
+      }
+    }
+
+    // Ensure Tab 07 (07_AKTIVITAS) exists
+    const hasLogTab = sheets.some((s) => s.properties?.title === SHEET_NAMES.LOG_AKTIVITAS);
+    if (!hasLogTab) {
+      renameRequests.push({
+        addSheet: {
+          properties: {
+            sheetId: SHEET_IDS.LOG_AKTIVITAS,
+            title: SHEET_NAMES.LOG_AKTIVITAS,
+            index: sheets.length,
+            tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.SLATE_GRAY) },
+            gridProperties: {
+              rowCount: 5000,
+              columnCount: 10,
+              frozenRowCount: 1,
+            },
+          },
+        },
+      });
+      logger.info({ spreadsheetId }, "Adding missing 07_AKTIVITAS tab in migration");
+    }
+
+    if (renameRequests.length > 0) {
+      await client.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: { requests: renameRequests },
+      });
+      logger.info({ count: renameRequests.length, spreadsheetId }, "Successfully renamed tabs / added tabs");
+    }
+
+    // Update header rows on all tabs
+    const {
+      tabPaguPenerimaanHeaders,
+      tabRincianPendapatanHeaders,
+      tabPaguPengeluaranHeaders,
+      tabRincianPengeluaranHeaders,
+      tabPerbandinganMarginHeaders,
+      tabLogAktivitasHeaders,
+    } = getOperationalDashboardValues(unitName);
+
+    await client.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        valueInputOption: "USER_ENTERED",
+        data: [
+          { range: `'${SHEET_NAMES.PENDAPATAN}'!A1:J1`, values: tabPaguPenerimaanHeaders },
+          { range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A1:L1`, values: tabRincianPendapatanHeaders },
+          { range: `'${SHEET_NAMES.PENGELUARAN}'!A1:L1`, values: tabPaguPengeluaranHeaders },
+          { range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A1:M1`, values: tabRincianPengeluaranHeaders },
+          { range: `'${SHEET_NAMES.MARGIN}'!A1:O1`, values: tabPerbandinganMarginHeaders },
+          { range: `'${SHEET_NAMES.LOG_AKTIVITAS}'!A1:I1`, values: tabLogAktivitasHeaders },
+        ],
+      },
+    }).catch((err) => {
+      logger.warn({ err: err?.message || err }, "Note updating headers during migration");
+    });
+
+    // Re-apply styling batch requests
+    const updatedMeta = await client.spreadsheets.get({ spreadsheetId });
+    const updatedMap = new Map<string, number>();
+    (updatedMeta.data.sheets || []).forEach((s) => {
+      if (s.properties?.title && typeof s.properties?.sheetId === "number") {
+        updatedMap.set(s.properties.title, s.properties.sheetId);
+      }
+    });
+
+    const stylingRequests = [
+      ...createHeaderStylingBatchRequests(updatedMap),
+      ...createNumberFormattingBatchRequests(updatedMap),
+    ];
+    await client.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: stylingRequests },
+    }).catch(() => {});
+
+    await this.ensureGuidelineTab(spreadsheetId, unitName, false);
+
+    return { renamedCount: renameRequests.length };
   }
 }
 

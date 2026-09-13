@@ -73,7 +73,7 @@ describe("Delta Sync & Centralized Audit Trail Unit Tests", () => {
         spreadsheetId: "test-sheet-id",
         sheetName: SHEET_NAMES.PENGELUARAN_SUPPLIER,
         row: 5,
-        col: 6, // Col F (Total Nominal Tagihan)
+        col: 7, // Col G (Total Tagihan in Mazhab Eksekutif)
         oldValue: "1500000",
         value: "1850000",
         user: "ayah@sppg.id",
@@ -85,7 +85,7 @@ describe("Delta Sync & Centralized Audit Trail Unit Tests", () => {
           editor: "ayah@sppg.id (Instan)",
           sheetTab: SHEET_NAMES.PENGELUARAN_SUPPLIER,
           refId: "Baris 5",
-          columnEdited: "Total Nominal Tagihan (F)",
+          columnEdited: "Total Tagihan (G)",
           oldValue: "1500000",
           newValue: "1850000",
           sourceAction: "Google Apps Script Webhook (Instan)",

@@ -10,7 +10,8 @@ export function buildDraftConfirmationKeyboard(
 ): InlineKeyboard {
   const kb = new InlineKeyboard();
   if (actionType === "SPPG_ORDER") {
-    if (itemsCount && itemsCount > 0) {
+    // Only display detail inspection button if there are more than 5 items (i.e. some items are hidden in summary)
+    if (itemsCount && itemsCount > 5) {
       kb.text(`🔍 Lihat ${itemsCount} Rincian Bahan`, `v:viewitems:${draftId}`).row();
     }
     kb.text("✅ Ya, Simpan", `v:save:${draftId}`)
@@ -36,12 +37,93 @@ export function buildBackToDraftKeyboard(draftId: string): InlineKeyboard {
     .text("✅ Ya, Simpan", `v:save:${draftId}`);
 }
 
-export function buildEditSubmenuKeyboard(draftId: string): InlineKeyboard {
+export function buildEditSubmenuKeyboard(
+  draftId: string,
+  actionType: "SPPG_ORDER" | "SUPPLIER_EXPENSE" = "SUPPLIER_EXPENSE"
+): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  if (actionType === "SPPG_ORDER") {
+    kb.text("📄 Ganti No PO", `v:sub:orderno:${draftId}`)
+      .text("📅 Ganti Tanggal", `v:sub:date:${draftId}`)
+      .row()
+      .text("✍️ Ganti Penandatangan", `v:sub:signer:${draftId}`)
+      .row()
+      .text("🔙 Kembali ke Draf", `v:sub:back:${draftId}`);
+  } else {
+    kb.text("💰 Ganti Total Nominal", `v:sub:nominal:${draftId}`)
+      .text("🏪 Ganti Nama Toko", `v:sub:name:${draftId}`)
+      .row()
+      .text("💳 Ganti Metode Bayar", `v:sub:method:${draftId}`)
+      .text("📄 Ganti No Pagu", `v:sub:pagu:${draftId}`)
+      .row()
+      .text("📅 Ganti Tanggal", `v:sub:date:${draftId}`)
+      .row()
+      .text("🔙 Kembali ke Draf", `v:sub:back:${draftId}`);
+  }
+  return kb;
+}
+
+export function buildMissingExpenseFieldsKeyboard(
+  draftId: string,
+  opts: {
+    isMissingAmount?: boolean;
+    isMissingPayment?: boolean;
+    isMissingSupplier?: boolean;
+    isMissingItems?: boolean;
+  }
+): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  if (opts.isMissingPayment) {
+    kb.text("💵 Tunai / Cash", `v:draft:pay:cash:${draftId}`)
+      .text("💳 Transfer Bank", `v:draft:pay:transfer:${draftId}`)
+      .row();
+  }
+  if (opts.isMissingItems) {
+    kb.text("📦 Masukkan Barang & Qty", `v:sub:item:${draftId}`).row();
+  }
+  if (opts.isMissingAmount) {
+    kb.text("💰 Masukkan Nominal Belanja", `v:sub:nominal:${draftId}`).row();
+  }
+  if (opts.isMissingSupplier) {
+    kb.text("🏪 Masukkan Nama Toko", `v:sub:name:${draftId}`).row();
+  }
+  kb.text("❌ Batalkan", `v:cancel:${draftId}`);
+  return kb;
+}
+
+export function buildPaymentMethodPromptKeyboard(
+  draftId: string,
+  isMissingSupplier?: boolean
+): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  kb.text("💵 Tunai / Cash", `v:draft:pay:cash:${draftId}`)
+    .text("💳 Transfer Bank", `v:draft:pay:transfer:${draftId}`)
+    .row();
+  if (isMissingSupplier) {
+    kb.text("🏪 Masukkan Nama Toko", `v:sub:name:${draftId}`).row();
+  }
+  kb.text("❌ Batalkan", `v:cancel:${draftId}`);
+  return kb;
+}
+
+export function buildSupplierNamePromptKeyboard(draftId: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("💰 Ganti Total Nominal", `v:sub:nominal:${draftId}`)
-    .text("🏪 Ganti Nama Toko/Unit", `v:sub:name:${draftId}`)
+    .text("🏪 Masukkan Nama Toko / Supplier", `v:sub:name:${draftId}`)
     .row()
-    .text("📄 Ganti No Pagu", `v:sub:pagu:${draftId}`)
+    .text("❌ Batalkan", `v:cancel:${draftId}`);
+}
+
+export function buildOrderNoPromptKeyboard(draftId: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("📄 Masukkan No PO Resmi", `v:sub:orderno:${draftId}`)
+    .row()
+    .text("❌ Batalkan", `v:cancel:${draftId}`);
+}
+
+export function buildPaymentMethodPickerKeyboard(draftId: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("💵 Tunai / Cash", `v:draft:pay:cash:${draftId}`)
+    .text("💳 Transfer Bank", `v:draft:pay:transfer:${draftId}`)
     .row()
     .text("🔙 Kembali ke Draf", `v:sub:back:${draftId}`);
 }
@@ -66,7 +148,14 @@ export function buildPaguSelectorKeyboard(
 
 export function buildPaguPromptKeyboard(
   draftId: string,
-  candidates: Array<{ sppg_ref_no: string; order_date: string; item_name: string; remaining_qty: number; unit: string; supplier_name: string }>
+  candidates: Array<{
+    sppg_ref_no: string;
+    order_date?: string;
+    item_name?: string;
+    remaining_qty?: number;
+    unit?: string;
+    supplier_name?: string;
+  }>
 ): InlineKeyboard {
   const kb = new InlineKeyboard();
   const seen = new Set<string>();
@@ -162,6 +251,15 @@ export function buildDeleteConfirmKeyboard(transactionId: string): InlineKeyboar
 }
 
 /**
+ * Confirmation keyboard before batch deletion of multiple transactions
+ */
+export function buildDeleteBatchTransactionsKeyboard(count: number): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(`🗑️ Ya, Hapus Semua (${count} Transaksi)`, "v:trx:delbatch:yes")
+    .text("❌ Batalkan", "v:trx:delbatch:no");
+}
+
+/**
  * Confirmation keyboard before deleting a specific child item from Tab 05
  */
 export function buildDeleteChildItemKeyboard(expenseId: string, itemIndex?: number, itemCount = 1): InlineKeyboard {
@@ -243,10 +341,15 @@ export function buildPaguOrderListKeyboard(orders: PaguOrderSummary[]): InlineKe
       currency: "IDR",
       maximumFractionDigits: 0,
     }).format(o.totalAmount);
-    const dateLabel = o.orderDate ? o.orderDate.replace(/^\d{4}-/, "") : "Menu";
+    let dateLabel = "Menu";
+    if (o.orderDate && o.orderDate !== "-") {
+      const cleanDate = o.orderDate.split(" ")[0];
+      dateLabel = cleanDate.replace(/^\d{4}-/, "");
+    }
     const idShort = o.transactionId ? o.transactionId.replace(/^SPPG\d+-/i, "") : "";
     const tag = idShort ? `[${idShort}] ` : "";
-    kb.text(`📅 ${tag}PO ${o.orderNo} (${dateLabel} - ${formattedAmt})`, `v:pagu_ord:${o.orderNo}`).row();
+    const cleanPo = o.orderNo.replace(/^PO[-\s]*/i, "");
+    kb.text(`📅 ${tag}PO-${cleanPo} (${dateLabel} - ${formattedAmt})`, `v:pagu_ord:${o.orderNo}`).row();
   }
   kb.text("🔙 Kembali ke Menu Utama", "qa:start");
   return kb;
@@ -308,7 +411,7 @@ export function buildPaguItemActionKeyboard(
     .text("✏️ Ubah Kuantitas", `v:pagu_act:${orderNo}:${rowIndex}:qty`)
     .text("💰 Ubah Harga Pagu", `v:pagu_act:${orderNo}:${rowIndex}:price`)
     .row()
-    .text("🏪 Ubah Target Rekanan", `v:pagu_act:${orderNo}:${rowIndex}:supplier`)
+    .text("🏪 Ubah Target Supplier", `v:pagu_act:${orderNo}:${rowIndex}:supplier`)
     .row()
     .text("🔙 Kembali ke Rincian Bahan", `v:pagu_ord:${orderNo}`);
 }
@@ -435,4 +538,8 @@ export function buildPanduanKeyboard(sheetUrl: string, unitId: string): InlineKe
     .url("📗 Buka Panduan Lengkap (Sheets)", sheetUrl)
     .row()
     .text("🏠 Menu Utama", "qa:menu");
+}
+
+export function buildCancelItemAdditionKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text("❌ Batalkan", "v:item_add:cancel");
 }

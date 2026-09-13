@@ -100,6 +100,7 @@ export function parseSpreadsheetBuffer(buffer: Buffer, defaultSupplier = "Suppli
       type: "expense",
       supplier_name: suppName,
       date: group.date,
+      receipt_no: "",
       sppg_ref_no: "",
       items: group.items,
       subtotal: group.total,

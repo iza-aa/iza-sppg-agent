@@ -69,18 +69,21 @@ describe("Delete Child Item Intent & Keyboard Tests", () => {
     expect(r1).toEqual({
       type: "DELETE_TRANSACTION",
       transactionId: "EI001",
+      transactionIds: ["EI001"],
     });
 
     const r2 = await metaAgent.classifyAndRoute("hapus transaksi EI001");
     expect(r2).toEqual({
       type: "DELETE_TRANSACTION",
       transactionId: "EI001",
+      transactionIds: ["EI001"],
     });
 
     const r3 = await metaAgent.classifyAndRoute("hapus rincian EI001");
     expect(r3).toEqual({
       type: "DELETE_TRANSACTION",
       transactionId: "EI001",
+      transactionIds: ["EI001"],
     });
   });
 

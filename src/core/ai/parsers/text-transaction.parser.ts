@@ -31,20 +31,20 @@ IDENTIFIKASI JENIS TRANSAKSI:
        "tax": 0,
        "total_amount": 700000,
        "payment_method": "Cash",
-       "notes": "Pencatatan teks via Telegram"
+       "notes": "Tadi beli beras 2 karung 700rb di toko Hj Muliadi lunas tunai"
      }
    }
 
 2. NOTA PESANAN SPPG ("transaction_type": "SPPG_ORDER"):
    - Pesan yang menyebutkan plafon, pagu tagihan, pesanan SPPG, no surat pesanan bahan makanan dari Ka. SPPG.
-   - Contoh: "Catat pesanan SPPG Patila No 05/02/09/26 total pagu 29.581.000"
+   - Contoh: "Catat pesanan SPPG Patila No PO-2026/09/SPPG2-01 total pagu 29.581.000"
    - Format output JSON:
    {
      "transaction_type": "SPPG_ORDER",
      "payload": {
        "type": "income",
        "sppg_unit": "SPPG Patila",
-       "order_no": "05/02/09/26",
+       "order_no": "PO-2026/09/SPPG2-01",
        "order_date": "YYYY-MM-DD",
        "arrival_date": "YYYY-MM-DD",
        "items": [
@@ -52,14 +52,18 @@ IDENTIFIKASI JENIS TRANSAKSI:
        ],
        "total_amount": 29581000,
        "signed_by": "Ka. SPPG",
-       "notes": "Pencatatan nota pesanan via teks"
+       "notes": "Catat pesanan SPPG Patila No PO-2026/09/SPPG2-01 total pagu 29.581.000"
      }
    }
 
-ATURAN PENTING:
+ATURAN PENTING (DILARANG MENGARANG DATA / NO SILENT DEFAULTS):
 - Gunakan tanggal hari ini jika pengguna tidak menyebutkan tanggal tertentu.
 - Selalu normalkan nominal Rupiah: "200rb" = 200000, "1.5jt" = 1500000, "50k" = 50000.
 - Pastikan total_amount adalah angka murni (integer).
+- METODE PEMBAYARAN: JANGAN PERNAH default ke "Cash"! Jika user tidak menyebutkan tunai/cash/transfer/tf/qris/bon/tempo, isi "payment_method": null atau jangan sertakan!
+- NAMA TOKO/SUPPLIER: JANGAN mengarang nama toko jika user tidak menyebutkan "di/ke/dari [nama toko]". Jika tidak ada, isi "supplier_name": null!
+- NO SURAT PESANAN (PO): JANGAN membuat nomor PO sendiri jika user tidak menyebutkan No PO secara jelas.
+- RINCIAN BARANG: JANGAN MENGARANG NAMA BARANG seperti "Bahan Makanan" atau "Belanja Bahan Pangan" jika pengguna TIDAK menyebutkan nama bahan secara spesifik! Jika pengguna tidak menyebutkan bahan belanjaan, isi "items": [] !
 - Kembalikan HANYA JSON valid.
 `;
 
@@ -81,6 +85,12 @@ export async function parseTransactionFromText(
         if (!orderData.arrival_date) orderData.arrival_date = todayStr;
         if (!orderData.sppg_unit) orderData.sppg_unit = defaultSppgUnit;
 
+        const hasExplicitOrderNo = /\b(?:no\.?|nomor|po)[-\s:]*([A-Za-z0-9_/-]+)/i.test(userText);
+        if (!hasExplicitOrderNo && (!orderData.order_no || orderData.order_no === "PO-AUTO")) {
+          orderData.order_no = "";
+        }
+        orderData.notes = userText.trim();
+
         const validated = SppgOrderSchema.parse(orderData);
         return { type: "SPPG_ORDER", data: validated };
       }
@@ -88,11 +98,43 @@ export async function parseTransactionFromText(
       if ((parsed.transaction_type === "SUPPLIER_EXPENSE" || parsed.payload?.type === "expense") && parsed.payload) {
         const expData = parsed.payload;
         if (!expData.date) expData.date = todayStr;
-        if (!expData.supplier_name) expData.supplier_name = "Supplier Pasar";
-        if (!expData.payment_method) expData.payment_method = "Cash";
 
-        // Deterministic sum check
+        // Ensure no hallucinated payment method if user never mentioned it
+        const hasExplicitPayment = /\b(tunai|cash|kontan|transfer|tf|bca|bri|mandiri|bni|qris|tempo|bon|utang|hutang)\b/i.test(userText);
+        if (!hasExplicitPayment) {
+          delete expData.payment_method;
+        } else if (expData.payment_method) {
+          // Normalize payment method to Indonesian "Tunai"
+          const pm = expData.payment_method.toLowerCase();
+          if (pm === "cash" || pm === "tunai" || pm === "kontan") {
+            expData.payment_method = "Tunai";
+          } else if (pm.includes("transfer") || pm.includes("tf")) {
+            expData.payment_method = "Transfer";
+          }
+        }
+
+        // Ensure no hallucinated supplier if user never specified one
+        const hasExplicitSupplier = /(?:di|ke|dari)\s+([A-Za-z0-9\s]+)/i.test(userText);
+        if (!hasExplicitSupplier && expData.supplier_name?.toLowerCase().includes("pasar")) {
+          delete expData.supplier_name;
+        }
+
+        // Restore "Toko" prefix if user wrote "Toko [supplier]" but AI stripped it
+        if (
+          expData.supplier_name &&
+          !expData.supplier_name.toLowerCase().startsWith("toko ") &&
+          new RegExp(`\\btoko\\s+${expData.supplier_name}\\b`, "i").test(userText)
+        ) {
+          expData.supplier_name = `Toko ${expData.supplier_name}`;
+        }
+
+        // Deterministic sum check & filter out generic placeholder items
         if (Array.isArray(expData.items) && expData.items.length > 0) {
+          expData.items = expData.items.filter((it: any) => {
+            const name = (it.item_name || "").toLowerCase().trim();
+            return name && !/^(?:belanja\s+bahan\s+pangan|bahan\s+makanan|bahan\s+pangan|barang|bahan)$/i.test(name);
+          });
+
           let sum = 0;
           expData.items = expData.items.map((it: any) => {
             const qty = Number(it.qty) || 1;
@@ -100,7 +142,7 @@ export async function parseTransactionFromText(
             const total = Number(it.total_price) || qty * price;
             sum += total;
             return {
-              item_name: it.item_name || "Bahan Makanan",
+              item_name: it.item_name,
               qty,
               unit: it.unit || "unit",
               price: price || (qty > 0 ? Math.round(total / qty) : total),
@@ -112,7 +154,10 @@ export async function parseTransactionFromText(
             expData.total_amount = sum;
           }
           expData.subtotal = sum;
+        } else {
+          expData.items = [];
         }
+        expData.notes = userText.trim();
 
         const validated = SupplierReceiptSchema.parse(expData);
         return { type: "SUPPLIER_EXPENSE", data: validated };

@@ -28,6 +28,135 @@ export function parseIndonesianCurrency(text: string): number | null {
   return isNaN(cleanInteger) ? null : cleanInteger;
 }
 
+export interface ParsedItemResult {
+  itemName: string;
+  qty: number;
+  unit: string;
+  price?: number;
+  totalAmount?: number;
+}
+
+function formatTitleCase(str: string): string {
+  return str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.substring(1).toLowerCase());
+}
+
+/**
+ * Parses commodity / item name, quantity, unit, and optional price/amount from conversational text.
+ * Examples:
+ * - "telur ayam 20 rak" -> { itemName: "Telur Ayam", qty: 20, unit: "Rak" }
+ * - "telur ayam 20 rak 600rb" -> { itemName: "Telur Ayam", qty: 20, unit: "Rak", price: 30000, totalAmount: 600000 }
+ * - "20 rak telur ayam" -> { itemName: "Telur Ayam", qty: 20, unit: "Rak" }
+ * - "beras 2 karung 700.000" -> { itemName: "Beras", qty: 2, unit: "Karung", price: 350000, totalAmount: 700000 }
+ */
+export function parseItemAndQtyFromText(input: string): ParsedItemResult | null {
+  let text = input.trim();
+  if (!text) return null;
+
+  // Guard against keywords that are commands or payment methods
+  if (
+    /^(?:tunai|cash|kontan|transfer|tf|bca|bri|mandiri|qris|tempo|bon|batal|cancel|simpan|hapus|ya|tidak|ok)$/i.test(
+      text.toLowerCase()
+    )
+  ) {
+    return null;
+  }
+
+  // Guard against standalone numbers or standalone currency
+  if (/^(?:rp\.?\s*)?\d+(?:[.,]\d+)?\s*(?:rb|ribu|jt|juta|k)?$/i.test(text)) {
+    return null;
+  }
+
+  let parsedAmount: number | undefined;
+  let parsedPrice: number | undefined;
+
+  const unitRegex = /(?:kg|kilogram|rak|karung|jerigen|liter|ekor|ikat|bungkus|karton|biji|butir|paket|ons|gram|bal)\b/i;
+
+  // 1. Check for "@ <unit price>"
+  const atPriceMatch = text.match(/@\s*(\d+(?:[.,]\d+)?\s*(?:rb|ribu|jt|juta|k\b)?|\d{3,})/i);
+  if (atPriceMatch) {
+    parsedPrice = parseIndonesianCurrency(atPriceMatch[1]) || undefined;
+    text = text.replace(atPriceMatch[0], "").trim();
+  }
+
+  // 2. Check for trailing total amount, e.g. "600rb", "600.000", "700.000", "total 600rb"
+  const amountMatch = text.match(
+    /(?:sebesar|total|harga|nominal)?\s*(?:rp\.?\s*)?(\d{1,3}(?:\.\d{3})+|\d+(?:[.,]\d+)?\s*(?:rb|ribu|jt|juta|k\b)|\d{4,})(?:\s*$|\s+(?:tunai|cash|transfer|lunas))/i
+  );
+  if (amountMatch) {
+    parsedAmount = parseIndonesianCurrency(amountMatch[1]) || undefined;
+    text = text.replace(amountMatch[0], "").trim();
+  }
+
+  // Clean prefix keywords
+  text = text.replace(/^(?:tambah(?:kan)?|beli|belanja|barang|bahan)\s+/i, "").trim();
+
+  // 3. Pattern: "[Qty] [Unit] [Item Name]" e.g. "20 rak telur ayam"
+  const pLeadingQty = new RegExp(`^(\\d+(?:[.,]\\d+)?)\\s*(${unitRegex.source})\\s+(.+)$`, "i");
+  const mLeading = text.match(pLeadingQty);
+  if (mLeading) {
+    const qty = parseFloat(mLeading[1].replace(/,/g, "."));
+    const unit = mLeading[2].trim();
+    const rawName = mLeading[3].trim();
+    if (rawName.length >= 2 && qty > 0) {
+      return {
+        itemName: formatTitleCase(rawName),
+        qty,
+        unit: formatTitleCase(unit),
+        price: parsedPrice || (parsedAmount ? Math.round(parsedAmount / qty) : 0),
+        totalAmount: parsedAmount || (parsedPrice ? parsedPrice * qty : undefined),
+      };
+    }
+  }
+
+  // 4. Pattern: "[Item Name] [Qty] [Unit]" e.g. "telur ayam 20 rak"
+  const pTrailingQty = new RegExp(`^(.+?)\\s+(\\d+(?:[.,]\\d+)?)\\s*(${unitRegex.source})$`, "i");
+  const mTrailing = text.match(pTrailingQty);
+  if (mTrailing) {
+    const rawName = mTrailing[1].trim();
+    const qty = parseFloat(mTrailing[2].replace(/,/g, "."));
+    const unit = mTrailing[3].trim();
+    if (rawName.length >= 2 && qty > 0) {
+      return {
+        itemName: formatTitleCase(rawName),
+        qty,
+        unit: formatTitleCase(unit),
+        price: parsedPrice || (parsedAmount ? Math.round(parsedAmount / qty) : 0),
+        totalAmount: parsedAmount || (parsedPrice ? parsedPrice * qty : undefined),
+      };
+    }
+  }
+
+  // 5. Pattern: "[Item Name] [Qty]" without explicit known unit, e.g. "telur ayam 20"
+  const pNoUnit = /^(.+?)\s+(\d+(?:[.,]\d+)?)$/i;
+  const mNoUnit = text.match(pNoUnit);
+  if (mNoUnit) {
+    const rawName = mNoUnit[1].trim();
+    const qty = parseFloat(mNoUnit[2].replace(/,/g, "."));
+    if (rawName.length >= 2 && qty > 0) {
+      return {
+        itemName: formatTitleCase(rawName),
+        qty,
+        unit: "Unit",
+        price: parsedPrice || (parsedAmount ? Math.round(parsedAmount / qty) : 0),
+        totalAmount: parsedAmount || (parsedPrice ? parsedPrice * qty : undefined),
+      };
+    }
+  }
+
+  // 6. If user just gave item name, e.g. "telur ayam"
+  if (text.length >= 2 && !/^\d+$/.test(text)) {
+    return {
+      itemName: formatTitleCase(text),
+      qty: 1,
+      unit: "Unit",
+      price: parsedPrice || parsedAmount || 0,
+      totalAmount: parsedAmount || parsedPrice || undefined,
+    };
+  }
+
+  return null;
+}
+
 /**
  * Regex-based heuristic parser for transactions when all AI engines are unavailable.
  * Supports patterns like:
@@ -79,8 +208,9 @@ export function staticParseTransaction(
 
       const receipt: SupplierReceipt = {
         type: "expense",
-        supplier_name: rawSupplier || "Supplier Pasar",
+        supplier_name: rawSupplier || "",
         date: todayStr,
+        receipt_no: "",
         sppg_ref_no: "",
         items: [
           {
@@ -95,8 +225,8 @@ export function staticParseTransaction(
         discount: 0,
         tax: 0,
         total_amount: totalAmount,
-        payment_method: rawPayment ? (rawPayment.toLowerCase().includes("tf") || rawPayment.toLowerCase().includes("transfer") ? "Transfer" : "Cash") : "Cash",
-        notes: "Pencatatan Offline (Regex Fallback Layer 3)",
+        payment_method: rawPayment ? (rawPayment.toLowerCase().includes("tf") || rawPayment.toLowerCase().includes("transfer") ? "Transfer" : "Tunai") : undefined,
+        notes: text.trim(),
       };
 
       return { type: "SUPPLIER_EXPENSE", data: receipt };
@@ -116,8 +246,9 @@ export function staticParseTransaction(
     if (totalAmount && totalAmount > 0) {
       const receipt: SupplierReceipt = {
         type: "expense",
-        supplier_name: rawSupplier || "Supplier Rekanan",
+        supplier_name: rawSupplier || "",
         date: todayStr,
+        receipt_no: "",
         sppg_ref_no: "",
         items: [
           {
@@ -132,8 +263,8 @@ export function staticParseTransaction(
         discount: 0,
         tax: 0,
         total_amount: totalAmount,
-        payment_method: lower.includes("transfer") ? "Transfer" : "Cash",
-        notes: "Pencatatan Offline (Regex Fallback Layer 3)",
+        payment_method: (lower.includes("transfer") || lower.includes("tf")) ? "Transfer" : ((lower.includes("tunai") || lower.includes("cash")) ? "Tunai" : undefined),
+        notes: text.trim(),
       };
 
       return { type: "SUPPLIER_EXPENSE", data: receipt };

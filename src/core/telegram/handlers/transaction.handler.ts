@@ -1,5 +1,5 @@
 import { Context, InlineKeyboard } from "grammy";
-import type { BotContext } from "../types/bot-context.js";
+import { type BotContext, pendingLinkRequests } from "../types/bot-context.js";
 import { googleSheetsService } from "../../google/sheets.service.js";
 import { SHEET_NAMES } from "../../google/sheets-recipes.js";
 import {
@@ -105,8 +105,8 @@ export function registerTransactionHandlers(bCtx: BotContext) {
       const isTab05 = preview.sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN;
       const tabDesc = isTab05 ? "Rincian Pengeluaran (Tab 05)" : "Rincian Pendapatan (Tab 03)";
       const parentHint = isTab05
-        ? `silakan kelola atau hapus Faktur/Nota Induk di Tab 04 (${escapeHtml(preview.orderNo || "Tab 04_PAGU_PENGELUARAN")}).`
-        : `silakan kelola atau hapus Pagu Induk di Tab 02 (${escapeHtml(preview.orderNo || "Tab 02_PAGU_PENERIMAAN")}).`;
+        ? `silakan kelola atau hapus Faktur/Nota Induk di Tab 04 (${escapeHtml(preview.orderNo || "Tab 04 (Pengeluaran)")}).`
+        : `silakan kelola atau hapus Pagu Induk di Tab 02 (${escapeHtml(preview.orderNo || "Tab 02 (Pendapatan)")}).`;
 
       return safeEditMessageText(
         ctx,
@@ -194,6 +194,115 @@ export function registerTransactionHandlers(bCtx: BotContext) {
     }
   });
 
+  // [🗑️ Ya, Hapus Semua (Batch Cascade Delete)]
+  bCtx.bot.callbackQuery("v:trx:delbatch:yes", async (ctx) => {
+    if (await bCtx.isCallerMember(ctx.from?.id)) {
+      return ctx.answerCallbackQuery({
+        text: "⛔ Akses Ditolak: Penghapusan transaksi hanya dapat dilakukan oleh Admin.",
+        show_alert: true,
+      });
+    }
+
+    const state = ctx.from ? bCtx.getState(ctx.from.id) : undefined;
+    const batchItems = state?.activeDeleteBatchTransactions;
+    if (state) {
+      state.activeDraftMsgId = undefined;
+    }
+
+    if (!batchItems || batchItems.length === 0) {
+      await ctx.answerCallbackQuery({ text: "Sesi penghapusan telah kadaluarsa." });
+      return safeEditMessageText(ctx, "⚠️ <i>Sesi konfirmasi telah kadaluarsa. Silakan ketik perintah hapus kembali.</i>", {
+        parse_mode: "HTML",
+      });
+    }
+
+    await ctx.answerCallbackQuery({ text: "🗑️ Menghapus transaksi terpilih...", show_alert: false });
+    await safeEditMessageText(
+      ctx,
+      `⏳ <i>Sedang mengeksekusi penghapusan cascading ${batchItems.length} transaksi di Google Sheets...</i>`,
+      { parse_mode: "HTML" }
+    );
+
+    const deletedResults: Array<{
+      id: string;
+      orderNo?: string;
+      amount?: number;
+      supplierOrUnit?: string;
+      success: boolean;
+      message: string;
+    }> = [];
+
+    for (const item of batchItems) {
+      const res = await googleSheetsService.deleteTransactionRow(
+        bCtx.unitConfig.spreadsheetId,
+        item.transactionId
+      );
+      deletedResults.push({
+        id: item.transactionId,
+        orderNo: item.orderNo,
+        amount: item.amount,
+        supplierOrUnit: item.supplierOrUnit,
+        success: res.success,
+        message: res.message,
+      });
+    }
+
+    const successes = deletedResults.filter((r) => r.success);
+    const failures = deletedResults.filter((r) => !r.success);
+
+    let summaryText = "";
+    if (successes.length > 0) {
+      let totalAmountDeleted = 0;
+      const successLines = successes
+        .map((s, idx) => {
+          const amt = s.amount || 0;
+          totalAmountDeleted += amt;
+          const ref = s.orderNo && s.orderNo !== "-" ? s.orderNo : (s.supplierOrUnit || "Transaksi");
+          return `  ${idx + 1}. <s>${escapeHtml(s.id)}</s> (${escapeHtml(ref)}) - <b>${formatRupiah(amt)}</b>`;
+        })
+        .join("\n");
+
+      summaryText = [
+        `🗑️ <b>${successes.length} Transaksi Berhasil Dihapus!</b>`,
+        `------------------------------------------`,
+        successLines,
+        `------------------------------------------`,
+        `• <b>Total Nilai Dihapus:</b> <b>${formatRupiah(totalAmountDeleted)}</b>`,
+        `✅ Seluruh baris data induk dan data anak relasional di Google Sheets telah dibersihkan secara cascading.`,
+      ].join("\n");
+    }
+
+    if (failures.length > 0) {
+      const failLines = failures
+        .map((f, idx) => `  ${idx + 1}. <code>${escapeHtml(f.id)}</code>: ${escapeHtml(f.message)}`)
+        .join("\n");
+
+      summaryText += `\n\n⚠️ <b>Gagal Dihapus (${failures.length}):</b>\n${failLines}`;
+    }
+
+    summaryText += `\n\n<i>Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b></i>`;
+
+    await safeEditMessageText(ctx, summaryText, { parse_mode: "HTML" });
+    if (state) {
+      state.activeDeleteBatchTransactions = null;
+    }
+  });
+
+  // [❌ Batalkan Batch Deletion]
+  bCtx.bot.callbackQuery("v:trx:delbatch:no", async (ctx) => {
+    if (ctx.from) {
+      const state = bCtx.getState(ctx.from.id);
+      state.activeDraftMsgId = undefined;
+      state.activeDeleteBatchTransactions = null;
+    }
+    await ctx.answerCallbackQuery({ text: "Penghapusan dibatalkan." });
+    await safeEditMessageText(
+      ctx,
+      `❌ <i>Penghapusan multi-transaksi dibatalkan. Seluruh data di Google Sheets tetap aman.</i>`,
+      { parse_mode: "HTML" }
+    );
+  });
+
   // [🗑️ Ya, Hapus Bahan dari Tab 05]
   bCtx.bot.callbackQuery(/^v:delit_yes:([^:]+)(?::(\d+))?$/, async (ctx) => {
     if (await bCtx.isCallerMember(ctx.from?.id)) {
@@ -239,11 +348,11 @@ export function registerTransactionHandlers(bCtx: BotContext) {
           deletedSummary,
           `------------------------------------------`,
           `• <b>Total Tagihan Berkurang:</b> <b>${formatRupiah(result.totalDeducted)}</b>`,
-          `✅ Baris rincian di <b>Tab 05_RINCIAN_PENGELUARAN</b> telah dihapus.`,
+          `✅ Baris rincian di <b>Tab 05 (Rincian Pengeluaran)</b> telah dihapus.`,
           result.cleanedParent
             ? `✅ Seluruh rincian telah kosong, nota induk di <b>Tab 04</b> otomatis dibersihkan.`
-            : `✅ Total tagihan di <b>Tab 04_PAGU_PENGELUARAN</b> otomatis terpotong.`,
-          `✅ <b>Tab 06_PERBANDINGAN_MARGIN</b> telah direkonsiliasi.`,
+            : `✅ Total tagihan di <b>Tab 04 (Pengeluaran)</b> otomatis terpotong.`,
+          `✅ <b>Tab 06 (Margin)</b> telah direkonsiliasi.`,
           `\n<i>Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b></i>`,
         ].join("\n");
 
@@ -286,9 +395,9 @@ export function registerTransactionHandlers(bCtx: BotContext) {
         `• <b>Nominal Berkurang:</b> <b>${formatRupiah(del.total)}</b>`,
         `• <b>Supplier:</b> ${escapeHtml(del.supplier || "Supplier")}`,
         `------------------------------------------`,
-        `✅ Baris rincian di <b>Tab 05_RINCIAN_PENGELUARAN</b> telah dihapus.`,
-        `✅ Total tagihan di <b>Tab 04_PAGU_PENGELUARAN</b> otomatis berkurang ${formatRupiah(del.total)}.`,
-        `✅ <b>Tab 06_PERBANDINGAN_MARGIN</b> telah direkonsiliasi.`,
+        `✅ Baris rincian di <b>Tab 05 (Rincian Pengeluaran)</b> telah dihapus.`,
+        `✅ Total tagihan di <b>Tab 04 (Pengeluaran)</b> otomatis berkurang ${formatRupiah(del.total)}.`,
+        `✅ <b>Tab 06 (Margin)</b> telah direkonsiliasi.`,
         `\n<i>Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b></i>`,
       ].join("\n");
 
@@ -370,9 +479,9 @@ export function registerTransactionHandlers(bCtx: BotContext) {
           deletedSummary,
           `------------------------------------------`,
           `• <b>Total Pagu Berkurang:</b> <b>${formatRupiah(totalPaguReduced)}</b>`,
-          `✅ Baris bahan di <b>Tab 03_RINCIAN_PENDAPATAN</b> telah dihapus.`,
-          `✅ Total pagu di <b>Tab 02_PAGU_PENERIMAAN</b> otomatis disesuaikan.`,
-          `✅ Baris evaluasi di <b>Tab 06_PERBANDINGAN_MARGIN</b> telah dihapus.`,
+          `✅ Baris bahan di <b>Tab 03 (Rincian Pendapatan)</b> telah dihapus.`,
+          `✅ Total pagu di <b>Tab 02 (Pendapatan)</b> otomatis disesuaikan.`,
+          `✅ Baris evaluasi di <b>Tab 06 (Margin)</b> telah dihapus.`,
           `\n<i>Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b></i>`,
         ].join("\n");
 
@@ -415,9 +524,9 @@ export function registerTransactionHandlers(bCtx: BotContext) {
         `• <b>Pagu Berkurang:</b> <b>${formatRupiah(del.total)}</b>`,
         `• <b>Supplier:</b> ${escapeHtml(del.supplier || "Supplier")}`,
         `------------------------------------------`,
-        `✅ Baris bahan di <b>Tab 03_RINCIAN_PENDAPATAN</b> telah dihapus.`,
-        `✅ Total pagu di <b>Tab 02_PAGU_PENERIMAAN</b> otomatis disesuaikan.`,
-        `✅ Baris evaluasi di <b>Tab 06_PERBANDINGAN_MARGIN</b> telah dihapus.`,
+        `✅ Baris bahan di <b>Tab 03 (Rincian Pendapatan)</b> telah dihapus.`,
+        `✅ Total pagu di <b>Tab 02 (Pendapatan)</b> otomatis disesuaikan.`,
+        `✅ Baris evaluasi di <b>Tab 06 (Margin)</b> telah dihapus.`,
         `\n<i>Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b></i>`,
       ].join("\n");
 
@@ -477,6 +586,7 @@ export function registerTransactionHandlers(bCtx: BotContext) {
     }
     const trxId = ctx.match[1];
     const newAmount = parseInt(ctx.match[2], 10);
+    const callerName = ctx.from?.first_name || "Admin";
     if (ctx.from) {
       const state = bCtx.getState(ctx.from.id);
       state.activeDraftMsgId = undefined;
@@ -487,12 +597,13 @@ export function registerTransactionHandlers(bCtx: BotContext) {
 
     const result = await googleSheetsService.updateTransactionRow(bCtx.unitConfig.spreadsheetId, trxId, {
       total_amount: newAmount,
+      updatedBy: callerName,
     });
 
     if (result.success) {
       await safeEditMessageText(
         ctx,
-        `✅ <b>Berhasil Memperbarui Transaksi!</b>\n\n• ID: <code>${escapeHtml(trxId)}</code>\n• Nominal Baru: <b>${formatRupiah(newAmount)}</b>\n• Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>\n\nData telah disinkronkan ke Google Sheets (termasuk penyelarasan otomatis pada Tab 06 Perbandingan Margin).`,
+        `✅ <b>Berhasil Memperbarui Transaksi Belanja!</b>\n\n• ID: <code>${escapeHtml(trxId)}</code>\n• Nominal Baru: <b>${formatRupiah(newAmount)}</b>\n• Diperbarui Oleh: <b>${escapeHtml(callerName)}</b>\n• Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>\n\nSeluruh data telah disinkronkan ke Google Sheets (Tab 04 Pengeluaran, Tab 05 Rincian Pengeluaran, dan Tab 06 Perbandingan Margin).`,
         { parse_mode: "HTML" }
       );
     } else {
@@ -502,5 +613,87 @@ export function registerTransactionHandlers(bCtx: BotContext) {
         { parse_mode: "HTML" }
       );
     }
+  });
+
+  // [✅ Konfirmasi Tautkan Pengeluaran ke Pagu]
+  bCtx.bot.callbackQuery(/^v:link_ok:(.+)$/, async (ctx) => {
+    if (await bCtx.isCallerMember(ctx.from?.id)) {
+      return ctx.answerCallbackQuery({
+        text: "⛔ Akses Ditolak: Penautan transaksi ke pagu hanya dapat dilakukan oleh Admin.",
+        show_alert: true,
+      });
+    }
+
+    const linkId = ctx.match[1];
+    const pending = pendingLinkRequests.get(linkId);
+
+    if (!pending) {
+      await ctx.answerCallbackQuery({ text: "Sesi penautan telah kedaluwarsa.", show_alert: true });
+      await safeEditMessageText(ctx, "⚠️ <i>Sesi penautan transaksi telah kedaluwarsa atau sudah diproses.</i>", {
+        parse_mode: "HTML",
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: "⚡ Menautkan ke pagu..." });
+    await safeEditMessageText(
+      ctx,
+      `⏳ <i>Sedang memproses penautan pengeluaran <code>${escapeHtml(pending.expenseId)}</code> ke pagu <code>${escapeHtml(pending.paguId)}</code>...</i>`,
+      { parse_mode: "HTML" }
+    );
+
+    const callerName = pending.callerName || ctx.from?.first_name || "Admin";
+    const res = await googleSheetsService.linkExpenseToPagu(
+      bCtx.unitConfig.spreadsheetId,
+      pending.expenseId,
+      pending.paguId,
+      callerName
+    );
+
+    pendingLinkRequests.delete(linkId);
+
+    if (!res.success) {
+      await safeEditMessageText(
+        ctx,
+        `⚠️ <b>Gagal Menautkan Transaksi:</b>\n${escapeHtml(res.error || "Terjadi kesalahan saat memperbarui Google Sheets.")}`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    const unitName = bCtx.unitConfig.name;
+    const replyText = [
+      `Baik <b>${escapeHtml(callerName)}</b>, perintah Anda untuk menautkan transaksi pengeluaran <code>${escapeHtml(pending.expenseId)}</code> ke nota pagu pesanan <code>${escapeHtml(pending.paguId)}</code> telah saya terima.\n`,
+      `<b>Detail Pengaitan Transaksi:</b>`,
+      `• <b>ID Pengeluaran:</b> <code>${escapeHtml(pending.expenseId)}</code>`,
+      `• <b>ID Pagu Pesanan:</b> <code>${escapeHtml(pending.paguId)}</code>`,
+      `• <b>Status:</b> Siap diproses untuk alokasi realisasi belanja terhadap plafon anggaran <b>${escapeHtml(unitName)}</b>.\n`,
+      `<b>Catatan:</b>`,
+      `Untuk memverifikasi atau melihat pembaruan relasi transaksi dan perhitungan margin secara langsung dari Google Sheets, ${escapeHtml(callerName)} dapat mengetik <code>rekap</code> atau menekan menu 🔍 Riwayat Belanja.\n`,
+      `Ada hal lain yang ingin dibantu atau dicatat lagi, ${escapeHtml(callerName)}?`,
+    ].join("\n");
+
+    const kb = new InlineKeyboard()
+      .text("🔍 Riwayat Belanja", "v:tx:list:5")
+      .text("📊 Cek Rekap", "v:rekap:today")
+      .row()
+      .url("🌐 Buka Spreadsheet", `https://docs.google.com/spreadsheets/d/${bCtx.unitConfig.spreadsheetId}/edit`);
+
+    await safeEditMessageText(ctx, replyText, {
+      parse_mode: "HTML",
+      reply_markup: kb,
+    });
+  });
+
+  // [❌ Batal Tautkan Pengeluaran ke Pagu]
+  bCtx.bot.callbackQuery(/^v:link_cancel:(.+)$/, async (ctx) => {
+    const linkId = ctx.match[1];
+    pendingLinkRequests.delete(linkId);
+    await ctx.answerCallbackQuery({ text: "Penautan transaksi dibatalkan." });
+    await safeEditMessageText(
+      ctx,
+      `❌ <i>Penautan transaksi pengeluaran ke pagu pesanan telah dibatalkan. Data Google Sheets tidak diubah.</i>`,
+      { parse_mode: "HTML" }
+    );
   });
 }

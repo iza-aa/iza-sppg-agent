@@ -14,7 +14,7 @@ export const SppgOrderItemSchema = z.object({
 export const SppgOrderSchema = z.object({
   type: z.literal("income").default("income").describe("Selalu bernilai 'income' karena ini pagu pendapatan hak tagih vendor"),
   sppg_unit: z.string().default("SPPG Patila, Luwu Utara").describe("Nama unit SPPG (contoh: SPPG Patila, Luwu Utara)"),
-  order_no: z.string().default("PO-AUTO").describe("Nomor surat nota pesanan (contoh: 05/02/09/26)"),
+  order_no: z.string().optional().default("").describe("Nomor surat nota pesanan (contoh: PO-2026/09/SPPG2-01 atau 05/02/09/26). Kosongkan jika user tidak menyebutkan No PO!"),
   order_date: z.string().default(() => new Date().toISOString().slice(0, 10)).describe("Tanggal pesanan format YYYY-MM-DD"),
   arrival_date: z.string().default(() => new Date().toISOString().slice(0, 10)).describe("Tanggal bahan tiba/digunakan format YYYY-MM-DD"),
   items: z.array(SppgOrderItemSchema).describe("Daftar seluruh 20+ bahan makanan yang dipesan"),

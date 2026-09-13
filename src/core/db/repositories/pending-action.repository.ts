@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { SupabaseClient } from "@supabase/supabase-js";
 import { logger } from "../../utils/logger.js";
 
@@ -17,8 +18,20 @@ export interface PendingActionRecord {
   expires_at: string;
 }
 
+/**
+ * Deterministically maps any client draft ID string into a valid RFC4122 UUID
+ * for PostgreSQL UUID primary key compatibility.
+ */
+export function toDraftUuid(id: string): string {
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return id;
+  }
+  const hash = crypto.createHash("md5").update(id).digest("hex");
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
 export class PendingActionRepository {
-  // In-memory fallback map (guarantees zero downtime even before SQL migration)
+  // In-memory fallback map (guarantees fast access and zero latency)
   private memoryStore = new Map<string, PendingActionRecord>();
 
   constructor(private supabase: SupabaseClient) {}
@@ -35,9 +48,21 @@ export class PendingActionRepository {
     // Store in memory
     this.memoryStore.set(record.id, fullRecord);
 
-    // Try persisting to Supabase
+    // Persist to Supabase with valid UUID
     try {
-      await this.supabase.from("sppg_pending_actions").insert(fullRecord);
+      const { ttlMinutes, ...cleanRecord } = fullRecord as any;
+      const dbRecord = {
+        ...cleanRecord,
+        id: toDraftUuid(record.id),
+        payload: {
+          ...(record.payload || {}),
+          _client_draft_id: record.id,
+        },
+      };
+      const { error } = await this.supabase.from("sppg_pending_actions").insert(dbRecord);
+      if (error) {
+        logger.warn({ error, id: record.id }, "Supabase pending draft insert warning");
+      }
     } catch (err) {
       logger.debug({ err, id: record.id }, "Persisting draft to Supabase failed (using in-memory fallback)");
     }
@@ -55,12 +80,13 @@ export class PendingActionRepository {
       return mem;
     }
 
-    // 2. Query Supabase
+    // 2. Query Supabase using mapped UUID
     try {
+      const uuid = toDraftUuid(id);
       const { data, error } = await this.supabase
         .from("sppg_pending_actions")
         .select("*")
-        .eq("id", id)
+        .eq("id", uuid)
         .single();
 
       if (error || !data) return null;
@@ -68,8 +94,14 @@ export class PendingActionRepository {
       if (new Date(data.expires_at).getTime() < Date.now() && data.status === "PENDING") {
         data.status = "EXPIRED";
       }
-      this.memoryStore.set(id, data);
-      return data;
+
+      const restoredRecord: PendingActionRecord = {
+        ...data,
+        id: data.payload?._client_draft_id || id,
+      };
+
+      this.memoryStore.set(id, restoredRecord);
+      return restoredRecord;
     } catch {
       return null;
     }
@@ -85,10 +117,11 @@ export class PendingActionRepository {
     this.memoryStore.set(id, record);
 
     try {
+      const uuid = toDraftUuid(id);
       await this.supabase
         .from("sppg_pending_actions")
         .update({ status: "PROCESSING" })
-        .eq("id", id)
+        .eq("id", uuid)
         .eq("status", "PENDING");
     } catch (err) {
       logger.debug({ err }, "Database lock update fallback to memory");
@@ -105,10 +138,11 @@ export class PendingActionRepository {
     }
 
     try {
+      const uuid = toDraftUuid(id);
       await this.supabase
         .from("sppg_pending_actions")
         .update({ status, resolved_at: new Date().toISOString() })
-        .eq("id", id);
+        .eq("id", uuid);
     } catch (err) {
       logger.debug({ err }, "Database status update fallback to memory");
     }
@@ -122,12 +156,63 @@ export class PendingActionRepository {
     }
 
     try {
+      const uuid = toDraftUuid(id);
+      const payloadWithId = {
+        ...(newPayload || {}),
+        _client_draft_id: id,
+      };
       await this.supabase
         .from("sppg_pending_actions")
-        .update({ payload: newPayload })
-        .eq("id", id);
+        .update({ payload: payloadWithId })
+        .eq("id", uuid);
     } catch (err) {
       logger.debug({ err }, "Database payload update fallback to memory");
     }
+  }
+
+  async getExpiredPending(sppgId?: string): Promise<PendingActionRecord[]> {
+    const expired: PendingActionRecord[] = [];
+    const now = Date.now();
+
+    // 1. Check in-memory store
+    for (const [, record] of this.memoryStore.entries()) {
+      if (record.status === "PENDING" && new Date(record.expires_at).getTime() < now) {
+        if (!sppgId || record.sppg_id === sppgId) {
+          record.status = "EXPIRED";
+          expired.push(record);
+        }
+      }
+    }
+
+    // 2. Query Supabase
+    try {
+      let query = this.supabase
+        .from("sppg_pending_actions")
+        .select("*")
+        .eq("status", "PENDING")
+        .lt("expires_at", new Date().toISOString());
+
+      if (sppgId) {
+        query = query.eq("sppg_id", sppgId);
+      }
+
+      const { data, error } = await query;
+      if (!error && data) {
+        for (const row of data) {
+          const clientDraftId = row.payload?._client_draft_id || row.id;
+          if (!expired.some((e) => e.id === clientDraftId)) {
+            expired.push({
+              ...row,
+              id: clientDraftId,
+              status: "EXPIRED",
+            });
+          }
+        }
+      }
+    } catch (err) {
+      logger.debug({ err }, "Could not query expired drafts from Supabase");
+    }
+
+    return expired;
   }
 }

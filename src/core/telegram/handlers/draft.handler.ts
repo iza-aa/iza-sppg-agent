@@ -1,6 +1,7 @@
 import { Context, InlineKeyboard } from "grammy";
-import type { BotContext } from "../types/bot-context.js";
+import type { BotContext, UserInteractionState } from "../types/bot-context.js";
 import { googleSheetsService } from "../../google/sheets.service.js";
+import { mediaVaultService, mediaBufferCache } from "../../storage/media-vault.service.js";
 import { logger } from "../../utils/logger.js";
 import {
   renderSppgOrderDraftCard,
@@ -15,7 +16,43 @@ import {
   buildPaguSelectorKeyboard,
   buildPaguPromptKeyboard,
   buildCancelInputKeyboard,
+  buildMissingExpenseFieldsKeyboard,
+  buildPaymentMethodPromptKeyboard,
+  buildSupplierNamePromptKeyboard,
+  buildOrderNoPromptKeyboard,
+  buildPaymentMethodPickerKeyboard,
 } from "../keyboards.js";
+
+// Helper to cancel any previous pending draft message before replacing it with a new draft
+export async function cancelPreviousActiveDraftIfAny(
+  bCtx: BotContext,
+  ctx: Context,
+  chatId: number,
+  state: UserInteractionState
+): Promise<void> {
+  if (state.activeDraftId && state.activeDraftMsgId) {
+    mediaBufferCache.delete(state.activeDraftId);
+    cancelDraftAutoExpiry(state.activeDraftId);
+    const oldDraft = await bCtx.pendingRepo.getById(state.activeDraftId).catch(() => null);
+    if (oldDraft && oldDraft.status === "PENDING") {
+      await bCtx.pendingRepo.updateStatus(oldDraft.id, "CANCELLED").catch(() => {});
+      await bCtx.updateActivityStatus(
+        oldDraft.id,
+        "KADALUWARSA",
+        "Draf otomatis ditutup (Digantikan aktivitas baru)",
+        "Mengirim berkas/perintah baru"
+      ).catch(() => {});
+      const cancelledCard = oldDraft.action_type === "SPPG_ORDER"
+        ? renderSppgOrderDraftCard(oldDraft.payload, oldDraft.id, "CANCELLED")
+        : renderSupplierExpenseDraftCard(oldDraft.payload, oldDraft.id, "CANCELLED", oldDraft.media_url);
+      await ctx.api.editMessageText(chatId, state.activeDraftMsgId, cancelledCard, {
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [] },
+        link_preview_options: { is_disabled: true },
+      }).catch(() => {});
+    }
+  }
+}
 
 // Helper to determine the appropriate confirmation keyboard:
 export function getDraftConfirmationReplyMarkup(
@@ -25,14 +62,61 @@ export function getDraftConfirmationReplyMarkup(
   itemsCount?: number,
   hasMultiplePagu?: boolean
 ) {
-  if (
-    actionType === "SUPPLIER_EXPENSE" &&
-    payload?.paguSelectionRequired === true &&
-    Array.isArray(payload?.paguCandidates) &&
-    payload.paguCandidates.length > 1
-  ) {
-    return buildPaguPromptKeyboard(draftId, payload.paguCandidates);
+  if (actionType === "SPPG_ORDER") {
+    const isMissingOrderNo = !payload?.order_no || payload.order_no === "PO-AUTO" || payload.order_no === "-" || payload.order_no.trim() === "";
+    const isMissingAmount = !payload?.total_amount || Number(payload.total_amount) <= 0;
+    if (isMissingOrderNo) {
+      return buildOrderNoPromptKeyboard(draftId);
+    }
+    if (isMissingAmount) {
+      return new InlineKeyboard()
+        .text("💰 Masukkan Total Pagu", `v:sub:nominal:${draftId}`)
+        .row()
+        .text("❌ Batalkan", `v:cancel:${draftId}`);
+    }
+    return buildDraftConfirmationKeyboard(draftId, actionType, itemsCount, hasMultiplePagu);
   }
+
+  if (actionType === "SUPPLIER_EXPENSE") {
+    const isMissingPayment = !payload?.payment_method || payload.payment_method.trim() === "" || payload.payment_method === "-";
+    const isMissingSupplier = !payload?.supplier_name || payload.supplier_name.trim() === "" || payload.supplier_name === "Supplier Pasar";
+    const isMissingAmount = !payload?.total_amount || Number(payload.total_amount) <= 0;
+    const isMissingItems =
+      !payload?.items ||
+      payload.items.length === 0 ||
+      payload.items.every((it: any) => {
+        const n = (it.item_name || "").trim().toLowerCase();
+        return (
+          !n ||
+          n === "belanja bahan pangan" ||
+          n === "bahan makanan" ||
+          n === "bahan pangan" ||
+          n === "barang" ||
+          n === "bahan" ||
+          n === "-"
+        );
+      });
+
+    if (isMissingPayment || isMissingSupplier || isMissingAmount || isMissingItems) {
+      return buildMissingExpenseFieldsKeyboard(draftId, {
+        isMissingAmount,
+        isMissingPayment,
+        isMissingSupplier,
+        isMissingItems,
+      });
+    }
+
+    if (
+      payload?.paguSelectionRequired === true &&
+      Array.isArray(payload?.paguCandidates) &&
+      payload.paguCandidates.length > 0
+    ) {
+      return buildPaguPromptKeyboard(draftId, payload.paguCandidates);
+    }
+
+    return buildDraftConfirmationKeyboard(draftId, actionType, itemsCount, hasMultiplePagu);
+  }
+
   return buildDraftConfirmationKeyboard(draftId, actionType, itemsCount, hasMultiplePagu);
 }
 
@@ -42,7 +126,6 @@ export async function enrichReceiptWithPaguContext(
   receipt: any
 ): Promise<boolean> {
   const firstItem = receipt?.items?.[0];
-  if (!firstItem?.item_name) return false;
   try {
     // 1. If explicitly marked as Non-Pagu / Belanja Tambahan
     if (receipt.sppg_ref_no === "-") {
@@ -51,18 +134,28 @@ export async function enrichReceiptWithPaguContext(
         sppg_ref_no: "-",
         order_date: "-",
         pagu_supplier: "-",
-        item_name: firstItem.item_name,
+        item_name: firstItem?.item_name || "-",
         target_qty: 0,
-        unit: firstItem.unit || "",
+        unit: firstItem?.unit || "",
         fulfilled_qty: 0,
-        current_qty: firstItem.qty,
+        current_qty: firstItem?.qty || 0,
         remaining_qty: 0,
         candidates_count: 0,
       };
       return false;
     }
 
-    // 2. Gather candidates across ALL items in the receipt (not just firstItem)
+    // 2. Fetch available orders in this unit
+    const orders = await googleSheetsService.getPaguOrders(spreadsheetId);
+
+    // If unit has NO orders in Tab 02, default to Non-Pagu
+    if (orders.length === 0) {
+      receipt.sppg_ref_no = "-";
+      receipt.paguSelectionRequired = false;
+      return false;
+    }
+
+    // 3. Gather candidates across ALL items in the receipt (not just firstItem)
     const items: Array<{ item_name: string; qty: number; unit?: string }> = receipt?.items || [];
     const allCandidatesMap = new Map<string, any>();
 
@@ -81,28 +174,18 @@ export async function enrichReceiptWithPaguContext(
 
     const candidates = Array.from(allCandidatesMap.values());
 
-    // 2. No active unfulfilled candidates found in 06_PERBANDINGAN_MARGIN
-    if (candidates.length === 0) {
-      receipt.sppg_ref_no = "-";
-      receipt.paguSelectionRequired = false;
-      receipt.paguContext = {
-        sppg_ref_no: "-",
-        order_date: "-",
-        pagu_supplier: "-",
-        item_name: firstItem.item_name,
-        target_qty: 0,
-        unit: firstItem.unit || "",
-        fulfilled_qty: 0,
-        current_qty: firstItem.qty,
-        remaining_qty: 0,
-        candidates_count: 0,
-      };
-      return false;
-    }
-
-    // 3. If receipt already specifies an explicit PO number (from caption, OCR, or user button tap)
+    // 4. If receipt already specifies an explicit PO number (from caption, OCR, or user button tap)
     if (receipt.sppg_ref_no && receipt.sppg_ref_no !== "-") {
-      const matched = candidates.find((c) => c.sppg_ref_no === receipt.sppg_ref_no) || candidates[0];
+      const matched = candidates.find((c) => c.sppg_ref_no === receipt.sppg_ref_no) || {
+        sppg_ref_no: receipt.sppg_ref_no,
+        order_date: "-",
+        supplier_name: "-",
+        item_name: firstItem?.item_name || "-",
+        target_qty: 0,
+        unit: firstItem?.unit || "",
+        fulfilled_qty: 0,
+        remaining_qty: 0,
+      };
       receipt.paguSelectionRequired = false;
       receipt.paguContext = {
         sppg_ref_no: matched.sppg_ref_no,
@@ -112,37 +195,47 @@ export async function enrichReceiptWithPaguContext(
         target_qty: matched.target_qty,
         unit: matched.unit,
         fulfilled_qty: matched.fulfilled_qty,
-        current_qty: firstItem.qty,
+        current_qty: firstItem?.qty || 0,
         remaining_qty: matched.remaining_qty,
         candidates_count: candidates.length,
-      };
-      return candidates.length > 1;
-    }
-
-    // 4. Receipt does NOT specify an SPPG Ref:
-    if (candidates.length === 1) {
-      // Unambiguous: exactly 1 unfulfilled candidate
-      receipt.sppg_ref_no = candidates[0].sppg_ref_no;
-      receipt.paguSelectionRequired = false;
-      receipt.paguContext = {
-        sppg_ref_no: candidates[0].sppg_ref_no,
-        order_date: candidates[0].order_date,
-        pagu_supplier: candidates[0].supplier_name,
-        item_name: candidates[0].item_name,
-        target_qty: candidates[0].target_qty,
-        unit: candidates[0].unit,
-        fulfilled_qty: candidates[0].fulfilled_qty,
-        current_qty: firstItem.qty,
-        remaining_qty: candidates[0].remaining_qty,
-        candidates_count: 1,
       };
       return false;
     }
 
-    // 5. Ambiguous: Multiple unfulfilled candidates found! DO NOT GUESS!
+    // 5. User did NOT specify Pagu or Non-Pagu:
+    // Prompt the user to choose! Never silently guess or default to Non-Pagu!
     receipt.paguSelectionRequired = true;
-    receipt.paguCandidates = candidates;
-    receipt.sppg_ref_no = ""; // Keep empty until user chooses
+    receipt.sppg_ref_no = "";
+
+    if (candidates.length > 0) {
+      receipt.paguCandidates = [...candidates];
+      for (const o of orders) {
+        if (!receipt.paguCandidates.some((c: any) => c.sppg_ref_no === o.orderNo)) {
+          receipt.paguCandidates.push({
+            sppg_ref_no: o.orderNo,
+            order_date: o.orderDate,
+            item_name: firstItem?.item_name || "Bahan Belanja",
+            target_qty: 0,
+            unit: firstItem?.unit || "unit",
+            supplier_name: o.notes || "SPPG",
+            remaining_qty: 0,
+            fulfilled_qty: 0,
+          });
+        }
+      }
+    } else {
+      receipt.paguCandidates = orders.map((o) => ({
+        sppg_ref_no: o.orderNo,
+        order_date: o.orderDate,
+        item_name: firstItem?.item_name || "Bahan Belanja",
+        target_qty: 0,
+        unit: firstItem?.unit || "unit",
+        supplier_name: o.notes || "SPPG",
+        remaining_qty: 0,
+        fulfilled_qty: 0,
+      }));
+    }
+
     return true;
   } catch (err) {
     logger.warn({ err }, "Could not enrich receipt with Pagu context");
@@ -150,23 +243,268 @@ export async function enrichReceiptWithPaguContext(
   return false;
 }
 
+export async function handleExpiredOrMissingDraft(
+  bCtx: BotContext,
+  ctx: Context,
+  draft?: any
+): Promise<void> {
+  const currentText = ctx.callbackQuery?.message?.text || ctx.callbackQuery?.message?.caption || "";
+  const chatId = ctx.chat?.id;
+  const msgId = ctx.callbackQuery?.message?.message_id;
+
+  if (currentText) {
+    let updatedCard: string;
+    if (draft && draft.payload) {
+      updatedCard = draft.action_type === "SPPG_ORDER"
+        ? renderSppgOrderDraftCard(draft.payload, draft.id, draft.status === "CANCELLED" ? "CANCELLED" : "EXPIRED")
+        : renderSupplierExpenseDraftCard(draft.payload, draft.id, draft.status === "CANCELLED" ? "CANCELLED" : "EXPIRED", draft.media_url);
+    } else {
+      const statusTitle = "⌛ <b>STATUS: DRAF KEDALUWARSA</b>\n\n<i>Sesi konfirmasi telah berakhir. Silakan kirim ulang dokumen atau buat transaksi baru.</i>";
+      if (/STATUS:/i.test(currentText)) {
+        updatedCard = currentText.replace(/([⏳⚠️❌✅⌛]?\s*STATUS:[\s\S]*$)/i, statusTitle);
+      } else {
+        updatedCard = `${currentText}\n\n------------------------------------------\n${statusTitle}`;
+      }
+    }
+
+    await safeEditMessageText(ctx, updatedCard, {
+      parse_mode: "HTML",
+      reply_markup: { inline_keyboard: [] },
+      link_preview_options: { is_disabled: true },
+    }).catch(async () => {
+      if (chatId && msgId) {
+        await ctx.api.editMessageReplyMarkup(chatId, msgId, {
+          reply_markup: { inline_keyboard: [] },
+        }).catch(() => {});
+      }
+    });
+  } else if (chatId && msgId) {
+    await ctx.api.editMessageReplyMarkup(chatId, msgId, {
+      reply_markup: { inline_keyboard: [] },
+    }).catch(() => {});
+  }
+
+  if (ctx.from) {
+    const state = bCtx.getState(ctx.from.id);
+    state.activeDraftId = undefined;
+    state.activeDraftMsgId = undefined;
+    state.editingField = null;
+    if (state.promptMsgId && chatId) {
+      await ctx.api.deleteMessage(chatId, state.promptMsgId).catch(() => {});
+      state.promptMsgId = undefined;
+    }
+  }
+
+  if (draft?.id) {
+    cancelDraftAutoExpiry(draft.id);
+  }
+
+  await ctx.answerCallbackQuery({
+    text: "⚠️ Draf ini sudah tidak aktif atau kedaluwarsa.",
+    show_alert: true,
+  }).catch(() => {});
+}
+
+const activeDraftTimers = new Map<string, NodeJS.Timeout>();
+
+export function cancelDraftAutoExpiry(draftId: string): void {
+  const timer = activeDraftTimers.get(draftId);
+  if (timer) {
+    clearTimeout(timer);
+    activeDraftTimers.delete(draftId);
+  }
+}
+
+export async function executeDraftAutoExpiry(
+  bCtx: BotContext,
+  draftId: string,
+  chatId: number,
+  messageId?: number
+): Promise<void> {
+  cancelDraftAutoExpiry(draftId);
+
+  const draft = await bCtx.pendingRepo.getById(draftId);
+  if (!draft || draft.status === "SAVED" || draft.status === "CANCELLED" || draft.payload?._auto_expired) {
+    return;
+  }
+
+  draft.payload = { ...(draft.payload || {}), _auto_expired: true };
+  await bCtx.pendingRepo.updatePayload(draftId, draft.payload);
+  await bCtx.pendingRepo.updateStatus(draftId, "EXPIRED");
+
+  const targetMsgId = messageId || draft.payload?.message_id;
+  if (targetMsgId) {
+    const expiredCard =
+      draft.action_type === "SPPG_ORDER"
+        ? renderSppgOrderDraftCard(draft.payload, draftId, "EXPIRED")
+        : renderSupplierExpenseDraftCard(draft.payload, draftId, "EXPIRED", draft.media_url);
+
+    try {
+      await bCtx.bot.api.editMessageText(chatId, targetMsgId, expiredCard, {
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [] },
+        link_preview_options: { is_disabled: true },
+      });
+    } catch (err: any) {
+      if (!err?.description?.includes("message is not modified")) {
+        try {
+          await bCtx.bot.api.editMessageCaption(chatId, targetMsgId, {
+            caption: expiredCard,
+            parse_mode: "HTML",
+            reply_markup: { inline_keyboard: [] },
+          });
+        } catch {
+          await bCtx.bot.api.editMessageReplyMarkup(chatId, targetMsgId, {
+            reply_markup: { inline_keyboard: [] },
+          }).catch(() => {});
+        }
+      }
+    }
+  }
+
+  if (draft.telegram_user_id) {
+    const state = bCtx.getState(draft.telegram_user_id);
+    if (state.activeDraftId === draftId) {
+      state.activeDraftId = undefined;
+      state.activeDraftMsgId = undefined;
+      state.editingField = null;
+      if (state.promptMsgId) {
+        await bCtx.bot.api.deleteMessage(chatId, state.promptMsgId).catch(() => {});
+        state.promptMsgId = undefined;
+      }
+    }
+  }
+
+  await bCtx.updateActivityStatus(
+    draftId,
+    "KEDALUWARSA",
+    "Draf kedaluwarsa otomatis (Batas waktu 10 menit)",
+    "Sistem Otomatis"
+  ).catch(() => {});
+}
+
+export function scheduleDraftAutoExpiry(
+  bCtx: BotContext,
+  draftId: string,
+  chatId: number,
+  messageId: number,
+  ttlMinutes: number = 10
+): void {
+  cancelDraftAutoExpiry(draftId);
+
+  const delayMs = Math.max(1000, ttlMinutes * 60 * 1000);
+  const timer = setTimeout(async () => {
+    try {
+      await executeDraftAutoExpiry(bCtx, draftId, chatId, messageId);
+    } catch (err) {
+      logger.warn({ err, draftId }, "Error executing auto-expiry for draft");
+    } finally {
+      activeDraftTimers.delete(draftId);
+    }
+  }, delayMs);
+
+  timer.unref();
+  activeDraftTimers.set(draftId, timer);
+}
+
+export async function sweepExpiredDrafts(bCtx: BotContext): Promise<void> {
+  try {
+    const expired = await bCtx.pendingRepo.getExpiredPending(bCtx.unitConfig.id);
+    for (const draft of expired) {
+      if (draft.telegram_chat_id && draft.payload?.message_id) {
+        await executeDraftAutoExpiry(bCtx, draft.id, draft.telegram_chat_id, draft.payload.message_id);
+      } else {
+        await bCtx.pendingRepo.updateStatus(draft.id, "EXPIRED");
+      }
+    }
+  } catch (err) {
+    logger.debug({ err }, "Error sweeping expired drafts");
+  }
+}
+
 export function registerDraftHandlers(bCtx: BotContext) {
+  // Proactive startup sweep & recurring 60s sweeper
+  sweepExpiredDrafts(bCtx).catch(() => {});
+  const sweeper = setInterval(() => {
+    sweepExpiredDrafts(bCtx).catch(() => {});
+  }, 60 * 1000);
+  sweeper.unref();
+
   // [✅ Ya, Simpan]
   bCtx.bot.callbackQuery(/^v:save:(.+)$/, async (ctx) => {
     const draftId = ctx.match[1];
     const draft = await bCtx.pendingRepo.getById(draftId);
 
     if (!draft || draft.status !== "PENDING") {
-      return ctx.answerCallbackQuery({
-        text: "⚠️ Draf ini sudah diproses atau kedaluwarsa.",
-        show_alert: true,
-      });
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
     }
 
     if (draft.action_type === "SPPG_ORDER" && (await bCtx.isCallerMember(ctx.from?.id))) {
       await bCtx.pendingRepo.updateStatus(draftId, "CANCELLED");
       return ctx.answerCallbackQuery({
         text: "⛔ Akses Ditolak: Member hanya memiliki hak akses untuk input Pengeluaran Belanja Supplier.",
+        show_alert: true,
+      });
+    }
+
+    if (
+      draft.action_type === "SPPG_ORDER" &&
+      (!draft.payload?.order_no || draft.payload.order_no === "PO-AUTO" || draft.payload.order_no === "-" || draft.payload.order_no.trim() === "")
+    ) {
+      return ctx.answerCallbackQuery({
+        text: "⚠️ Mohon lengkapi No Surat Pesanan (PO) terlebih dahulu!",
+        show_alert: true,
+      });
+    }
+
+    if (draft.action_type === "SUPPLIER_EXPENSE") {
+      if (!draft.payload?.payment_method || draft.payload.payment_method.trim() === "" || draft.payload.payment_method === "-") {
+        return ctx.answerCallbackQuery({
+          text: "⚠️ Mohon tentukan metode pembayaran (Tunai atau Transfer) terlebih dahulu!",
+          show_alert: true,
+        });
+      }
+      if (!draft.payload?.supplier_name || draft.payload.supplier_name.trim() === "" || draft.payload.supplier_name === "Supplier Pasar") {
+        return ctx.answerCallbackQuery({
+          text: "⚠️ Mohon sebutkan nama toko / supplier belanja terlebih dahulu!",
+          show_alert: true,
+        });
+      }
+      if (!draft.payload?.total_amount || Number(draft.payload.total_amount) <= 0) {
+        return ctx.answerCallbackQuery({
+          text: "⚠️ Mohon masukkan total nominal belanja terlebih dahulu!",
+          show_alert: true,
+        });
+      }
+      const isMissingItems =
+        !draft.payload?.items ||
+        draft.payload.items.length === 0 ||
+        draft.payload.items.every((it: any) => {
+          const n = (it.item_name || "").trim().toLowerCase();
+          return (
+            !n ||
+            n === "belanja bahan pangan" ||
+            n === "bahan makanan" ||
+            n === "bahan pangan" ||
+            n === "barang" ||
+            n === "bahan" ||
+            n === "-"
+          );
+        });
+      if (isMissingItems) {
+        return ctx.answerCallbackQuery({
+          text: "⚠️ Mohon lengkapi rincian barang belanjaan (nama bahan & kuantitas) terlebih dahulu!",
+          show_alert: true,
+        });
+      }
+    }
+
+    if (
+      draft.action_type === "SPPG_ORDER" &&
+      (!draft.payload?.total_amount || Number(draft.payload.total_amount) <= 0)
+    ) {
+      return ctx.answerCallbackQuery({
+        text: "⚠️ Mohon masukkan rincian bahan atau total pagu terlebih dahulu!",
         show_alert: true,
       });
     }
@@ -209,11 +547,66 @@ export function registerDraftHandlers(bCtx: BotContext) {
       const callingUser = ctx.from ? await bCtx.userRepo.getUser(ctx.from.id) : null;
       const recorderName = callingUser?.first_name || ctx.from?.first_name || (ctx.from?.id === 7546537134 ? "Heizaaa" : "Petugas SPPG");
 
+      // Lazy Upload: Upload file to Supabase Media Vault only upon confirmation
+      let mediaUrl = draft.media_url || "";
+      if (!mediaUrl) {
+        const cached = mediaBufferCache.get(draftId);
+        if (cached) {
+          try {
+            const now = new Date();
+            const isPdf = cached.mimeType === "application/pdf" || cached.fileName.toLowerCase().endsWith(".pdf");
+            const subFolderType = draft.action_type === "SPPG_ORDER"
+              ? "01_Nota_Pesanan_SPPG"
+              : (isPdf ? "03_Dokumen_PDF" : "02_Kwitansi_Supplier");
+            const fileExt = isPdf ? ".pdf" : ".png";
+            const fileName = `${now.toISOString().slice(0, 10)}_${Date.now().toString().slice(-4)}${fileExt}`;
+            const uploadRes = await mediaVaultService.uploadReceipt(
+              cached.buffer,
+              fileName,
+              bCtx.unitConfig.id,
+              subFolderType
+            );
+            mediaUrl = uploadRes.webViewLink;
+            draft.media_url = mediaUrl;
+            mediaBufferCache.delete(draftId);
+            logger.info({ draftId, mediaUrl }, "Successfully uploaded media from buffer cache on confirm");
+          } catch (uploadErr) {
+            logger.warn({ err: uploadErr, errMsg: (uploadErr as any)?.message }, "Failed lazy upload from buffer cache on confirm");
+          }
+        } else if (draft.payload?.telegram_file_id) {
+          try {
+            const file = await ctx.api.getFile(draft.payload.telegram_file_id);
+            if (file.file_path) {
+              const fileUrl = `https://api.telegram.org/file/bot${bCtx.unitConfig.token}/${file.file_path}`;
+              const res = await fetch(fileUrl);
+              const buffer = Buffer.from(await res.arrayBuffer());
+              const now = new Date();
+              const isPdf = draft.payload?.mime_type === "application/pdf" || (draft.payload?.file_name && String(draft.payload.file_name).toLowerCase().endsWith(".pdf"));
+              const subFolderType = draft.action_type === "SPPG_ORDER"
+                ? "01_Nota_Pesanan_SPPG"
+                : (isPdf ? "03_Dokumen_PDF" : "02_Kwitansi_Supplier");
+              const fileExt = isPdf ? ".pdf" : ".png";
+              const fileName = `${now.toISOString().slice(0, 10)}_${Date.now().toString().slice(-4)}${fileExt}`;
+              const uploadRes = await mediaVaultService.uploadReceipt(
+                buffer,
+                fileName,
+                bCtx.unitConfig.id,
+                subFolderType
+              );
+              mediaUrl = uploadRes.webViewLink;
+              draft.media_url = mediaUrl;
+            }
+          } catch (uploadErr) {
+            logger.warn({ err: uploadErr, errMsg: (uploadErr as any)?.message }, "Failed lazy upload from telegram on confirm");
+          }
+        }
+      }
+
       if (draft.action_type === "SPPG_ORDER") {
         await googleSheetsService.recordSppgOrder(
           bCtx.unitConfig.spreadsheetId,
           draft.payload,
-          draft.media_url || "",
+          draft.media_url || mediaUrl || "",
           draft.payload?.notes || "",
           recorderName
         );
@@ -244,18 +637,20 @@ export function registerDraftHandlers(bCtx: BotContext) {
               items: groupItems,
               total_amount: groupTotal,
               subtotal: groupTotal,
+              driveLink: draft.media_url || mediaUrl || draft.payload?.driveLink || "",
             });
           }
           await googleSheetsService.recordSupplierExpenseBatch(
             bCtx.unitConfig.spreadsheetId,
             batchTransactions,
-            recorderName
+            recorderName,
+            draft.payload?.notes || ""
           );
         } else {
           await googleSheetsService.recordSupplierExpense(
             bCtx.unitConfig.spreadsheetId,
             draft.payload,
-            draft.media_url || "",
+            draft.media_url || mediaUrl || "",
             recorderName,
             draft.payload?.notes || ""
           );
@@ -263,6 +658,26 @@ export function registerDraftHandlers(bCtx: BotContext) {
       }
 
       await bCtx.pendingRepo.updateStatus(draftId, "SAVED");
+      cancelDraftAutoExpiry(draftId);
+
+      (ctx as any)._activityLogged = true;
+
+      const actionDesc = draft.action_type === "SPPG_ORDER"
+        ? "Berkas diunggah ke Media Vault & Data disimpan ke Tab 02 (Pendapatan), Tab 03 (Rincian), Tab 06 (Margin)"
+        : "Berkas diunggah ke Media Vault & Data disimpan ke Tab 04 (Pengeluaran), Tab 05 (Rincian), Tab 06 (Margin)";
+
+      const userMsgDesc = "Klik [Ya, Simpan]";
+
+      const updated = await bCtx.updateActivityStatus(draftId, "SUKSES", actionDesc, userMsgDesc);
+      if (!updated) {
+        await bCtx.logActivity(ctx, {
+          mediaType: "Tombol",
+          userMessage: userMsgDesc,
+          systemAction: actionDesc,
+          refId: draftId,
+          status: "SUKSES",
+        });
+      }
 
       if (ctx.from) {
         const state = bCtx.getState(ctx.from.id);
@@ -275,10 +690,19 @@ export function registerDraftHandlers(bCtx: BotContext) {
           ? renderSppgOrderDraftCard(draft.payload, draftId, "SAVED")
           : renderSupplierExpenseDraftCard(draft.payload, draftId, "SAVED", draft.media_url);
 
-      await safeEditMessageText(ctx, successCard, { parse_mode: "HTML" });
+      await safeEditMessageText(ctx, successCard, {
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+      });
     } catch (saveErr: any) {
       logger.error({ saveErr }, "Failed saving to Google Sheets, restoring draft status to PENDING");
       await bCtx.pendingRepo.updateStatus(draftId, "PENDING");
+      await bCtx.logActivity(ctx, {
+        mediaType: "Tombol",
+        userMessage: "Klik [✅ Ya, Simpan]",
+        systemAction: `Gagal Simpan: ${saveErr?.message || "Error"}`,
+        status: "GAGAL",
+      });
       const itemsCount = draft.action_type === "SPPG_ORDER" ? draft.payload?.items?.length || 0 : undefined;
       await safeEditMessageText(
         ctx,
@@ -295,8 +719,8 @@ export function registerDraftHandlers(bCtx: BotContext) {
   bCtx.bot.callbackQuery(/^v:viewitems:(.+)$/, async (ctx) => {
     const draftId = ctx.match[1];
     const draft = await bCtx.pendingRepo.getById(draftId);
-    if (!draft || draft.action_type !== "SPPG_ORDER") {
-      return ctx.answerCallbackQuery({ text: "⚠️ Rincian bahan tidak ditemukan.", show_alert: true });
+    if (!draft || draft.status !== "PENDING" || draft.action_type !== "SPPG_ORDER") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
     }
 
     await ctx.answerCallbackQuery();
@@ -310,9 +734,14 @@ export function registerDraftHandlers(bCtx: BotContext) {
   // [✏️ Koreksi Draf]
   bCtx.bot.callbackQuery(/^v:edit:(.+)$/, async (ctx) => {
     const draftId = ctx.match[1];
+    const draft = await bCtx.pendingRepo.getById(draftId);
+    if (!draft || draft.status !== "PENDING") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
+    }
+
     await ctx.answerCallbackQuery();
     await ctx.editMessageReplyMarkup({
-      reply_markup: buildEditSubmenuKeyboard(draftId),
+      reply_markup: buildEditSubmenuKeyboard(draftId, draft.action_type),
     });
   });
 
@@ -320,7 +749,9 @@ export function registerDraftHandlers(bCtx: BotContext) {
   bCtx.bot.callbackQuery(/^v:sub:back:(.+)$/, async (ctx) => {
     const draftId = ctx.match[1];
     const draft = await bCtx.pendingRepo.getById(draftId);
-    if (!draft) return ctx.answerCallbackQuery();
+    if (!draft || draft.status !== "PENDING") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
+    }
 
     const state = bCtx.getState(ctx.from.id);
     if (state.promptMsgId && ctx.chat) {
@@ -328,6 +759,17 @@ export function registerDraftHandlers(bCtx: BotContext) {
       state.promptMsgId = undefined;
     }
     state.editingField = null;
+
+    if (draft.action_type === "SPPG_ORDER" && draft.payload?.items?.length) {
+      const computedTotal = draft.payload.items.reduce(
+        (sum: number, it: any) => sum + (Number(it.qty) * Number(it.price) || Number(it.total_price) || 0),
+        0
+      );
+      if (computedTotal > 0) {
+        draft.payload.total_amount = computedTotal;
+        await bCtx.pendingRepo.updatePayload(draftId, draft.payload);
+      }
+    }
 
     const itemsCount = draft.action_type === "SPPG_ORDER" ? draft.payload?.items?.length || 0 : undefined;
     const draftCard =
@@ -345,11 +787,30 @@ export function registerDraftHandlers(bCtx: BotContext) {
   // [❌ Batalkan Draf]
   bCtx.bot.callbackQuery(/^v:cancel:(.+)$/, async (ctx) => {
     const draftId = ctx.match[1];
+    mediaBufferCache.delete(draftId);
     const draft = await bCtx.pendingRepo.getById(draftId);
-    if (!draft) return ctx.answerCallbackQuery();
+    if (!draft || draft.status !== "PENDING") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
+    }
 
     await bCtx.pendingRepo.updateStatus(draftId, "CANCELLED");
-    await ctx.answerCallbackQuery({ text: "❌ Draf berhasil dibatalkan." });
+    cancelDraftAutoExpiry(draftId);
+    await ctx.answerCallbackQuery({ text: "Draf berhasil dibatalkan." });
+
+    (ctx as any)._activityLogged = true;
+
+    const cancelAction = "Draf dibatalkan oleh pengguna (Berkas tidak disimpan)";
+    const userMsgDesc = "Klik [Batalkan Draf]";
+    const updated = await bCtx.updateActivityStatus(draftId, "DIBATALKAN", cancelAction, userMsgDesc);
+    if (!updated) {
+      await bCtx.logActivity(ctx, {
+        mediaType: "Tombol",
+        userMessage: userMsgDesc,
+        systemAction: cancelAction,
+        refId: draftId,
+        status: "DIBATALKAN",
+      });
+    }
 
     if (ctx.from) {
       const state = bCtx.getState(ctx.from.id);
@@ -362,12 +823,26 @@ export function registerDraftHandlers(bCtx: BotContext) {
         ? renderSppgOrderDraftCard(draft.payload, draftId, "CANCELLED")
         : renderSupplierExpenseDraftCard(draft.payload, draftId, "CANCELLED", draft.media_url);
 
-    await safeEditMessageText(ctx, cancelCard, { parse_mode: "HTML" });
+    await safeEditMessageText(ctx, cancelCard, {
+      parse_mode: "HTML",
+      link_preview_options: { is_disabled: true },
+    });
   });
 
   // [💰 Ganti Total Nominal]
   bCtx.bot.callbackQuery(/^v:sub:nominal:(.+)$/, async (ctx) => {
     const draftId = ctx.match[1];
+    const draft = await bCtx.pendingRepo.getById(draftId);
+    if (!draft || draft.status !== "PENDING") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
+    }
+    if (draft.action_type === "SPPG_ORDER") {
+      return ctx.answerCallbackQuery({
+        text: "ℹ️ Total Pagu dihitung otomatis dari rincian bahan (Kuantitas × Harga).",
+        show_alert: true,
+      });
+    }
+
     const state = bCtx.getState(ctx.from.id);
     state.activeDraftId = draftId;
     state.editingField = "nominal";
@@ -384,9 +859,86 @@ export function registerDraftHandlers(bCtx: BotContext) {
     state.promptMsgId = prompt.message_id;
   });
 
+  // [📄 Ganti No PO (Khusus Pagu Induk)]
+  bCtx.bot.callbackQuery(/^v:sub:orderno:(.+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const draft = await bCtx.pendingRepo.getById(draftId);
+    if (!draft || draft.status !== "PENDING") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
+    }
+
+    const state = bCtx.getState(ctx.from.id);
+    state.activeDraftId = draftId;
+    state.editingField = "orderno";
+
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageReplyMarkup({
+      reply_markup: buildCancelInputKeyboard(draftId),
+    });
+
+    const prompt = await ctx.reply(
+      "Ketik <b>No Pesanan / PO baru</b> (contoh: <code>PO-2026/09/SPPG2-01</code>):",
+      { parse_mode: "HTML" }
+    );
+    state.promptMsgId = prompt.message_id;
+  });
+
+  // [📅 Ganti Tanggal]
+  bCtx.bot.callbackQuery(/^v:sub:date:(.+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const draft = await bCtx.pendingRepo.getById(draftId);
+    if (!draft || draft.status !== "PENDING") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
+    }
+
+    const state = bCtx.getState(ctx.from.id);
+    state.activeDraftId = draftId;
+    state.editingField = "date";
+
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageReplyMarkup({
+      reply_markup: buildCancelInputKeyboard(draftId),
+    });
+
+    const prompt = await ctx.reply(
+      "Ketik <b>tanggal baru</b> (format YYYY-MM-DD, contoh: <code>2026-09-11</code>):",
+      { parse_mode: "HTML" }
+    );
+    state.promptMsgId = prompt.message_id;
+  });
+
+  // [✍️ Ganti Penandatangan (Khusus Pagu Induk)]
+  bCtx.bot.callbackQuery(/^v:sub:signer:(.+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const draft = await bCtx.pendingRepo.getById(draftId);
+    if (!draft || draft.status !== "PENDING") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
+    }
+
+    const state = bCtx.getState(ctx.from.id);
+    state.activeDraftId = draftId;
+    state.editingField = "signer";
+
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageReplyMarkup({
+      reply_markup: buildCancelInputKeyboard(draftId),
+    });
+
+    const prompt = await ctx.reply(
+      "Ketik <b>nama penandatangan baru</b> (contoh: <i>Ka. SPPG</i> atau <i>Budi Santoso</i>):",
+      { parse_mode: "HTML" }
+    );
+    state.promptMsgId = prompt.message_id;
+  });
+
   // [🏪 Ganti Nama Toko/Unit]
   bCtx.bot.callbackQuery(/^v:sub:name:(.+)$/, async (ctx) => {
     const draftId = ctx.match[1];
+    const draft = await bCtx.pendingRepo.getById(draftId);
+    if (!draft || draft.status !== "PENDING") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
+    }
+
     const state = bCtx.getState(ctx.from.id);
     state.activeDraftId = draftId;
     state.editingField = "name";
@@ -396,9 +948,38 @@ export function registerDraftHandlers(bCtx: BotContext) {
       reply_markup: buildCancelInputKeyboard(draftId),
     });
 
-    const prompt = await ctx.reply("Ketik <b>nama supplier atau unit baru</b> (contoh: <i>Hj Muliadi</i>):", {
+    const promptText =
+      draft.action_type === "SPPG_ORDER"
+        ? "Ketik <b>nama unit baru</b> (contoh: <i>SPPG Dapur Unit 2</i>):"
+        : "Ketik <b>nama supplier atau unit baru</b> (contoh: <i>Hj Muliadi</i>):";
+
+    const prompt = await ctx.reply(promptText, {
       parse_mode: "HTML",
     });
+    state.promptMsgId = prompt.message_id;
+  });
+
+  // [📦 Masukkan / Ganti Barang Belanja & Qty]
+  bCtx.bot.callbackQuery(/^v:sub:item:(.+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const draft = await bCtx.pendingRepo.getById(draftId);
+    if (!draft || draft.status !== "PENDING") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
+    }
+
+    const state = bCtx.getState(ctx.from.id);
+    state.activeDraftId = draftId;
+    state.editingField = "item";
+
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageReplyMarkup({
+      reply_markup: buildCancelInputKeyboard(draftId),
+    });
+
+    const prompt = await ctx.reply(
+      "Ketik <b>rincian barang & kuantitas</b> (contoh: <code>telur ayam 20 rak</code> atau <code>telur ayam 20 rak 600rb</code>):",
+      { parse_mode: "HTML" }
+    );
     state.promptMsgId = prompt.message_id;
   });
 
@@ -407,7 +988,7 @@ export function registerDraftHandlers(bCtx: BotContext) {
     const draftId = ctx.match[1];
     const draft = await bCtx.pendingRepo.getById(draftId);
     if (!draft || draft.status !== "PENDING") {
-      return ctx.answerCallbackQuery({ text: "⚠️ Draf sudah tidak aktif.", show_alert: true });
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
     }
 
     const firstItem = draft.payload?.items?.[0];
@@ -431,7 +1012,7 @@ export function registerDraftHandlers(bCtx: BotContext) {
     const targetPagu = ctx.match[2];
     const draft = await bCtx.pendingRepo.getById(draftId);
     if (!draft || draft.status !== "PENDING") {
-      return ctx.answerCallbackQuery({ text: "⚠️ Draf sudah tidak aktif.", show_alert: true });
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
     }
 
     draft.payload.sppg_ref_no = targetPagu;
@@ -443,11 +1024,20 @@ export function registerDraftHandlers(bCtx: BotContext) {
       text: targetPagu === "-" ? "Alokasi diset ke Belanja Tambahan (Non-Pagu)" : `Alokasi diset ke PO ${targetPagu}`
     });
 
+    (ctx as any)._activityLogged = true;
+    const paguLabel = targetPagu === "-" ? "Belanja Tambahan (Non-Pagu)" : `PO ${targetPagu}`;
+    await bCtx.updateActivityStatus(
+      draftId,
+      "PENDING",
+      `Alokasi disetel: ${paguLabel}`,
+      `Pilih Alokasi: ${paguLabel}`
+    ).catch(() => {});
+
     const cardText = renderSupplierExpenseDraftCard(draft.payload, draftId, "PENDING", draft.media_url);
     const hasMultiple = (draft.payload as any)?.paguContext?.candidates_count > 1;
     await safeEditMessageText(ctx, cardText, {
       parse_mode: "HTML",
-      reply_markup: buildDraftConfirmationKeyboard(draftId, draft.action_type, undefined, hasMultiple),
+      reply_markup: getDraftConfirmationReplyMarkup(draftId, draft.action_type, draft.payload, undefined, hasMultiple),
     });
   });
 
@@ -456,7 +1046,7 @@ export function registerDraftHandlers(bCtx: BotContext) {
     const draftId = ctx.match[1];
     const draft = await bCtx.pendingRepo.getById(draftId);
     if (!draft || draft.status !== "PENDING") {
-      return ctx.answerCallbackQuery({ text: "⚠️ Draf sudah tidak aktif.", show_alert: true });
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
     }
 
     const firstItem = draft.payload?.items?.[0];
@@ -484,5 +1074,52 @@ export function registerDraftHandlers(bCtx: BotContext) {
       );
       state.promptMsgId = prompt.message_id;
     }
+  });
+
+  // [💵 / 💳 Pilih Metode Pembayaran Draf]
+  bCtx.bot.callbackQuery(/^v:draft:pay:(cash|transfer):(.+)$/, async (ctx) => {
+    const payChoice = ctx.match[1];
+    const draftId = ctx.match[2];
+    const draft = await bCtx.pendingRepo.getById(draftId);
+    if (!draft || draft.status !== "PENDING") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
+    }
+
+    const methodName = payChoice === "cash" ? "Tunai" : "Transfer";
+    draft.payload.payment_method = methodName;
+    await bCtx.pendingRepo.updatePayload(draftId, draft.payload);
+
+    await ctx.answerCallbackQuery({
+      text: `✅ Metode pembayaran diset ke: ${methodName}`,
+    });
+
+    (ctx as any)._activityLogged = true;
+    await bCtx.updateActivityStatus(
+      draftId,
+      "PENDING",
+      `Metode disetel ke ${methodName}`,
+      `Pilih Metode: ${methodName}`
+    ).catch(() => {});
+
+    const cardText = renderSupplierExpenseDraftCard(draft.payload, draftId, "PENDING", draft.media_url);
+    const hasMultiple = (draft.payload as any)?.paguContext?.candidates_count > 1;
+    await safeEditMessageText(ctx, cardText, {
+      parse_mode: "HTML",
+      reply_markup: getDraftConfirmationReplyMarkup(draftId, draft.action_type, draft.payload, undefined, hasMultiple),
+    });
+  });
+
+  // [💳 Ganti Metode Bayar dari Submenu Koreksi]
+  bCtx.bot.callbackQuery(/^v:sub:method:(.+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const draft = await bCtx.pendingRepo.getById(draftId);
+    if (!draft || draft.status !== "PENDING") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
+    }
+
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageReplyMarkup({
+      reply_markup: buildPaymentMethodPickerKeyboard(draftId),
+    });
   });
 }

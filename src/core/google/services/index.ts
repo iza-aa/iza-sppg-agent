@@ -5,3 +5,4 @@ export * from "./cascade-delete.service.js";
 export * from "./margin-sheets.service.js";
 export * from "./pagu-sheets.service.js";
 export * from "./expense-sheets.service.js";
+export * from "./bot-activity-logger.service.js";

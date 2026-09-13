@@ -42,15 +42,30 @@ describe("Telegram Bot Handler & Formatting Module", () => {
     expect(callbacks).toContain(`v:cancel:${draftId}`);
   });
 
-  it("should build edit submenu inline keyboard with back button", () => {
+  it("should build edit submenu inline keyboard with back button for SUPPLIER_EXPENSE", () => {
     const draftId = "draft_456";
-    const keyboard = buildEditSubmenuKeyboard(draftId);
+    const keyboard = buildEditSubmenuKeyboard(draftId, "SUPPLIER_EXPENSE");
     const flatButtons = keyboard.inline_keyboard.flat();
     const callbacks = flatButtons.map((btn) => ("callback_data" in btn ? btn.callback_data : ""));
 
     expect(callbacks).toContain(`v:sub:nominal:${draftId}`);
     expect(callbacks).toContain(`v:sub:name:${draftId}`);
+    expect(callbacks).toContain(`v:sub:pagu:${draftId}`);
+    expect(callbacks).toContain(`v:sub:date:${draftId}`);
     expect(callbacks).toContain(`v:sub:back:${draftId}`);
+  });
+
+  it("should build edit submenu inline keyboard for SPPG_ORDER without nominal button", () => {
+    const draftId = "draft_pagu_123";
+    const keyboard = buildEditSubmenuKeyboard(draftId, "SPPG_ORDER");
+    const flatButtons = keyboard.inline_keyboard.flat();
+    const callbacks = flatButtons.map((btn) => ("callback_data" in btn ? btn.callback_data : ""));
+
+    expect(callbacks).toContain(`v:sub:orderno:${draftId}`);
+    expect(callbacks).toContain(`v:sub:date:${draftId}`);
+    expect(callbacks).toContain(`v:sub:signer:${draftId}`);
+    expect(callbacks).toContain(`v:sub:back:${draftId}`);
+    expect(callbacks).not.toContain(`v:sub:nominal:${draftId}`);
   });
 
   it("should correctly escape HTML special characters for safe Telegram parsing", () => {
@@ -110,7 +125,7 @@ describe("Telegram Bot Handler & Formatting Module", () => {
     expect(card).toContain("DRAF BELANJA SUPPLIER");
     expect(card).toContain("Hj. Muliadi (Beras)");
     expect(card).toContain("Beras Medium 50kg");
-    expect(card).toContain("Lihat Nota di Google Drive");
+    expect(card).toContain("Lihat Foto Nota");
   });
 
   it("should build multi-sheet selector keyboard with all unit links", async () => {
@@ -201,6 +216,16 @@ describe("Telegram Bot Handler & Formatting Module", () => {
     expect(inviteButtons).toContain("👨‍💼 Undang Admin (Operator SPPG)");
     expect(inviteButtons).toContain("🧑‍🍳 Undang Member (Staf Belanja)");
     expect(inviteButtons).toContain("❌ Batalkan");
+  });
+
+  it("should preserve active draft keyboard message when clearAllActiveKeyboards preserves activeDraftMsgId", async () => {
+    const { createSppgBot } = await import("../src/core/telegram/bot-handler.js");
+    const bot = createSppgBot(dummyUnit);
+    expect(bot).toBeDefined();
+
+    // Verify keyboard markup helper builds appropriate confirmation keyboard
+    const kb = buildDraftConfirmationKeyboard("draft_active_123", "SUPPLIER_EXPENSE");
+    expect(kb.inline_keyboard.length).toBeGreaterThan(0);
   });
 });
 

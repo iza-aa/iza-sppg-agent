@@ -6,6 +6,8 @@ import { SHEET_NAMES, SHEET_IDS } from "../recipes/index.js";
 import { getSupabaseClient } from "../../db/supabase.js";
 import { SheetsClientProvider, parseCurrencyNumber } from "./sheets-client.provider.js";
 import { MasterSyncService, MasterAuditLogEntry } from "./master-sync.service.js";
+import { getWibTimestamp, getWibShortTimestamp, formatWibDisplay } from "../../utils/date-time.js";
+import { formatRupiah } from "../../telegram/formatter.js";
 
 export interface PaguOrderSummary {
   orderNo: string;
@@ -112,18 +114,47 @@ export class PaguSheetsService {
     const driveLinkFormula = driveLink ? `=HYPERLINK("${driveLink}"; "Lihat Dokumen")` : "-";
     const ringkasanRowIdx = Math.max(existingCount + 1, 2);
 
-    // 1. Row for 02_PAGU_PENERIMAAN (formula-driven for instant reactivity)
+    const wibTimestamp = getWibTimestamp();
+    const hasDriveLink = Boolean(driveLink && driveLink !== "-" && driveLink.trim() !== "");
+    const rawInput = (rawCaption || order.notes || "").trim();
+    const isPdf = Boolean(
+      (order as any).mime_type === "application/pdf" ||
+      (order as any).file_name?.toLowerCase?.().endsWith(".pdf") ||
+      (driveLink && driveLink.toLowerCase().includes(".pdf"))
+    );
+
+    let keteranganPagu = "-";
+    if (isPdf) {
+      const fName = (order as any).file_name || "";
+      keteranganPagu = fName ? `[Dokumen PDF] ${fName}` : "[Dokumen PDF]";
+    } else if (hasDriveLink) {
+      if (rawInput && !rawInput.startsWith("http") && rawInput !== "-") {
+        keteranganPagu = `[Foto Nota] "${rawInput}"`;
+      } else {
+        keteranganPagu = "[Foto Nota]";
+      }
+    } else if (rawInput && rawInput !== "-") {
+      if (rawInput.startsWith("[Chat]") || rawInput.startsWith("[Foto Nota]") || rawInput.startsWith("[Dokumen PDF]")) {
+        keteranganPagu = rawInput;
+      } else if (rawInput.startsWith("http")) {
+        keteranganPagu = "[Foto Nota]";
+      } else {
+        keteranganPagu = `[Chat] ${rawInput}`;
+      }
+    }
+
+    // 1. Row for 02_PENDAPATAN (10 columns, Mazhab Eksekutif)
     const ringkasanRow = [
-      order.order_no,                                             // A: No SPPG
-      orderId,                                                    // B: ID Transaksi
-      order.order_date,                                           // C: Tanggal Pesanan
-      `=COUNTIF('${SHEET_NAMES.RINCIAN_PENDAPATAN}'!$A:$A; A${ringkasanRowIdx}) & " Item"`, // D: Jumlah Item Bahan
-      supplierCountStr,                                           // E: Jumlah Target Supplier
-      `=SUMIF('${SHEET_NAMES.RINCIAN_PENDAPATAN}'!$A:$A; A${ringkasanRowIdx}; '${SHEET_NAMES.RINCIAN_PENDAPATAN}'!$I:$I)`, // F: Total Pagu Anggaran
+      order.order_no,                                             // A: No SPPG Ref
+      orderId,                                                    // B: ID Pendapatan
+      order.order_date,                                           // C: Tanggal
+      `=COUNTIF('${SHEET_NAMES.RINCIAN_PENDAPATAN}'!$B:$B; B${ringkasanRowIdx}) & " Item"`, // D: Jumlah Bahan
+      supplierCountStr,                                           // E: Target Supplier
+      `=SUMIF('${SHEET_NAMES.RINCIAN_PENDAPATAN}'!$B:$B; B${ringkasanRowIdx}; '${SHEET_NAMES.RINCIAN_PENDAPATAN}'!$I:$I)`, // F: Total Pendapatan
       driveLinkFormula,                                           // G: Link Bukti Dokumen
-      rawCaption || order.notes || "-",                           // H: Pesan Asli Telegram
-      order.signed_by || picName || "Kepala SPPG",               // I: PIC / Penanggung Jawab
-      "-",                                                        // J: Riwayat Edit
+      order.signed_by || picName || "Kepala SPPG",               // H: Penanggung Jawab
+      wibTimestamp,                                               // I: Waktu Input
+      keteranganPagu,                                             // J: Keterangan
     ];
 
     // Query 03_RINCIAN_PENDAPATAN count for row index calculation
@@ -136,20 +167,22 @@ export class PaguSheetsService {
     const rincianExistingCount = (rincianColA.data?.values || []).length;
     const rincianStartRow = Math.max(rincianExistingCount + 1, 2);
 
-    // 2. Rows for 03_RINCIAN_PENDAPATAN (all items with formula on Col I)
+    // 2. Rows for 03_RINCIAN_PENDAPATAN (12 columns, Mazhab Eksekutif)
     const rincianRows = order.items.map((item, idx) => {
       const r = rincianStartRow + idx;
       return [
         order.order_no,                                           // A: No SPPG Ref
-        orderId,                                                  // B: ID Ref
+        orderId,                                                  // B: ID Pendapatan
         idx + 1,                                                  // C: No Urut
-        item.supplier_target || "Lainnya",                        // D: Target Supplier
-        item.item_name,                                           // E: Uraian Bahan
+        item.item_name,                                           // D: Uraian Bahan
+        item.supplier_target || "Lainnya",                        // E: Target Supplier
         item.qty,                                                 // F: Kuantitas
         item.unit,                                                // G: Satuan
-        item.price,                                               // H: Harga Pagu Satuan
+        item.price,                                               // H: Harga Satuan
         `=IF(OR(F${r}=""; H${r}=""); ""; F${r} * H${r})`,        // I: Total Pagu
-        (item as any).specifications || item.category || "-",     // J: Keterangan / Spesifikasi
+        (order as any).pic || picName || "Pengguna",              // J: Pengguna
+        wibTimestamp,                                             // K: Waktu Input
+        (item as any).specifications || "-",                      // L: Keterangan (no junk default)
       ];
     });
 
@@ -167,18 +200,20 @@ export class PaguSheetsService {
       const r = rekapStartRow + idx;
       return [
         order.order_no,                                           // A: No SPPG Ref
-        order.order_date,                                         // B: Tanggal
-        item.supplier_target || "Lainnya",                        // C: Nama Supplier
-        item.item_name,                                           // D: Uraian Bahan
-        item.qty,                                                 // E: Kuantitas
-        item.unit,                                                // F: Satuan
-        item.price,                                               // G: Harga Pagu
-        `=IF(OR(E${r}=""; G${r}=""); ""; E${r} * G${r})`,         // H: Total Pagu
-        "",                                                       // I: Harga Invoice
-        "",                                                       // J: Total Realisasi
-        `=IF(J${r}=""; ""; H${r}-J${r})`,                         // K: Margin Bersih (Rp)
-        `=IF(OR(H${r}=""; J${r}=""); ""; IFERROR(K${r}/H${r}; 0))`, // L: % Margin
-        `=IF(J${r}=""; "🟡 MENUNGGU INVOICE"; IF(K${r}>0; "🟢 HEMAT"; IF(K${r}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`, // M: Status
+        orderId,                                                  // B: ID Pendapatan
+        "-",                                                      // C: ID Pengeluaran
+        order.order_date,                                         // D: Tanggal
+        item.supplier_target || "Lainnya",                        // E: Nama Supplier
+        item.item_name,                                           // F: Uraian Bahan
+        item.qty,                                                 // G: Kuantitas
+        item.unit,                                                // H: Satuan
+        item.price,                                               // I: Harga Pagu
+        `=IF(OR(G${r}=""; I${r}=""); ""; G${r} * I${r})`,         // J: Total Pagu
+        "",                                                       // K: Harga Invoice
+        "",                                                       // L: Total Realisasi
+        `=IF(L${r}=""; ""; J${r}-L${r})`,                         // M: Margin Bersih (Rp)
+        `=IF(OR(J${r}=""; L${r}=""); ""; IFERROR(M${r}/J${r}; 0))`, // N: % Margin
+        `=IF(L${r}=""; "🟡 MENUNGGU INVOICE"; IF(M${r}>0; "🟢 HEMAT"; IF(M${r}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`, // O: Status
       ];
     });
 
@@ -220,21 +255,30 @@ export class PaguSheetsService {
     try {
       const res = await client.spreadsheets.values.get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.PAGU_RINGKASAN}'!A2:H`,
+        range: `'${SHEET_NAMES.PAGU_RINGKASAN}'!A2:K`,
       });
       const rows = res.data.values || [];
       const orders: PaguOrderSummary[] = [];
       for (const row of rows) {
         const orderNo = String(row[0] || "").trim();
         if (!orderNo || orderNo.startsWith("#") || orderNo.toLowerCase().includes("total")) continue;
+        const rawDate = String(row[3] || "").trim();
+        const fallbackDate = String(row[2] || "").trim();
+        const dateIsClean = /^\d{4}-\d{2}-\d{2}/.test(rawDate) || /^\d{2}\/\d{2}\/\d{4}/.test(rawDate);
+        const orderDate = dateIsClean ? rawDate : (rawDate || fallbackDate || "-");
+
+        const amtColG = parseCurrencyNumber(row[6]);
+        const amtColF = parseCurrencyNumber(row[5]);
+        const totalAmount = amtColG > 0 ? amtColG : (amtColF > 0 && !String(row[5] || "").toLowerCase().includes("supplier") ? amtColF : 0);
+
         orders.push({
           orderNo,
           transactionId: String(row[1] || "").trim(),
-          orderDate: String(row[2] || "").trim() || String(row[1] || "").trim(),
-          itemCount: String(row[3] || "").trim() || "-",
-          totalAmount: parseCurrencyNumber(row[5]),
-          link: String(row[6] || "").trim(),
-          notes: String(row[8] || "").trim() || String(row[7] || "").trim(),
+          orderDate,
+          itemCount: String(row[4] || row[3] || "").trim() || "-",
+          totalAmount,
+          link: String(row[7] || row[6] || "").trim(),
+          notes: String(row[9] || row[8] || row[7] || "").trim(),
         });
       }
       return orders;
@@ -253,7 +297,7 @@ export class PaguSheetsService {
     try {
       const res = await client.spreadsheets.values.get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A2:J`,
+        range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A2:K`,
       });
       const rows = res.data.values || [];
       const items: PaguRincianItem[] = [];
@@ -271,8 +315,8 @@ export class PaguSheetsService {
             transactionId: String(row[1] || "").trim(),
             itemIndex: parseInt(String(row[2] || "0"), 10) || items.length + 1,
             rowIndex: idx + 2, // header is row 1
-            supplier: String(row[3] || "").trim(),
-            itemName: String(row[4] || "").trim(),
+            supplier: String(row[4] || "").trim(),
+            itemName: String(row[3] || "").trim(),
             qty,
             unit: String(row[6] || "").trim(),
             price,
@@ -297,7 +341,7 @@ export class PaguSheetsService {
     try {
       const res = await client.spreadsheets.values.get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A${itemRowIndex}:J${itemRowIndex}`,
+        range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A${itemRowIndex}:K${itemRowIndex}`,
       });
       const row = res.data.values?.[0];
       if (!row || !row[0]) return null;
@@ -311,8 +355,8 @@ export class PaguSheetsService {
         transactionId: String(row[1] || "").trim(),
         itemIndex: parseInt(String(row[2] || "0"), 10) || 1,
         rowIndex: itemRowIndex,
-        supplier: String(row[3] || "").trim(),
-        itemName: String(row[4] || "").trim(),
+        supplier: String(row[4] || "").trim(),
+        itemName: String(row[3] || "").trim(),
         qty,
         unit: String(row[6] || "").trim(),
         price,
@@ -356,17 +400,17 @@ export class PaguSheetsService {
       const batchUpdates: { range: string; values: any[][] }[] = [];
       const origItemName = currentItem.itemName;
 
-      // 1. Prepare updates for 03_PAGU_RINCIAN
-      if (updates.supplier !== undefined) {
-        batchUpdates.push({
-          range: `'${SHEET_NAMES.PAGU_RINCIAN}'!D${itemRowIndex}`,
-          values: [[updates.supplier]],
-        });
-      }
+      // 1. Prepare updates for 03_RINCIAN_PENDAPATAN
       if (updates.itemName !== undefined) {
         batchUpdates.push({
-          range: `'${SHEET_NAMES.PAGU_RINCIAN}'!E${itemRowIndex}`,
+          range: `'${SHEET_NAMES.PAGU_RINCIAN}'!D${itemRowIndex}`,
           values: [[updates.itemName]],
+        });
+      }
+      if (updates.supplier !== undefined) {
+        batchUpdates.push({
+          range: `'${SHEET_NAMES.PAGU_RINCIAN}'!E${itemRowIndex}`,
+          values: [[updates.supplier]],
         });
       }
       if (updates.qty !== undefined) {
@@ -386,6 +430,63 @@ export class PaguSheetsService {
           range: `'${SHEET_NAMES.PAGU_RINCIAN}'!H${itemRowIndex}`,
           values: [[updates.price]],
         });
+      }
+
+      // Format and record Edit History directly on Col J (Keterangan)
+      const edits: string[] = [];
+      if (updates.itemName !== undefined && updates.itemName !== currentItem.itemName) {
+        edits.push(`Uraian: ${currentItem.itemName} -> ${updates.itemName}`);
+      }
+      if (updates.supplier !== undefined && updates.supplier !== currentItem.supplier) {
+        edits.push(`Supplier: ${currentItem.supplier} -> ${updates.supplier}`);
+      }
+      if (updates.qty !== undefined && updates.qty !== currentItem.qty) {
+        edits.push(`Qty: ${currentItem.qty} -> ${updates.qty}`);
+      }
+      if (updates.unit !== undefined && updates.unit !== currentItem.unit) {
+        edits.push(`Satuan: ${currentItem.unit} -> ${updates.unit}`);
+      }
+      if (updates.price !== undefined && updates.price !== currentItem.price) {
+        edits.push(`Harga: ${currentItem.price} -> ${updates.price}`);
+      }
+
+      if (edits.length > 0) {
+        const shortTime = getWibShortTimestamp();
+        const editLine = `[Edit ${shortTime}] ${edits.join(", ")} (oleh ${updatedBy})`;
+        const existingNotes = currentItem.notes && currentItem.notes !== "-" ? currentItem.notes : "";
+        const newNotes = existingNotes ? `${existingNotes}\n${editLine}` : editLine;
+        batchUpdates.push({
+          range: `'${SHEET_NAMES.PAGU_RINCIAN}'!J${itemRowIndex}`,
+          values: [[newNotes]],
+        });
+
+        // Also append edit note to Tab 02 Col J (Keterangan) for this orderNo
+        try {
+          const tab02Res = await client.spreadsheets.values.get({
+            spreadsheetId,
+            range: `'${SHEET_NAMES.PAGU_RINGKASAN}'!A:J`,
+          });
+          const tab02Rows = tab02Res.data.values || [];
+          for (let i = 1; i < tab02Rows.length; i++) {
+            if (String(tab02Rows[i][0] || "").trim() === orderNo.trim()) {
+              const tab02RowIdx = i + 1;
+              const existingTab02Notes = String(tab02Rows[i][9] || "").trim();
+              const tab02EditLine = `[Edit ${shortTime}] ${origItemName}: ${edits.join(", ")} (oleh ${updatedBy})`;
+              const newTab02Notes = (existingTab02Notes && existingTab02Notes !== "-")
+                ? `${existingTab02Notes}\n${tab02EditLine}`
+                : tab02EditLine;
+              await client.spreadsheets.values.update({
+                spreadsheetId,
+                range: `'${SHEET_NAMES.PAGU_RINGKASAN}'!J${tab02RowIdx}`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: { values: [[newTab02Notes]] },
+              });
+              break;
+            }
+          }
+        } catch (err: any) {
+          logger.warn({ err: err?.message }, "Non-critical: could not cascade edit note to Tab 02 Col J");
+        }
       }
 
       // Execute Tab 03 updates
@@ -620,7 +721,7 @@ export class PaguSheetsService {
       const client = await this.getClient();
       const res = await client.spreadsheets.values.get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A2:J`,
+        range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A2:K`,
       });
       const rows = res.data.values || [];
       const cleanItem = itemName.toLowerCase().trim();
@@ -628,7 +729,7 @@ export class PaguSheetsService {
 
       for (let idx = 0; idx < rows.length; idx++) {
         const row = rows[idx];
-        const rItem = String(row[4] || "").toLowerCase().trim();
+        const rItem = String(row[3] || "").toLowerCase().trim();
         if (rItem === cleanItem || rItem.includes(cleanItem) || cleanItem.includes(rItem)) {
           const qty = parseCurrencyNumber(row[5]);
           const price = parseCurrencyNumber(row[7]);
@@ -637,8 +738,8 @@ export class PaguSheetsService {
             transactionId: String(row[1] || "").trim(),
             itemIndex: parseInt(String(row[2] || "0"), 10) || matches.length + 1,
             rowIndex: idx + 2,
-            supplier: String(row[3] || "").trim(),
-            itemName: String(row[4] || "").trim(),
+            supplier: String(row[4] || "").trim(),
+            itemName: String(row[3] || "").trim(),
             qty,
             unit: String(row[6] || "").trim(),
             price,
@@ -770,7 +871,7 @@ export class PaguSheetsService {
         // Write values to the newly inserted row in Tab 03
         await client.spreadsheets.values.update({
           spreadsheetId,
-          range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A${targetRincianRowIdx}:J${targetRincianRowIdx}`,
+          range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A${targetRincianRowIdx}:L${targetRincianRowIdx}`,
           valueInputOption: "USER_ENTERED",
           requestBody: {
             values: [
@@ -778,12 +879,14 @@ export class PaguSheetsService {
                 cleanOrderNo,
                 transactionId,
                 nextItemIndex,
-                supplier,
                 item.itemName,
+                supplier,
                 item.qty,
                 unit,
                 item.price,
                 `=IF(OR(F${targetRincianRowIdx}=""; H${targetRincianRowIdx}=""); ""; F${targetRincianRowIdx} * H${targetRincianRowIdx})`,
+                addedBy || "Pengguna",
+                getWibTimestamp(),
                 notes,
               ],
             ],
@@ -797,12 +900,14 @@ export class PaguSheetsService {
           cleanOrderNo,
           transactionId,
           nextItemIndex,
-          supplier,
           item.itemName,
+          supplier,
           item.qty,
           unit,
           item.price,
           `=IF(OR(F${targetRincianRowIdx}=""; H${targetRincianRowIdx}=""); ""; F${targetRincianRowIdx} * H${targetRincianRowIdx})`,
+          addedBy || "Pengguna",
+          getWibTimestamp(),
           notes,
         ];
         await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.RINCIAN_PENDAPATAN, [rincianRow]);
@@ -848,24 +953,26 @@ export class PaguSheetsService {
 
         await client.spreadsheets.values.update({
           spreadsheetId,
-          range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A${targetRekapRowIdx}:M${targetRekapRowIdx}`,
+          range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A${targetRekapRowIdx}:O${targetRekapRowIdx}`,
           valueInputOption: "USER_ENTERED",
           requestBody: {
             values: [
               [
                 cleanOrderNo,
+                transactionId,
+                "-",
                 orderDate,
                 supplier,
                 item.itemName,
                 item.qty,
                 unit,
                 item.price,
-                `=IF(OR(E${targetRekapRowIdx}=""; G${targetRekapRowIdx}=""); ""; E${targetRekapRowIdx} * G${targetRekapRowIdx})`,
+                `=IF(OR(G${targetRekapRowIdx}=""; I${targetRekapRowIdx}=""); ""; G${targetRekapRowIdx} * I${targetRekapRowIdx})`,
                 "",
                 "",
-                `=IF(J${targetRekapRowIdx}=""; ""; H${targetRekapRowIdx}-J${targetRekapRowIdx})`,
-                `=IF(OR(H${targetRekapRowIdx}=""; J${targetRekapRowIdx}=""); ""; IFERROR(K${targetRekapRowIdx}/H${targetRekapRowIdx}; 0))`,
-                `=IF(J${targetRekapRowIdx}=""; "🟡 MENUNGGU INVOICE"; IF(K${targetRekapRowIdx}>0; "🟢 HEMAT"; IF(K${targetRekapRowIdx}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`,
+                `=IF(L${targetRekapRowIdx}=""; ""; J${targetRekapRowIdx}-L${targetRekapRowIdx})`,
+                `=IF(OR(J${targetRekapRowIdx}=""; L${targetRekapRowIdx}=""); ""; IFERROR(M${targetRekapRowIdx}/J${targetRekapRowIdx}; 0))`,
+                `=IF(L${targetRekapRowIdx}=""; "🟡 MENUNGGU INVOICE"; IF(M${targetRekapRowIdx}>0; "🟢 HEMAT"; IF(M${targetRekapRowIdx}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`,
               ],
             ],
           },
@@ -875,20 +982,94 @@ export class PaguSheetsService {
         targetRekapRowIdx = Math.max(fallbackRekapCount + 1, 2);
         const rekapRow = [
           cleanOrderNo,
+          transactionId,
+          "-",
           orderDate,
           supplier,
           item.itemName,
           item.qty,
           unit,
           item.price,
-          `=IF(OR(E${targetRekapRowIdx}=""; G${targetRekapRowIdx}=""); ""; E${targetRekapRowIdx} * G${targetRekapRowIdx})`,
+          `=IF(OR(G${targetRekapRowIdx}=""; I${targetRekapRowIdx}=""); ""; G${targetRekapRowIdx} * I${targetRekapRowIdx})`,
           "",
           "",
-          `=IF(J${targetRekapRowIdx}=""; ""; H${targetRekapRowIdx}-J${targetRekapRowIdx})`,
-          `=IF(OR(H${targetRekapRowIdx}=""; J${targetRekapRowIdx}=""); ""; IFERROR(K${targetRekapRowIdx}/H${targetRekapRowIdx}; 0))`,
-          `=IF(J${targetRekapRowIdx}=""; "🟡 MENUNGGU INVOICE"; IF(K${targetRekapRowIdx}>0; "🟢 HEMAT"; IF(K${targetRekapRowIdx}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`,
+          `=IF(L${targetRekapRowIdx}=""; ""; J${targetRekapRowIdx}-L${targetRekapRowIdx})`,
+          `=IF(OR(J${targetRekapRowIdx}=""; L${targetRekapRowIdx}=""); ""; IFERROR(M${targetRekapRowIdx}/J${targetRekapRowIdx}; 0))`,
+          `=IF(L${targetRekapRowIdx}=""; "🟡 MENUNGGU INVOICE"; IF(M${targetRekapRowIdx}>0; "🟢 HEMAT"; IF(M${targetRekapRowIdx}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`,
         ];
         await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PERBANDINGAN_MARGIN, [rekapRow]);
+      }
+
+      // 3b. Cascade updates to 02_PENDAPATAN (Col E, F, G, and Col J Keterangan Edit Trail)
+      const tab02Res = await client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${SHEET_NAMES.PAGU_RINGKASAN}'!A2:K`,
+      });
+      const tab02Rows = tab02Res.data.values || [];
+      let tab02RowIdx = -1;
+      for (let i = 0; i < tab02Rows.length; i++) {
+        const r = tab02Rows[i];
+        if (
+          String(r[0] || "").trim().toLowerCase() === cleanOrderNo.toLowerCase() ||
+          String(r[1] || "").trim().toLowerCase() === transactionId.toLowerCase()
+        ) {
+          tab02RowIdx = i + 2; // 1-based index (header is row 1)
+          break;
+        }
+      }
+
+      if (tab02RowIdx > 0) {
+        const updatedTab03Res = await client.spreadsheets.values.get({
+          spreadsheetId,
+          range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A2:L`,
+        });
+        const upRows = updatedTab03Res.data.values || [];
+        const distinctSuppliers = new Set<string>();
+        for (let i = 0; i < upRows.length; i++) {
+          const r = upRows[i];
+          if (
+            String(r[0] || "").trim().toLowerCase() === cleanOrderNo.toLowerCase() ||
+            String(r[1] || "").trim().toLowerCase() === transactionId.toLowerCase()
+          ) {
+            const sup = String(r[4] || "").trim();
+            if (sup && sup !== "-") {
+              distinctSuppliers.add(sup.toLowerCase());
+            }
+          }
+        }
+
+        const existingNotes = String(tab02Rows[tab02RowIdx - 2][9] || "").trim();
+        let baseNotes = existingNotes;
+        if (baseNotes.startsWith("[Edit] ")) {
+          baseNotes = baseNotes.substring(7).trim();
+        }
+        const editLine = `[Edit ${formatWibDisplay()}] Tambah bahan: ${item.itemName} ${item.qty} ${unit} @ ${formatRupiah(item.price)} (${supplier}) (oleh ${addedBy})`;
+        const updatedNotes = (baseNotes && baseNotes !== "-")
+          ? `${baseNotes}\n${editLine}`
+          : editLine;
+
+        await client.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            valueInputOption: "USER_ENTERED",
+            data: [
+              {
+                range: `'${SHEET_NAMES.PAGU_RINGKASAN}'!D${tab02RowIdx}:F${tab02RowIdx}`,
+                values: [
+                  [
+                    `=COUNTIF('03_RINCIAN_PENDAPATAN'!$B:$B; B${tab02RowIdx}) & " Item"`,
+                    `${distinctSuppliers.size} Supplier`,
+                    `=SUMIF('03_RINCIAN_PENDAPATAN'!$B:$B; B${tab02RowIdx}; '03_RINCIAN_PENDAPATAN'!$I:$I)`,
+                  ],
+                ],
+              },
+              {
+                range: `'${SHEET_NAMES.PAGU_RINGKASAN}'!J${tab02RowIdx}`,
+                values: [[updatedNotes]],
+              },
+            ],
+          },
+        });
       }
 
       // 4. Record Master Audit Log
@@ -958,7 +1139,7 @@ export class PaguSheetsService {
 
     const rincianRes = await client.spreadsheets.values.get({
       spreadsheetId,
-      range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A:J`,
+      range: `'${SHEET_NAMES.RINCIAN_PENDAPATAN}'!A:L`,
     });
     const rincianRows = rincianRes.data.values || [];
 
@@ -996,8 +1177,8 @@ export class PaguSheetsService {
           itemIndex: itemIdx,
           orderNo: rowOrderNo,
           transactionId: rowTrxId,
-          supplier: String(row[3] || ""),
-          itemName: String(row[4] || ""),
+          itemName: String(row[3] || ""),
+          supplier: String(row[4] || ""),
           qty: qtyVal,
           unit: String(row[6] || "satuan"),
           price: priceVal,
@@ -1169,7 +1350,7 @@ export class PaguSheetsService {
       // 4. Delete matching row from Tab 06 (06_PERBANDINGAN_MARGIN)
       const rekapRes = await client.spreadsheets.values.get({
         spreadsheetId,
-        range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A:D`,
+        range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A:F`,
       });
       const rekapRows = rekapRes.data.values || [];
       const itemCleanName = foundItem.itemName.toLowerCase().trim();
@@ -1177,7 +1358,7 @@ export class PaguSheetsService {
       for (let r = 1; r < rekapRows.length; r++) {
         const row = rekapRows[r];
         const rowRef = String(row[0] || "").trim().toLowerCase();
-        const rowName = String(row[3] || "").toLowerCase().trim();
+        const rowName = String(row[5] || "").toLowerCase().trim();
 
         if (
           rowRef === cleanMatchedOrder &&

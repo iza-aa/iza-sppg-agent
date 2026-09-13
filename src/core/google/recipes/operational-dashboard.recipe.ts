@@ -45,8 +45,8 @@ export function createOperationalDashboardResetRequests(
         title: SHEET_NAMES.DASHBOARD,
         tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.DEEP_NAVY) },
         gridProperties: {
-          rowCount: 35,
-          columnCount: 13,
+          rowCount: 56,
+          columnCount: 14,
           frozenRowCount: 0,
           hideGridlines: true,
         },
@@ -80,16 +80,72 @@ export function createOperationalDashboardStructureBatchRequests(
     ...createOperationalDashboardResetRequests(firstId, existingChartIds),
   ];
 
-  // Hide 05_MASTER_DATA
-  const masterSheetId = existingSheetMap.get(SHEET_NAMES.MASTER_DATA);
+  // 1. Hide 08_MASTER_DATA (supports legacy titles 07_MASTER_DATA, 06_MASTER_DATA, 05_MASTER_DATA)
+  const masterSheetId = existingSheetMap.get(SHEET_NAMES.MASTER_DATA)
+    ?? existingSheetMap.get('07_MASTER_DATA')
+    ?? existingSheetMap.get('06_MASTER_DATA')
+    ?? existingSheetMap.get('05_MASTER_DATA');
   if (masterSheetId !== undefined) {
     requests.push({
       updateSheetProperties: {
         properties: {
           sheetId: masterSheetId,
+          title: SHEET_NAMES.MASTER_DATA,
           hidden: true,
+          index: 8,
         },
-        fields: 'hidden',
+        fields: 'title,hidden,index',
+      },
+    });
+  }
+
+  // 2. Ensure 06_MARGIN is at index 6
+  const marginSheetId = existingSheetMap.get(SHEET_NAMES.MARGIN)
+    ?? existingSheetMap.get('06_MARGIN')
+    ?? existingSheetMap.get('06_PERBANDINGAN_MARGIN');
+  if (marginSheetId !== undefined) {
+    requests.push({
+      updateSheetProperties: {
+        properties: {
+          sheetId: marginSheetId,
+          index: 6,
+        },
+        fields: 'index',
+      },
+    });
+  }
+
+  // 3. Ensure 07_AKTIVITAS exists and is UNHIDDEN at index 7 (supports legacy 08_LOG_AKTIVITAS, 07_LOG_AKTIVITAS)
+  const logSheetId = existingSheetMap.get(SHEET_NAMES.LOG_AKTIVITAS)
+    ?? existingSheetMap.get('08_LOG_AKTIVITAS')
+    ?? existingSheetMap.get('07_LOG_AKTIVITAS');
+  if (logSheetId !== undefined) {
+    requests.push({
+      updateSheetProperties: {
+        properties: {
+          sheetId: logSheetId,
+          title: SHEET_NAMES.LOG_AKTIVITAS,
+          hidden: false,
+          index: 7,
+        },
+        fields: 'title,hidden,index',
+      },
+    });
+  } else {
+    requests.push({
+      addSheet: {
+        properties: {
+          sheetId: SHEET_IDS.LOG_AKTIVITAS,
+          title: SHEET_NAMES.LOG_AKTIVITAS,
+          hidden: false,
+          index: 7,
+          tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.SLATE_GRAY) },
+          gridProperties: {
+            rowCount: 5000,
+            columnCount: 10,
+            frozenRowCount: 1,
+          },
+        },
       },
     });
   }
@@ -102,34 +158,34 @@ export function createOperationalDashboardStructureBatchRequests(
  */
 export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
   const valuesDashboard: string[][] = [
-    // R1: empty padding (21px)
+    // R1: empty spacer (16px)
     [],
-    // R2: Header Banner Top (B2:G2 Title, H2:I2 Month Header, J2:K2 Year Header)
-    ['', 'DASHBOARD KEUANGAN & OPERASIONAL SPPG', '', '', '', '', '', 'PILIH BULAN', '', 'PILIH TAHUN', ''],
-    // R3: Subtitle & Dropdowns (B3:G3 Subtitle, H3:I3 Month Dropdown, J3:K3 Year Dropdown)
-    ['', `Ringkasan Pagu Anggaran, Realisasi Belanja Bahan & Efisiensi Dapur - ${unitName}`, '', '', '', '', '', 'SEMUA BULAN', '', 'SEMUA TAHUN', ''],
-    // R4: empty padding (21px)
+    // R2: Banner Title & Filter Labels (B2:G3 merged for title, H2:I2 Bulan, J2:K2 Tahun)
+    ['', 'MONITORING REALISASI ANGGARAN & BELANJA SPPG', '', '', '', '', '', 'BULAN', '', 'TAHUN', ''],
+    // R3: Subtitle & Filter Dropdowns
+    ['', `Ringkasan Pendapatan, Pengeluaran & Efisiensi Dapur - ${unitName}`, '', '', '', '', '', 'SEMUA BULAN', '', 'SEMUA TAHUN', ''],
+    // R4: empty spacer (16px)
     [],
     // R5: KPI Headers (B5:C5, D5:E5, Gap F, G5:H5, I5:K5)
-    ['', 'TOTAL PAGU ANGGARAN', '', 'TOTAL BELANJA BAHAN', '', '', 'MARGIN OPERASIONAL', '', 'TOTAL TRANSAKSI', '', ''],
+    ['', 'PENDAPATAN', '', 'PENGELUARAN', '', '', 'MARGIN OPERASIONAL', '', 'TOTAL TRANSAKSI', '', ''],
     // R6: KPI Values
     [
       '',
-      `=IFERROR(SUMIFS('02_PAGU_PENERIMAAN'!$F$2:$F; '02_PAGU_PENERIMAAN'!$C$2:$C; ">="&$M$1; '02_PAGU_PENERIMAAN'!$C$2:$C; "<="&$M$2); 0)`,
+      `=IFERROR(SUMIFS('${SHEET_NAMES.PENDAPATAN}'!$F$2:$F; '${SHEET_NAMES.PENDAPATAN}'!$C$2:$C; ">="&$M$1; '${SHEET_NAMES.PENDAPATAN}'!$C$2:$C; "<="&$M$2); 0)`,
       '',
-      `=IFERROR(SUMIFS('04_PAGU_PENGELUARAN'!$F$2:$F; '04_PAGU_PENGELUARAN'!$C$2:$C; ">="&$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C; "<="&$M$2); 0)`,
+      `=IFERROR(SUMIFS('${SHEET_NAMES.PENGELUARAN}'!$G$2:$G; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; ">="&$M$1; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; "<="&$M$2); 0)`,
       '',
       '',
       `=B6-D6`,
       '',
-      `=IFERROR(COUNTIFS('04_PAGU_PENGELUARAN'!$C$2:$C; ">="&$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C; "<="&$M$2; '04_PAGU_PENGELUARAN'!$A$2:$A; "<>"); 0)`,
+      `=IFERROR(COUNTIFS('${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; ">="&$M$1; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; "<="&$M$2; '${SHEET_NAMES.PENGELUARAN}'!$A$2:$A; "<>"); 0)`,
       '',
       ''
     ],
     // R7: KPI Subtitles
     [
       '',
-      'Pagu Masuk SPPG',
+      'Pendapatan Masuk SPPG',
       '',
       'Realisasi Belanja Dapur',
       '',
@@ -147,13 +203,13 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     // R10
     [
       '',
-      `=IFERROR(INDEX(QUERY('04_PAGU_PENGELUARAN'!$A$2:$F; "SELECT Col4, SUM(Col6) WHERE Col4 IS NOT NULL AND Col3 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col3 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col4 ORDER BY SUM(Col6) DESC LABEL Col4 '', SUM(Col6) ''"; 0); 1; 1); "-")`,
+      `=IFERROR(INDEX(QUERY('${SHEET_NAMES.PENGELUARAN}'!$A$2:$G; "SELECT Col5, SUM(Col7) WHERE Col5 IS NOT NULL AND Col4 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col4 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col5 ORDER BY SUM(Col7) DESC LABEL Col5 '', SUM(Col7) ''"; 0); 1; 1); "-")`,
       '',
       '',
-      `=IF(B10="-"; 0; IFERROR(SUMIFS('04_PAGU_PENGELUARAN'!$F$2:$F; '04_PAGU_PENGELUARAN'!$D$2:$D; B10; '04_PAGU_PENGELUARAN'!$C$2:$C; ">="&$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C; "<="&$M$2); 0))`,
+      `=IF(B10="-"; 0; IFERROR(SUMIFS('${SHEET_NAMES.PENGELUARAN}'!$G$2:$G; '${SHEET_NAMES.PENGELUARAN}'!$E$2:$E; B10; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; ">="&$M$1; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; "<="&$M$2); 0))`,
       '',
       'Protein Hewani',
-      `=IFERROR(SUM(FILTER('06_PERBANDINGAN_MARGIN'!$J$2:$J; '06_PERBANDINGAN_MARGIN'!$B$2:$B>=$M$1; '06_PERBANDINGAN_MARGIN'!$B$2:$B<=$M$2; REGEXMATCH(LOWER('06_PERBANDINGAN_MARGIN'!$D$2:$D); "telur|ayam|daging|ikan|sapi|udang|bebek|susu|tongkol|lele|nugget"))); 0)`,
+      `=IFERROR(SUM(FILTER('${SHEET_NAMES.MARGIN}'!$L$2:$L; '${SHEET_NAMES.MARGIN}'!$D$2:$D>=$M$1; '${SHEET_NAMES.MARGIN}'!$D$2:$D<=$M$2; REGEXMATCH(LOWER('${SHEET_NAMES.MARGIN}'!$F$2:$F); "telur|ayam|daging|ikan|sapi|udang|bebek|susu|tongkol|lele|nugget"))); 0)`,
       `=IFERROR(H10/$H$16; 0)`,
       `=REPT("█"; ROUND(I10*28)) & REPT("░"; 28-ROUND(I10*28))`,
       ''
@@ -161,13 +217,13 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     // R11
     [
       '',
-      `=IFERROR(INDEX(QUERY('04_PAGU_PENGELUARAN'!$A$2:$F; "SELECT Col4, SUM(Col6) WHERE Col4 IS NOT NULL AND Col3 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col3 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col4 ORDER BY SUM(Col6) DESC LABEL Col4 '', SUM(Col6) ''"; 0); 2; 1); "-")`,
+      `=IFERROR(INDEX(QUERY('${SHEET_NAMES.PENGELUARAN}'!$A$2:$G; "SELECT Col5, SUM(Col7) WHERE Col5 IS NOT NULL AND Col4 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col4 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col5 ORDER BY SUM(Col7) DESC LABEL Col5 '', SUM(Col7) ''"; 0); 2; 1); "-")`,
       '',
       '',
-      `=IF(B11="-"; 0; IFERROR(SUMIFS('04_PAGU_PENGELUARAN'!$F$2:$F; '04_PAGU_PENGELUARAN'!$D$2:$D; B11; '04_PAGU_PENGELUARAN'!$C$2:$C; ">="&$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C; "<="&$M$2); 0))`,
+      `=IF(B11="-"; 0; IFERROR(SUMIFS('${SHEET_NAMES.PENGELUARAN}'!$G$2:$G; '${SHEET_NAMES.PENGELUARAN}'!$E$2:$E; B11; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; ">="&$M$1; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; "<="&$M$2); 0))`,
       '',
       'Sayuran Segar',
-      `=IFERROR(SUM(FILTER('06_PERBANDINGAN_MARGIN'!$J$2:$J; '06_PERBANDINGAN_MARGIN'!$B$2:$B>=$M$1; '06_PERBANDINGAN_MARGIN'!$B$2:$B<=$M$2; REGEXMATCH(LOWER('06_PERBANDINGAN_MARGIN'!$D$2:$D); "sayur|wortel|buncis|kol|kubis|sawi|kangkung|bayam|tomat|labu|kentang|kacang|tauge|terong|timun|brokoli"))); 0)`,
+      `=IFERROR(SUM(FILTER('${SHEET_NAMES.MARGIN}'!$L$2:$L; '${SHEET_NAMES.MARGIN}'!$D$2:$D>=$M$1; '${SHEET_NAMES.MARGIN}'!$D$2:$D<=$M$2; REGEXMATCH(LOWER('${SHEET_NAMES.MARGIN}'!$F$2:$F); "sayur|wortel|buncis|kol|kubis|sawi|kangkung|bayam|tomat|labu|kentang|kacang|tauge|terong|timun|brokoli"))); 0)`,
       `=IFERROR(H11/$H$16; 0)`,
       `=REPT("█"; ROUND(I11*28)) & REPT("░"; 28-ROUND(I11*28))`,
       ''
@@ -175,13 +231,13 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     // R12
     [
       '',
-      `=IFERROR(INDEX(QUERY('04_PAGU_PENGELUARAN'!$A$2:$F; "SELECT Col4, SUM(Col6) WHERE Col4 IS NOT NULL AND Col3 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col3 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col4 ORDER BY SUM(Col6) DESC LABEL Col4 '', SUM(Col6) ''"; 0); 3; 1); "-")`,
+      `=IFERROR(INDEX(QUERY('${SHEET_NAMES.PENGELUARAN}'!$A$2:$G; "SELECT Col5, SUM(Col7) WHERE Col5 IS NOT NULL AND Col4 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col4 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col5 ORDER BY SUM(Col7) DESC LABEL Col5 '', SUM(Col7) ''"; 0); 3; 1); "-")`,
       '',
       '',
-      `=IF(B12="-"; 0; IFERROR(SUMIFS('04_PAGU_PENGELUARAN'!$F$2:$F; '04_PAGU_PENGELUARAN'!$D$2:$D; B12; '04_PAGU_PENGELUARAN'!$C$2:$C; ">="&$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C; "<="&$M$2); 0))`,
+      `=IF(B12="-"; 0; IFERROR(SUMIFS('${SHEET_NAMES.PENGELUARAN}'!$G$2:$G; '${SHEET_NAMES.PENGELUARAN}'!$E$2:$E; B12; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; ">="&$M$1; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; "<="&$M$2); 0))`,
       '',
       'Bahan Pokok & Beras',
-      `=IFERROR(SUM(FILTER('06_PERBANDINGAN_MARGIN'!$J$2:$J; '06_PERBANDINGAN_MARGIN'!$B$2:$B>=$M$1; '06_PERBANDINGAN_MARGIN'!$B$2:$B<=$M$2; REGEXMATCH(LOWER('06_PERBANDINGAN_MARGIN'!$D$2:$D); "beras|minyak|tahu|tempe|tepung|gula|garam|mie|bihun|soun|santan"))); 0)`,
+      `=IFERROR(SUM(FILTER('${SHEET_NAMES.MARGIN}'!$L$2:$L; '${SHEET_NAMES.MARGIN}'!$D$2:$D>=$M$1; '${SHEET_NAMES.MARGIN}'!$D$2:$D<=$M$2; REGEXMATCH(LOWER('${SHEET_NAMES.MARGIN}'!$F$2:$F); "beras|minyak|tahu|tempe|tepung|gula|garam|mie|bihun|soun|santan"))); 0)`,
       `=IFERROR(H12/$H$16; 0)`,
       `=REPT("█"; ROUND(I12*28)) & REPT("░"; 28-ROUND(I12*28))`,
       ''
@@ -189,13 +245,13 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     // R13
     [
       '',
-      `=IFERROR(INDEX(QUERY('04_PAGU_PENGELUARAN'!$A$2:$F; "SELECT Col4, SUM(Col6) WHERE Col4 IS NOT NULL AND Col3 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col3 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col4 ORDER BY SUM(Col6) DESC LABEL Col4 '', SUM(Col6) ''"; 0); 4; 1); "-")`,
+      `=IFERROR(INDEX(QUERY('${SHEET_NAMES.PENGELUARAN}'!$A$2:$G; "SELECT Col5, SUM(Col7) WHERE Col5 IS NOT NULL AND Col4 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col4 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col5 ORDER BY SUM(Col7) DESC LABEL Col5 '', SUM(Col7) ''"; 0); 4; 1); "-")`,
       '',
       '',
-      `=IF(B13="-"; 0; IFERROR(SUMIFS('04_PAGU_PENGELUARAN'!$F$2:$F; '04_PAGU_PENGELUARAN'!$D$2:$D; B13; '04_PAGU_PENGELUARAN'!$C$2:$C; ">="&$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C; "<="&$M$2); 0))`,
+      `=IF(B13="-"; 0; IFERROR(SUMIFS('${SHEET_NAMES.PENGELUARAN}'!$G$2:$G; '${SHEET_NAMES.PENGELUARAN}'!$E$2:$E; B13; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; ">="&$M$1; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; "<="&$M$2); 0))`,
       '',
       'Buah Segar',
-      `=IFERROR(SUM(FILTER('06_PERBANDINGAN_MARGIN'!$J$2:$J; '06_PERBANDINGAN_MARGIN'!$B$2:$B>=$M$1; '06_PERBANDINGAN_MARGIN'!$B$2:$B<=$M$2; REGEXMATCH(LOWER('06_PERBANDINGAN_MARGIN'!$D$2:$D); "buah|pisang|semangka|melon|jeruk|apel|pepaya|mangga|nanas|salak|anggur|kelengkeng|pir"))); 0)`,
+      `=IFERROR(SUM(FILTER('${SHEET_NAMES.MARGIN}'!$L$2:$L; '${SHEET_NAMES.MARGIN}'!$D$2:$D>=$M$1; '${SHEET_NAMES.MARGIN}'!$D$2:$D<=$M$2; REGEXMATCH(LOWER('${SHEET_NAMES.MARGIN}'!$F$2:$F); "buah|pisang|semangka|melon|jeruk|apel|pepaya|mangga|nanas|salak|anggur|kelengkeng|pir"))); 0)`,
       `=IFERROR(H13/$H$16; 0)`,
       `=REPT("█"; ROUND(I13*28)) & REPT("░"; 28-ROUND(I13*28))`,
       ''
@@ -203,13 +259,13 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     // R14: Bumbu Dapur
     [
       '',
-      `=IFERROR(INDEX(QUERY('04_PAGU_PENGELUARAN'!$A$2:$F; "SELECT Col4, SUM(Col6) WHERE Col4 IS NOT NULL AND Col3 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col3 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col4 ORDER BY SUM(Col6) DESC LABEL Col4 '', SUM(Col6) ''"; 0); 5; 1); "-")`,
+      `=IFERROR(INDEX(QUERY('${SHEET_NAMES.PENGELUARAN}'!$A$2:$G; "SELECT Col5, SUM(Col7) WHERE Col5 IS NOT NULL AND Col4 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col4 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col5 ORDER BY SUM(Col7) DESC LABEL Col5 '', SUM(Col7) ''"; 0); 5; 1); "-")`,
       '',
       '',
-      `=IF(B14="-"; 0; IFERROR(SUMIFS('04_PAGU_PENGELUARAN'!$F$2:$F; '04_PAGU_PENGELUARAN'!$D$2:$D; B14; '04_PAGU_PENGELUARAN'!$C$2:$C; ">="&$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C; "<="&$M$2); 0))`,
+      `=IF(B14="-"; 0; IFERROR(SUMIFS('${SHEET_NAMES.PENGELUARAN}'!$G$2:$G; '${SHEET_NAMES.PENGELUARAN}'!$E$2:$E; B14; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; ">="&$M$1; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; "<="&$M$2); 0))`,
       '',
       'Bumbu Dapur',
-      `=IFERROR(SUM(FILTER('06_PERBANDINGAN_MARGIN'!$J$2:$J; '06_PERBANDINGAN_MARGIN'!$B$2:$B>=$M$1; '06_PERBANDINGAN_MARGIN'!$B$2:$B<=$M$2; REGEXMATCH(LOWER('06_PERBANDINGAN_MARGIN'!$D$2:$D); "bawang|cabai|cabe|lada|merica|kaldu|serai|lengkuas|salam|jeruk|wijen|jahe|kunyit|kemiri|jagung|saus|saos|kecap|bumbu"))); 0)`,
+      `=IFERROR(SUM(FILTER('${SHEET_NAMES.MARGIN}'!$L$2:$L; '${SHEET_NAMES.MARGIN}'!$D$2:$D>=$M$1; '${SHEET_NAMES.MARGIN}'!$D$2:$D<=$M$2; REGEXMATCH(LOWER('${SHEET_NAMES.MARGIN}'!$F$2:$F); "bawang|cabai|cabe|lada|merica|kaldu|serai|lengkuas|salam|jeruk|wijen|jahe|kunyit|kemiri|jagung|saus|saos|kecap|bumbu|jinten"))); 0)`,
       `=IFERROR(H14/$H$16; 0)`,
       `=REPT("█"; ROUND(I14*28)) & REPT("░"; 28-ROUND(I14*28))`,
       ''
@@ -217,10 +273,10 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     // R15: Belanja Belum Dirinci
     [
       '',
-      `=IFERROR(INDEX(QUERY('04_PAGU_PENGELUARAN'!$A$2:$F; "SELECT Col4, SUM(Col6) WHERE Col4 IS NOT NULL AND Col3 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col3 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col4 ORDER BY SUM(Col6) DESC LABEL Col4 '', SUM(Col6) ''"; 0); 6; 1); "-")`,
+      `=IFERROR(INDEX(QUERY('${SHEET_NAMES.PENGELUARAN}'!$A$2:$G; "SELECT Col5, SUM(Col7) WHERE Col5 IS NOT NULL AND Col4 >= date '"&TEXT($M$1;"yyyy-mm-dd")&"' AND Col4 <= date '"&TEXT($M$2;"yyyy-mm-dd")&"' GROUP BY Col5 ORDER BY SUM(Col7) DESC LABEL Col5 '', SUM(Col7) ''"; 0); 6; 1); "-")`,
       '',
       '',
-      `=IF(B15="-"; 0; IFERROR(SUMIFS('04_PAGU_PENGELUARAN'!$F$2:$F; '04_PAGU_PENGELUARAN'!$D$2:$D; B15; '04_PAGU_PENGELUARAN'!$C$2:$C; ">="&$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C; "<="&$M$2); 0))`,
+      `=IF(B15="-"; 0; IFERROR(SUMIFS('${SHEET_NAMES.PENGELUARAN}'!$G$2:$G; '${SHEET_NAMES.PENGELUARAN}'!$E$2:$E; B15; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; ">="&$M$1; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D; "<="&$M$2); 0))`,
       '',
       'Belanja Belum Dirinci',
       `=IFERROR(D6 - SUM(H10:H14); 0)`,
@@ -247,7 +303,7 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     // R18: Lower Titles (Area B18:E18 empty for pie chart overlay, G18:K18 Title)
     ['', '', '', '', '', '', '10 TRANSAKSI BELANJA TERAKHIR', '', '', '', ''],
     // R19: Subheaders
-    ['', '', '', '', '', '', 'Tanggal', 'Supplier', 'Nominal', 'Metode', 'Status'],
+    ['', '', '', '', '', '', 'Tanggal', 'Supplier', 'Nominal', 'Metode', 'ID Pengeluaran'],
   ];
 
   // R20..R29: 10 Recent Transactions in G..K (B..E remain empty for pie chart overlay)
@@ -259,11 +315,61 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
       '',
       '',
       '',
-      `=IFERROR(INDEX(SORT(FILTER('04_PAGU_PENGELUARAN'!$C$2:$J; '04_PAGU_PENGELUARAN'!$A$2:$A<>""; '04_PAGU_PENGELUARAN'!$C$2:$C>=$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C<=$M$2); 1; FALSE); ${i}; 1); "-")`,
-      `=IFERROR(INDEX(SORT(FILTER('04_PAGU_PENGELUARAN'!$C$2:$J; '04_PAGU_PENGELUARAN'!$A$2:$A<>""; '04_PAGU_PENGELUARAN'!$C$2:$C>=$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C<=$M$2); 1; FALSE); ${i}; 2); "-")`,
-      `=IFERROR(INDEX(SORT(FILTER('04_PAGU_PENGELUARAN'!$C$2:$J; '04_PAGU_PENGELUARAN'!$A$2:$A<>""; '04_PAGU_PENGELUARAN'!$C$2:$C>=$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C<=$M$2); 1; FALSE); ${i}; 4); 0)`,
-      `=IFERROR(INDEX(SORT(FILTER('04_PAGU_PENGELUARAN'!$C$2:$J; '04_PAGU_PENGELUARAN'!$A$2:$A<>""; '04_PAGU_PENGELUARAN'!$C$2:$C>=$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C<=$M$2); 1; FALSE); ${i}; 5); "-")`,
-      `=IFERROR(IF(INDEX(SORT(FILTER('04_PAGU_PENGELUARAN'!$C$2:$J; '04_PAGU_PENGELUARAN'!$A$2:$A<>""; '04_PAGU_PENGELUARAN'!$C$2:$C>=$M$1; '04_PAGU_PENGELUARAN'!$C$2:$C<=$M$2); 1; FALSE); ${i}; 1)<>"-"; "LUNAS"; "-"); "-")`
+      `=IFERROR(INDEX(SORT(FILTER('${SHEET_NAMES.PENGELUARAN}'!$A$2:$H; '${SHEET_NAMES.PENGELUARAN}'!$A$2:$A<>""; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D>=$M$1; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D<=$M$2); 4; FALSE); ${i}; 4); "-")`,
+      `=IFERROR(INDEX(SORT(FILTER('${SHEET_NAMES.PENGELUARAN}'!$A$2:$H; '${SHEET_NAMES.PENGELUARAN}'!$A$2:$A<>""; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D>=$M$1; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D<=$M$2); 4; FALSE); ${i}; 5); "-")`,
+      `=IFERROR(INDEX(SORT(FILTER('${SHEET_NAMES.PENGELUARAN}'!$A$2:$H; '${SHEET_NAMES.PENGELUARAN}'!$A$2:$A<>""; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D>=$M$1; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D<=$M$2); 4; FALSE); ${i}; 7); 0)`,
+      `=IFERROR(INDEX(SORT(FILTER('${SHEET_NAMES.PENGELUARAN}'!$A$2:$H; '${SHEET_NAMES.PENGELUARAN}'!$A$2:$A<>""; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D>=$M$1; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D<=$M$2); 4; FALSE); ${i}; 8); "-")`,
+      `=IFERROR(INDEX(SORT(FILTER('${SHEET_NAMES.PENGELUARAN}'!$A$2:$H; '${SHEET_NAMES.PENGELUARAN}'!$A$2:$A<>""; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D>=$M$1; '${SHEET_NAMES.PENGELUARAN}'!$D$2:$D<=$M$2); 4; FALSE); ${i}; 3); "-")`
+    ]);
+  }
+
+  // R30: empty spacer (16px)
+  valuesDashboard.push([]);
+
+  // R31: Activity Log Title Banner (B31:K31)
+  valuesDashboard.push([
+    '',
+    'LOG AKTIVITAS BOT & OPERASIONAL TERAKHIR',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+  ]);
+
+  // R32: Subheaders (B32:K32)
+  valuesDashboard.push([
+    '',
+    'Waktu',
+    'Pengguna',
+    'Tipe',
+    'Pesan Pengguna',
+    '',
+    '',
+    'Aksi & Respon Sistem',
+    '',
+    '',
+    'Status',
+  ]);
+
+  // R33..R52: 20 Recent Activities (B..K)
+  for (let i = 1; i <= 20; i++) {
+    valuesDashboard.push([
+      '',
+      `=IFERROR(INDEX(SORT(FILTER('${SHEET_NAMES.LOG_AKTIVITAS}'!$A$2:$I; '${SHEET_NAMES.LOG_AKTIVITAS}'!$A$2:$A<>""); 1; FALSE); ${i}; 1); "-")`,
+      `=IFERROR(INDEX(SORT(FILTER('${SHEET_NAMES.LOG_AKTIVITAS}'!$A$2:$I; '${SHEET_NAMES.LOG_AKTIVITAS}'!$A$2:$A<>""); 1; FALSE); ${i}; 3); "-")`,
+      `=IFERROR(INDEX(SORT(FILTER('${SHEET_NAMES.LOG_AKTIVITAS}'!$A$2:$I; '${SHEET_NAMES.LOG_AKTIVITAS}'!$A$2:$A<>""); 1; FALSE); ${i}; 5); "-")`,
+      `=IFERROR(INDEX(SORT(FILTER('${SHEET_NAMES.LOG_AKTIVITAS}'!$A$2:$I; '${SHEET_NAMES.LOG_AKTIVITAS}'!$A$2:$A<>""); 1; FALSE); ${i}; 6); "-")`,
+      '',
+      '',
+      `=IFERROR(INDEX(SORT(FILTER('${SHEET_NAMES.LOG_AKTIVITAS}'!$A$2:$I; '${SHEET_NAMES.LOG_AKTIVITAS}'!$A$2:$A<>""); 1; FALSE); ${i}; 7); "-")`,
+      '',
+      '',
+      `=IFERROR(INDEX(SORT(FILTER('${SHEET_NAMES.LOG_AKTIVITAS}'!$A$2:$I; '${SHEET_NAMES.LOG_AKTIVITAS}'!$A$2:$A<>""); 1; FALSE); ${i}; 9); "-")`,
     ]);
   }
 
@@ -275,27 +381,31 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
   ];
 
   const tabPaguPenerimaanHeaders = [
-    ['No SPPG', 'ID Transaksi', 'Tanggal Pesanan', 'Jumlah Item Bahan', 'Jumlah Target Supplier', 'Total Pagu Anggaran', 'Link Bukti Dokumen', 'Pesan Asli Telegram', 'PIC / Penanggung Jawab', 'Riwayat Edit']
+    ['No SPPG Ref', 'ID Pendapatan', 'Tanggal', 'Jumlah Bahan', 'Target Supplier', 'Total Pendapatan', 'Link Bukti Dokumen', 'Penanggung Jawab', 'Waktu Input', 'Keterangan']
   ];
 
   const tabRincianPendapatanHeaders = [
-    ['No SPPG Ref', 'ID Ref', 'No Urut', 'Target Supplier', 'Uraian Bahan', 'Kuantitas', 'Satuan', 'Harga Pagu Satuan', 'Total Pagu', 'Keterangan / Spesifikasi']
+    ['No SPPG Ref', 'ID Pendapatan', 'No Urut', 'Uraian Bahan', 'Target Supplier', 'Kuantitas', 'Satuan', 'Harga Satuan', 'Total Pendapatan', 'Pengguna', 'Waktu Input', 'Keterangan']
   ];
 
   const tabPaguPengeluaranHeaders = [
-    ['No SPPG Ref', 'ID Transaksi', 'Tanggal Transaksi', 'Nama Supplier', 'No Invoice Supplier', 'Total Nominal Tagihan', 'Metode Pembayaran', 'Link Bukti Nota', 'PIC / Operator', 'Catatan / Keterangan']
+    ['No SPPG Ref', 'ID Pendapatan', 'ID Pengeluaran', 'Tanggal', 'Nama Supplier', 'No Invoice Supplier', 'Total Tagihan', 'Metode', 'Link Bukti Nota', 'Pengguna', 'Waktu Input', 'Keterangan']
   ];
 
   const tabRincianPengeluaranHeaders = [
-    ['No SPPG Ref', 'ID Transaksi Belanja', 'No Urut', 'Nama Supplier', 'Uraian Bahan / Barang Belanja', 'Kuantitas', 'Satuan', 'Harga Satuan Invoice', 'Total Belanja', 'Keterangan / No Nota']
+    ['No SPPG Ref', 'ID Pendapatan', 'ID Pengeluaran', 'No Urut', 'Nama Supplier', 'Uraian Bahan Belanja', 'Kuantitas', 'Satuan', 'Harga Satuan', 'Total Belanja', 'Pengguna', 'Waktu Input', 'Keterangan']
   ];
 
   const tabPerbandinganMarginHeaders = [
-    ['No SPPG Ref', 'Tanggal', 'Nama Supplier', 'Uraian Bahan', 'Kuantitas', 'Satuan', 'Harga Pagu', 'Total Pagu', 'Harga Invoice', 'Total Realisasi', 'Margin Bersih (Rp)', '% Margin', 'Status']
+    ['No SPPG Ref', 'ID Pendapatan', 'ID Pengeluaran', 'Tanggal', 'Nama Supplier', 'Uraian Bahan', 'Kuantitas', 'Satuan', 'Harga Pendapatan', 'Total Pendapatan', 'Harga Invoice', 'Total Realisasi', 'Margin Bersih (Rp)', '% Margin', 'Status']
   ];
 
   const tabMasterDataHeaders = [
     ['Daftar Resmi Supplier', 'Daftar Satuan Baku', 'Daftar Kategori Bahan']
+  ];
+
+  const tabLogAktivitasHeaders = [
+    ['Timestamp', 'User ID', 'Pengguna', 'Role', 'Tipe Media', 'Pesan Pengguna', 'Aksi Sistem', 'ID Ref', 'Status']
   ];
 
   return {
@@ -307,6 +417,7 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
     tabRincianPengeluaranHeaders,
     tabPerbandinganMarginHeaders,
     tabMasterDataHeaders,
+    tabLogAktivitasHeaders,
     // Backward compatibility aliases
     tabPaguRingkasanHeaders: tabPaguPenerimaanHeaders,
     tabPaguRincianHeaders: tabRincianPendapatanHeaders,
@@ -323,6 +434,19 @@ export function getOperationalDashboardValues(unitName: string = 'SPPG Dapur') {
  */
 export function createOperationalDashboardStylingRequests(firstId: number): sheets_v4.Schema$Request[] {
   return [
+    // 0. Ensure 01_DASHBOARD grid has at least 56 rows & 14 cols so dimension styling succeeds
+    {
+      updateSheetProperties: {
+        properties: {
+          sheetId: firstId,
+          gridProperties: {
+            rowCount: 56,
+            columnCount: 14,
+          },
+        },
+        fields: 'gridProperties(rowCount,columnCount)',
+      },
+    },
     // Merges for Banner Title (B2:G2) & Subtitle (B3:G3)
     {
       mergeCells: {
@@ -916,13 +1040,166 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
       },
     },
 
+    // Merges for Activity Log Banner Title (B31:K31)
+    {
+      mergeCells: { range: { sheetId: firstId, startRowIndex: 30, endRowIndex: 31, startColumnIndex: 1, endColumnIndex: 11 }, mergeType: 'MERGE_ALL' },
+    },
+    // Merges for Activity Log Subheaders (Pesan E32:G32, Aksi H32:J32)
+    {
+      mergeCells: { range: { sheetId: firstId, startRowIndex: 31, endRowIndex: 32, startColumnIndex: 4, endColumnIndex: 7 }, mergeType: 'MERGE_ALL' },
+    },
+    {
+      mergeCells: { range: { sheetId: firstId, startRowIndex: 31, endRowIndex: 32, startColumnIndex: 7, endColumnIndex: 10 }, mergeType: 'MERGE_ALL' },
+    },
+    // Merges for Activity Log Data Rows (R33..R52, row index 32..51)
+    ...Array.from({ length: 20 }, (_, idx) => 32 + idx).flatMap((r) => [
+      {
+        mergeCells: { range: { sheetId: firstId, startRowIndex: r, endRowIndex: r + 1, startColumnIndex: 4, endColumnIndex: 7 }, mergeType: 'MERGE_ALL' as const },
+      },
+      {
+        mergeCells: { range: { sheetId: firstId, startRowIndex: r, endRowIndex: r + 1, startColumnIndex: 7, endColumnIndex: 10 }, mergeType: 'MERGE_ALL' as const },
+      },
+    ]),
+
+    // Activity Log Banner Styling (B31:K31)
+    {
+      repeatCell: {
+        range: { sheetId: firstId, startRowIndex: 30, endRowIndex: 31, startColumnIndex: 1, endColumnIndex: 11 },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: hexToRgbColor(BGN_PALETTE.DEEP_NAVY),
+            textFormat: { foregroundColor: hexToRgbColor(BGN_PALETTE.WHITE), bold: true, fontSize: 10 },
+            horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
+          },
+        },
+        fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
+      },
+    },
+
+    // Activity Log Subheader Styling (B32:K32)
+    {
+      repeatCell: {
+        range: { sheetId: firstId, startRowIndex: 31, endRowIndex: 32, startColumnIndex: 1, endColumnIndex: 11 },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: hexToRgbColor(BGN_PALETTE.SLATE_LIGHT),
+            textFormat: { foregroundColor: hexToRgbColor(BGN_PALETTE.DEEP_NAVY), bold: true, fontSize: 9 },
+            horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
+          },
+        },
+        fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
+      },
+    },
+
+    // Activity Log Data Rows Formatting (R33..R52, index 32..52)
+    // Timestamp (Col B)
+    {
+      repeatCell: {
+        range: { sheetId: firstId, startRowIndex: 32, endRowIndex: 52, startColumnIndex: 1, endColumnIndex: 2 },
+        cell: {
+          userEnteredFormat: {
+            textFormat: { foregroundColor: hexToRgbColor(BGN_PALETTE.SLATE_GRAY), fontSize: 9 },
+            horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
+          },
+        },
+        fields: 'userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment)',
+      },
+    },
+    // Pengguna (Col C)
+    {
+      repeatCell: {
+        range: { sheetId: firstId, startRowIndex: 32, endRowIndex: 52, startColumnIndex: 2, endColumnIndex: 3 },
+        cell: {
+          userEnteredFormat: {
+            textFormat: { foregroundColor: hexToRgbColor(BGN_PALETTE.DEEP_NAVY), bold: true, fontSize: 9 },
+            horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
+          },
+        },
+        fields: 'userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment)',
+      },
+    },
+    // Tipe (Col D)
+    {
+      repeatCell: {
+        range: { sheetId: firstId, startRowIndex: 32, endRowIndex: 52, startColumnIndex: 3, endColumnIndex: 4 },
+        cell: {
+          userEnteredFormat: {
+            textFormat: { fontSize: 9 },
+            horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
+          },
+        },
+        fields: 'userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment)',
+      },
+    },
+    // Pesan Pengguna (Col E:G)
+    {
+      repeatCell: {
+        range: { sheetId: firstId, startRowIndex: 32, endRowIndex: 52, startColumnIndex: 4, endColumnIndex: 7 },
+        cell: {
+          userEnteredFormat: {
+            textFormat: { fontSize: 9 },
+            horizontalAlignment: 'LEFT',
+            verticalAlignment: 'MIDDLE',
+            padding: { left: 6, right: 6 },
+          },
+        },
+        fields: 'userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment,padding)',
+      },
+    },
+    // Aksi & Respon Sistem (Col H:J)
+    {
+      repeatCell: {
+        range: { sheetId: firstId, startRowIndex: 32, endRowIndex: 52, startColumnIndex: 7, endColumnIndex: 10 },
+        cell: {
+          userEnteredFormat: {
+            textFormat: { fontSize: 9 },
+            horizontalAlignment: 'LEFT',
+            verticalAlignment: 'MIDDLE',
+            padding: { left: 6, right: 6 },
+          },
+        },
+        fields: 'userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment,padding)',
+      },
+    },
+    // Status (Col K)
+    {
+      repeatCell: {
+        range: { sheetId: firstId, startRowIndex: 32, endRowIndex: 52, startColumnIndex: 10, endColumnIndex: 11 },
+        cell: {
+          userEnteredFormat: {
+            textFormat: { bold: true, fontSize: 9 },
+            horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
+          },
+        },
+        fields: 'userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment)',
+      },
+    },
+
+    // Subtle borders for Activity Log Table (Row 31..52, Col B..K)
+    {
+      updateBorders: {
+        range: { sheetId: firstId, startRowIndex: 30, endRowIndex: 52, startColumnIndex: 1, endColumnIndex: 11 },
+        left: { style: 'SOLID', color: { red: 0.85, green: 0.85, blue: 0.85 } },
+        right: { style: 'SOLID', color: { red: 0.85, green: 0.85, blue: 0.85 } },
+        bottom: { style: 'SOLID', color: { red: 0.85, green: 0.85, blue: 0.85 } },
+        innerHorizontal: { style: 'SOLID', color: { red: 0.92, green: 0.92, blue: 0.92 } },
+        innerVertical: { style: 'SOLID', color: { red: 0.94, green: 0.94, blue: 0.94 } },
+      },
+    },
+
     // Column Widths on 01_DASHBOARD (Exact reference geometry from wa-agent)
     ...[
       { col: 0, width: 25 },   // A: Margin
-      { col: 1, width: 70 },   // B
-      { col: 2, width: 170 },  // C
-      { col: 3, width: 150 },  // D
-      { col: 4, width: 145 },  // E (B..E = 535px)
+      { col: 1, width: 170 },  // B: Waktu (170px to fit YYYY-MM-DD HH:mm:ss WIB cleanly)
+      { col: 2, width: 110 },  // C: Pengguna
+      { col: 3, width: 110 },  // D: Tipe
+      { col: 4, width: 145 },  // E (B..E = 170 + 110 + 110 + 145 = 535px)
       { col: 5, width: 25 },   // F: Spacer gap!
       { col: 6, width: 147 },  // G
       { col: 7, width: 204 },  // H
@@ -944,6 +1221,11 @@ export function createOperationalDashboardStylingRequests(firstId: number): shee
       { start: 0, end: 16, height: 21 },
       { start: 16, end: 17, height: 16 }, // R17: Spacer row
       { start: 17, end: 29, height: 21 }, // R18..R29
+      { start: 29, end: 30, height: 16 }, // R30: Spacer row
+      { start: 30, end: 31, height: 26 }, // R31: Log banner
+      { start: 31, end: 32, height: 22 }, // R32: Log subheaders
+      { start: 32, end: 52, height: 21 }, // R33..R52: 20 log rows
+      { start: 52, end: 56, height: 16 }, // R53..R56: bottom margin
     ].map((rh) => ({
       updateDimensionProperties: {
         range: { sheetId: firstId, dimension: 'ROWS', startIndex: rh.start, endIndex: rh.end },

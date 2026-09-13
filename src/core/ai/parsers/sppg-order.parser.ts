@@ -12,23 +12,22 @@ Dokumen ini mewakili PENDAPATAN / PLAFON ANGGARAN (Bukan Pengeluaran).
 ATURAN EKSTRAKSI DOKUMEN:
 1. Identifikasi Kop / Info Dokumen:
    - Nama Unit SPPG (contoh: "SPPG PATILA, LUWU UTARA", default "SPPG Patila, Luwu Utara")
-   - Nomor Pesanan (contoh: "No. 05/02/09/26", jika tidak ada buat "PO-AUTO")
-   - Tanggal Pesanan (Format YYYY-MM-DD, jika tidak tertera gunakan tanggal hari ini 2026-09-09)
-   - Tanggal Tiba/Waktu (Format YYYY-MM-DD)
+   - Nomor Pesanan (contoh: "PO-10/12/09/26" atau "05/02/09/26", jika tidak ada buat "PO-AUTO")
+   - Tanggal Pesanan (Format YYYY-MM-DD, contoh: "2026-09-12", jika tidak tertera gunakan tanggal hari ini)
 2. Format Tabel / Lembar Pesanan:
    - Jika dokumen berupa lembaran tabel (Uraian Jenis Bahan Makanan, Kuantitas, Harga, Jumlah, Supplier), ini adalah NOTA PESANAN SPPG multi-supplier.
    - Ekstraksi SELURUH baris bahan makanan tanpa terlewat.
    - "no": Nomor urut
    - "item_name": Uraian nama bahan makanan lengkap
    - "qty": Kuantitas angka
-   - "unit": Satuan bahan (KG, Jerigen, Rak, Ember, Biji, Keranjang, Bungkus, Ikat, Botol)
+   - "unit": Satuan bahan (KG, Jerigen, Rak, Ember, Biji, Keranjang, Bungkus, Ikat, Botol, Ekor)
    - "price": Harga satuan dalam Rupiah
    - "total_price": Total harga baris (qty * price)
-   - "supplier_target": Kolom Supplier jika tercantum (contoh: Toko Farhan, Annisa, Mas Pandu, Best Fruit, Hj Muliadi)
+   - "supplier_target": Kolom Supplier jika tercantum (contoh: Toko Farhan, Annisa, Mas Pandu, Best Fruit, Hj Muliadi, Toko Barokah)
 3. Total Anggaran:
    - "total_amount": Angka nominal total di baris Total paling bawah
-4. Penandatangan:
-   - "signed_by": Nama pejabat penandatangan jika ada, atau "-"
+4. Penandatangan / Penanggung Jawab:
+   - "signed_by": WAJIB baca dan ekstrak nama terang pejabat penandatangan yang tertera di bagian bawah nota (contoh: Kepala SPPG "M. RISAL, S.STP" atau PPK "DR. AHMAD FAUZI, M.SI"). Utamakan Kepala SPPG / Penanggung Jawab Operasional. DILARANG mengisi "-" jika ada nama orang tercantum di lembar nota!
 5. Jenis Transaksi:
    - "type": "income" (Selalu 'income' karena ini pagu pemesanan bahan SPPG).
 
@@ -36,9 +35,8 @@ KEMBALIKAN HANYA JSON VALID SESUAI SKEMA BERIKUT:
 {
   "type": "income",
   "sppg_unit": "SPPG Patila, Luwu Utara",
-  "order_no": "05/02/09/26",
-  "order_date": "2026-09-09",
-  "arrival_date": "2026-09-09",
+  "order_no": "PO-10/12/09/26",
+  "order_date": "2026-09-12",
   "items": [
     {
       "no": 1,
@@ -51,7 +49,7 @@ KEMBALIKAN HANYA JSON VALID SESUAI SKEMA BERIKUT:
     }
   ],
   "total_amount": 29206000,
-  "signed_by": "-"
+  "signed_by": "M. RISAL, S.STP"
 }
 `;
 

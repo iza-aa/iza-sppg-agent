@@ -5,6 +5,7 @@ import { SHEET_NAMES } from "../recipes/index.js";
 import { SheetsClientProvider, parseCurrencyNumber } from "./sheets-client.provider.js";
 import { ReportingService } from "./reporting.service.js";
 import { MasterSyncService } from "./master-sync.service.js";
+import { getWibShortTimestamp } from "../../utils/date-time.js";
 
 export class CascadeDeleteService {
   constructor(
@@ -195,12 +196,13 @@ export class CascadeDeleteService {
       try {
         const reRes = await client.spreadsheets.values.get({
           spreadsheetId,
-          range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:B`,
+          range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:C`,
         });
         const rows = reRes.data.values || [];
         rincianExpenseCount = rows.filter((r) => {
           const c1 = String(r[1] || "").trim();
-          return detail.id && c1 === detail.id;
+          const c2 = String(r[2] || "").trim();
+          return detail.id && (c2 === detail.id || c1 === detail.id);
         }).length;
       } catch {}
 
@@ -208,20 +210,22 @@ export class CascadeDeleteService {
       try {
         const mRes = await client.spreadsheets.values.get({
           spreadsheetId,
-          range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A:J`,
+          range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A:L`,
         });
         const rows = mRes.data.values || [];
         for (let i = 1; i < rows.length; i++) {
           const r = rows[i];
           const rowSppg = String(r[0] || "").trim();
-          const rowSupplier = String(r[2] || "").trim().toLowerCase();
+          const rowExpenseId = String(r[2] || "").trim();
+          const rowSupplier = String(r[4] || r[2] || "").trim().toLowerCase();
           const sName = supplierName.toLowerCase();
           const matches =
-            (!orderNo || orderNo === "-" || rowSppg === orderNo) &&
-            (sName && (rowSupplier.includes(sName) || sName.includes(rowSupplier)));
+            (detail.id && (rowExpenseId === detail.id || rowExpenseId.includes(detail.id))) ||
+            ((!orderNo || orderNo === "-" || rowSppg === orderNo) &&
+              (sName && (rowSupplier.includes(sName) || sName.includes(rowSupplier))));
 
           if (matches) {
-            const paguTotal = parseCurrencyNumber(r[7]);
+            const paguTotal = parseCurrencyNumber(r[9] !== undefined ? r[9] : r[7]);
             if (paguTotal > 0) {
               resetRekapCount++;
             } else {
@@ -348,7 +352,7 @@ export class CascadeDeleteService {
           for (let i = 0; i < rows.length; i++) {
             const c0 = String(rows[i]?.[0] || "").trim();
             const c1 = String(rows[i]?.[1] || "").trim();
-            const itemName = String(rows[i]?.[4] || "").trim().toLowerCase();
+            const itemName = String(rows[i]?.[3] || "").trim().toLowerCase();
             if (orderId ? c1 === orderId : (orderNo && c0 === orderNo)) {
               indicesToDelete.push(i);
               if (itemName) deletedItemNames.add(itemName);
@@ -385,7 +389,7 @@ export class CascadeDeleteService {
           for (let i = 0; i < rows.length; i++) {
             const c0 = String(rows[i]?.[0] || "").trim();
             const c1 = String(rows[i]?.[1] || "").trim();
-            if (orderId ? c1 === orderId : (orderNo && c0 === orderNo)) {
+            if ((orderNo && c0 === orderNo) || (orderId && (c1 === orderId || c0 === orderId))) {
               indicesToDelete.push(i);
             }
           }
@@ -416,7 +420,7 @@ export class CascadeDeleteService {
           for (let i = 0; i < rows.length; i++) {
             const c0 = String(rows[i]?.[0] || "").trim();
             const c1 = String(rows[i]?.[1] || "").trim();
-            if (orderId ? c1 === orderId : (orderNo && c0 === orderNo)) {
+            if ((orderNo && c0 === orderNo) || (orderId && (c1 === orderId || c0 === orderId))) {
               indicesToDelete.push(i);
             }
           }
@@ -449,15 +453,8 @@ export class CascadeDeleteService {
           const indicesToDelete: number[] = [];
           for (let i = 0; i < rows.length; i++) {
             const c0 = String(rows[i]?.[0] || "").trim();
-            const rekapItemName = String(rows[i]?.[3] || "").trim().toLowerCase();
-            if (orderNo && c0 === orderNo) {
-              if (orderId && deletedItemNames.size > 0) {
-                if (deletedItemNames.has(rekapItemName)) {
-                  indicesToDelete.push(i);
-                }
-              } else {
-                indicesToDelete.push(i);
-              }
+            if ((orderNo && c0 === orderNo) || (orderId && c0 === orderId)) {
+              indicesToDelete.push(i);
             }
           }
           indicesToDelete.sort((a, b) => b - a).forEach((idx) => {
@@ -536,19 +533,20 @@ export class CascadeDeleteService {
         const cellResets: Array<{ rowNum: number; originalSupplier: string }> = [];
         const rekapIndicesToDelete: number[] = [];
 
-        // 1. Delete child items in Tab 05 (RINCIAN_PENGELUARAN) matching expenseId (Col B)
+        // 1. Delete child items in Tab 05 (RINCIAN_PENGELUARAN) matching expenseId (Col C or Col B)
         let deletedRincianExpense = 0;
         const rincianExpSheetId = sheetMap.get(SHEET_NAMES.RINCIAN_PENGELUARAN);
         if (typeof rincianExpSheetId === "number" && expenseId) {
           const reRes = await client.spreadsheets.values.get({
             spreadsheetId,
-            range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:B`,
+            range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:C`,
           }).catch(() => ({ data: { values: null } }));
           const rows = reRes.data?.values || [];
           const indicesToDelete: number[] = [];
           for (let i = 0; i < rows.length; i++) {
             const c1 = String(rows[i]?.[1] || "").trim();
-            if (c1 === expenseId) {
+            const c2 = String(rows[i]?.[2] || "").trim();
+            if (c2 === expenseId || c1 === expenseId) {
               indicesToDelete.push(i);
             }
           }
@@ -576,23 +574,25 @@ export class CascadeDeleteService {
         if (typeof rekapSheetId === "number") {
           const mRes = await client.spreadsheets.values.get({
             spreadsheetId,
-            range: `'${rekapSheetName}'!A:J`,
+            range: `'${rekapSheetName}'!A:L`,
           }).catch(() => ({ data: { values: null } }));
           const rows = mRes.data?.values || [];
 
           for (let i = 1; i < rows.length; i++) {
             const r = rows[i];
             const rowSppg = String(r[0] || "").trim();
-            const rowSupplier = String(r[2] || "").trim().toLowerCase();
+            const rowExpenseId = String(r[2] || "").trim();
+            const rowSupplier = String(r[4] || r[2] || "").trim().toLowerCase();
             const matches =
-              (!orderNo || orderNo === "-" || rowSppg === orderNo) &&
-              (supplierName && (rowSupplier.includes(supplierName) || supplierName.includes(rowSupplier)));
+              (expenseId && (rowExpenseId === expenseId || rowExpenseId.includes(expenseId))) ||
+              ((!orderNo || orderNo === "-" || rowSppg === orderNo) &&
+                (supplierName && (rowSupplier.includes(supplierName) || supplierName.includes(rowSupplier))));
 
             if (matches) {
-              const paguTotal = parseCurrencyNumber(r[7]);
+              const paguTotal = parseCurrencyNumber(r[9] !== undefined ? r[9] : r[7]);
               if (paguTotal > 0) {
-                // Original pagu row: reset invoice amount (Col I) and realization (Col J)
-                cellResets.push({ rowNum: i + 1, originalSupplier: String(r[2] || "") });
+                // Original pagu row: reset ID Pengeluaran (Col C), invoice price (Col K) and realization (Col L)
+                cellResets.push({ rowNum: i + 1, originalSupplier: String(r[4] || r[2] || "") });
               } else {
                 // Extra unmatched item: delete row
                 rekapIndicesToDelete.push(i); // 0-indexed row in sheet
@@ -607,18 +607,22 @@ export class CascadeDeleteService {
             const rowNum = item.rowNum;
             const updates = [
               {
-                range: `'${rekapSheetName}'!I${rowNum}:J${rowNum}`,
+                range: `'${rekapSheetName}'!C${rowNum}`,
+                values: [["-"]],
+              },
+              {
+                range: `'${rekapSheetName}'!K${rowNum}:L${rowNum}`,
                 values: [["", ""]],
               },
               {
-                range: `'${rekapSheetName}'!M${rowNum}`,
-                values: [[`=IF(J${rowNum}=""; "🟡 MENUNGGU INVOICE"; IF(K${rowNum}>0; "🟢 HEMAT"; IF(K${rowNum}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`]],
+                range: `'${rekapSheetName}'!O${rowNum}`,
+                values: [[`=IF(L${rowNum}=""; "🟡 MENUNGGU INVOICE"; IF(M${rowNum}>0; "🟢 HEMAT"; IF(M${rowNum}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`]],
               },
             ];
             const cleanSupplier = String(item.originalSupplier || "").replace(/\s*\([^)]*\)/g, "").trim();
             if (cleanSupplier && cleanSupplier !== item.originalSupplier) {
               updates.push({
-                range: `'${rekapSheetName}'!C${rowNum}`,
+                range: `'${rekapSheetName}'!E${rowNum}`,
                 values: [[cleanSupplier]],
               });
             }
@@ -759,6 +763,7 @@ export class CascadeDeleteService {
       total_amount?: number;
       supplier_name?: string;
       notes?: string;
+      updatedBy?: string;
     }
   ): Promise<{ success: boolean; message: string }> {
     const detail = await this.getTransactionDetail(spreadsheetId, transactionId);
@@ -774,9 +779,9 @@ export class CascadeDeleteService {
         detail.sheetName === "03_PENGELUARAN_SUPPLIER"
       ) {
         const isModern = detail.sheetName === SHEET_NAMES.PENGELUARAN_SUPPLIER;
-        const supplierCol = "D";
-        const amountCol = isModern ? "F" : "H";
-        const notesCol = isModern ? "J" : "L";
+        const supplierCol = isModern ? "E" : "D";
+        const amountCol = isModern ? "G" : "H";
+        const notesCol = isModern ? "L" : "L";
 
         if (updates.supplier_name) {
           await client.spreadsheets.values.update({
@@ -786,14 +791,167 @@ export class CascadeDeleteService {
             requestBody: { values: [[updates.supplier_name]] },
           });
         }
+
         if (updates.total_amount !== undefined) {
-          await client.spreadsheets.values.update({
+          // Check child items in 05_RINCIAN_PENGELUARAN
+          const tab05Res = await client.spreadsheets.values.get({
             spreadsheetId,
-            range: `'${detail.sheetName}'!${amountCol}${detail.rowIndex}`,
-            valueInputOption: "USER_ENTERED",
-            requestBody: { values: [[updates.total_amount]] },
-          });
+            range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A2:L`,
+          }).catch(() => ({ data: { values: null } }));
+          const tab05Rows = tab05Res.data?.values || [];
+          const cleanTrx = (detail.id || transactionId).trim().toUpperCase();
+
+          const matchingTab05Indices: number[] = [];
+          for (let i = 0; i < tab05Rows.length; i++) {
+            const rExpId = String(tab05Rows[i][2] || tab05Rows[i][1] || "").trim().toUpperCase();
+            if (
+              rExpId === cleanTrx ||
+              rExpId.endsWith(`-${cleanTrx}`) ||
+              cleanTrx.endsWith(`-${rExpId}`) ||
+              (cleanTrx.length >= 4 && rExpId.includes(cleanTrx))
+            ) {
+              matchingTab05Indices.push(i);
+            }
+          }
+
+          if (matchingTab05Indices.length === 1) {
+            const childIdx = matchingTab05Indices[0];
+            const tab05RowNum = childIdx + 2;
+            const childRow = tab05Rows[childIdx];
+            const itemName = String(childRow[5] || childRow[4] || "").trim();
+            const qty = parseCurrencyNumber(childRow[6] || childRow[5]) || 1;
+            const unit = String(childRow[7] || childRow[6] || "unit").trim();
+            const newUnitPrice = Math.round(updates.total_amount / qty);
+
+            // A. Update Tab 05 Col I (Harga Satuan Invoice)
+            await client.spreadsheets.values.update({
+              spreadsheetId,
+              range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!I${tab05RowNum}`,
+              valueInputOption: "USER_ENTERED",
+              requestBody: { values: [[newUnitPrice]] },
+            });
+
+            // B. Ensure Col J formula in Tab 05 is preserved
+            await client.spreadsheets.values.update({
+              spreadsheetId,
+              range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!J${tab05RowNum}`,
+              valueInputOption: "USER_ENTERED",
+              requestBody: { values: [[`=IF(OR(G${tab05RowNum}=""; I${tab05RowNum}=""); ""; G${tab05RowNum} * I${tab05RowNum})`]] },
+            });
+
+            // C. If supplier was updated, update Col E in Tab 05
+            if (updates.supplier_name) {
+              await client.spreadsheets.values.update({
+                spreadsheetId,
+                range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!E${tab05RowNum}`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: { values: [[updates.supplier_name]] },
+              });
+            }
+
+            // D. In Tab 04 Col G, preserve dynamic SUMIF formula with updated fallback
+            await client.spreadsheets.values.update({
+              spreadsheetId,
+              range: `'${detail.sheetName}'!G${detail.rowIndex}`,
+              valueInputOption: "USER_ENTERED",
+              requestBody: {
+                values: [[`=IF(COUNTIF('${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$C:$C; C${detail.rowIndex})>0; SUMIF('${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$C:$C; C${detail.rowIndex}; '${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$J:$J); ${updates.total_amount})`]],
+              },
+            });
+
+            // E. Cascade to Tab 06 (06_MARGIN / PERBANDINGAN_MARGIN)
+            try {
+              const orderNo = (detail.orderNo || "").trim();
+              const cleanItemName = itemName.toLowerCase().trim();
+              const rekapRes = await client.spreadsheets.values.get({
+                spreadsheetId,
+                range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A2:O`,
+              }).catch(() => ({ data: { values: null } }));
+              const rekapRows = rekapRes.data?.values || [];
+
+              for (let i = 0; i < rekapRows.length; i++) {
+                const r = rekapRows[i];
+                const rOrder = String(r[0] || "").trim();
+                const rItem = String(r[5] || r[3] || "").trim().toLowerCase();
+                const matches =
+                  (!orderNo || orderNo === "-" || rOrder === orderNo) &&
+                  (rItem === cleanItemName || cleanItemName.includes(rItem) || rItem.includes(cleanItemName));
+
+                if (matches) {
+                  const rekapRowNum = i + 2;
+                  const targetQty = parseCurrencyNumber(r[6] || r[4]);
+                  const batchUpdates: { range: string; values: any[][] }[] = [];
+
+                  if (updates.supplier_name) {
+                    batchUpdates.push({
+                      range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!E${rekapRowNum}`,
+                      values: [[updates.supplier_name]],
+                    });
+                  }
+
+                  batchUpdates.push({
+                    range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!K${rekapRowNum}:L${rekapRowNum}`,
+                    values: [[newUnitPrice, updates.total_amount]],
+                  });
+
+                  if (targetQty > 0 && qty < targetQty) {
+                    const statusText = `🟠 BELUM LENGKAP (${qty}/${targetQty} ${unit})`;
+                    batchUpdates.push({
+                      range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!O${rekapRowNum}`,
+                      values: [[statusText]],
+                    });
+                  } else {
+                    const formulaStatus = `=IF(L${rekapRowNum}=""; "🟡 MENUNGGU INVOICE"; IF(M${rekapRowNum}>0; "🟢 HEMAT"; IF(M${rekapRowNum}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`;
+                    batchUpdates.push({
+                      range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!O${rekapRowNum}`,
+                      values: [[formulaStatus]],
+                    });
+                  }
+
+                  await client.spreadsheets.values.batchUpdate({
+                    spreadsheetId,
+                    requestBody: {
+                      valueInputOption: "USER_ENTERED",
+                      data: batchUpdates,
+                    },
+                  });
+                  break;
+                }
+              }
+            } catch (cascadeErr) {
+              logger.warn({ cascadeErr }, "Cascade update to 06_MARGIN had a minor error");
+            }
+          } else {
+            // Standalone or multiple items: update Tab 04 Col G directly or with formula fallback
+            if (isModern) {
+              await client.spreadsheets.values.update({
+                spreadsheetId,
+                range: `'${detail.sheetName}'!G${detail.rowIndex}`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: {
+                  values: [[`=IF(COUNTIF('${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$C:$C; C${detail.rowIndex})>0; SUMIF('${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$C:$C; C${detail.rowIndex}; '${SHEET_NAMES.RINCIAN_PENGELUARAN}'!$J:$J); ${updates.total_amount})`]],
+                },
+              });
+            } else {
+              await client.spreadsheets.values.update({
+                spreadsheetId,
+                range: `'${detail.sheetName}'!${amountCol}${detail.rowIndex}`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: { values: [[updates.total_amount]] },
+              });
+            }
+          }
         }
+
+        const expenseEdits: string[] = [];
+        if (updates.supplier_name && updates.supplier_name !== detail.supplierOrUnit) {
+          expenseEdits.push(`Supplier: ${detail.supplierOrUnit || "-"} -> ${updates.supplier_name}`);
+        }
+        if (updates.total_amount !== undefined && updates.total_amount !== detail.amount) {
+          expenseEdits.push(`Total: Rp ${detail.amount || 0} -> Rp ${updates.total_amount}`);
+        }
+
+        const userTag = updates.updatedBy ? ` (oleh ${updates.updatedBy})` : "";
         if (updates.notes) {
           await client.spreadsheets.values.update({
             spreadsheetId,
@@ -801,64 +959,54 @@ export class CascadeDeleteService {
             valueInputOption: "USER_ENTERED",
             requestBody: { values: [[updates.notes]] },
           });
-        }
-
-        // Cascade update to 05_REKAP_MARGIN
-        try {
-          const orderNo = (detail.orderNo || "").trim();
-          const origSupplier = (detail.supplierOrUnit || "").trim().toLowerCase();
-          const rekapRes = await client.spreadsheets.values.get({
+        } else if (expenseEdits.length > 0) {
+          const shortTime = getWibShortTimestamp();
+          const editLine = `[Edit ${shortTime}] ${expenseEdits.join(", ")}${userTag}`;
+          const existingColNotes = await client.spreadsheets.values.get({
             spreadsheetId,
-            range: `'${SHEET_NAMES.REKAP_MARGIN}'!A:J`,
+            range: `'${detail.sheetName}'!${notesCol}${detail.rowIndex}`,
           }).catch(() => ({ data: { values: null } }));
-          const rows = rekapRes.data?.values || [];
-
-          for (let i = 1; i < rows.length; i++) {
-            const r = rows[i];
-            const rowSppg = String(r[0] || "").trim();
-            const rowSupplier = String(r[2] || "").trim().toLowerCase();
-            const matches =
-              (!orderNo || orderNo === "-" || rowSppg === orderNo) &&
-              (origSupplier && (rowSupplier.includes(origSupplier) || origSupplier.includes(rowSupplier)));
-
-            if (matches) {
-              const rowNum = i + 1;
-              if (updates.supplier_name) {
-                await client.spreadsheets.values.update({
-                  spreadsheetId,
-                  range: `'${SHEET_NAMES.REKAP_MARGIN}'!C${rowNum}`,
-                  valueInputOption: "USER_ENTERED",
-                  requestBody: { values: [[updates.supplier_name]] },
-                });
-              }
-              if (updates.total_amount !== undefined) {
-                const qty = Number(r[4]) || 1;
-                const unitPrice = Math.round(updates.total_amount / qty);
-                await client.spreadsheets.values.update({
-                  spreadsheetId,
-                  range: `'${SHEET_NAMES.REKAP_MARGIN}'!I${rowNum}:J${rowNum}`,
-                  valueInputOption: "USER_ENTERED",
-                  requestBody: { values: [[unitPrice, updates.total_amount]] },
-                });
-              }
-              break;
-            }
-          }
-        } catch (cascadeErr) {
-          logger.warn({ cascadeErr }, "Cascade update to 05_REKAP_MARGIN had a minor error");
+          const existingNotes = String(existingColNotes.data?.values?.[0]?.[0] || "").trim();
+          const newNotes = (existingNotes && existingNotes !== "-")
+            ? `${existingNotes}\n${editLine}`
+            : editLine;
+          await client.spreadsheets.values.update({
+            spreadsheetId,
+            range: `'${detail.sheetName}'!${notesCol}${detail.rowIndex}`,
+            valueInputOption: "USER_ENTERED",
+            requestBody: { values: [[newNotes]] },
+          });
         }
       } else if (
         detail.sheetName === SHEET_NAMES.PAGU_RINGKASAN ||
         detail.sheetName === "02_PENDAPATAN_SPPG"
       ) {
         const isModern = detail.sheetName === SHEET_NAMES.PAGU_RINGKASAN;
-        const amountCol = isModern ? "F" : "I";
+        const amountCol = isModern ? "G" : "I";
+        const notesCol = isModern ? "J" : "K";
         if (updates.total_amount !== undefined) {
           await client.spreadsheets.values.update({
             spreadsheetId,
             range: `'${detail.sheetName}'!${amountCol}${detail.rowIndex}`,
             valueInputOption: "USER_ENTERED",
             requestBody: { values: [[updates.total_amount]] },
+          });
+          const shortTime = getWibShortTimestamp();
+          const userTag = updates.updatedBy ? ` (oleh ${updates.updatedBy})` : "";
+          const editLine = `[Edit ${shortTime}] Total Pagu: Rp ${detail.amount || 0} -> Rp ${updates.total_amount}${userTag}`;
+          const existingColJ = await client.spreadsheets.values.get({
+            spreadsheetId,
+            range: `'${detail.sheetName}'!${notesCol}${detail.rowIndex}`,
+          }).catch(() => ({ data: { values: null } }));
+          const existingNotes = String(existingColJ.data?.values?.[0]?.[0] || "").trim();
+          const newNotes = (existingNotes && existingNotes !== "-")
+            ? `${existingNotes}\n${editLine}`
+            : editLine;
+          await client.spreadsheets.values.update({
+            spreadsheetId,
+            range: `'${detail.sheetName}'!${notesCol}${detail.rowIndex}`,
+            valueInputOption: "USER_ENTERED",
+            requestBody: { values: [[newNotes]] },
           });
         }
       }

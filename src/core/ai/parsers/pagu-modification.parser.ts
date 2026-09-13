@@ -60,7 +60,7 @@ export function staticParsePaguModification(text: string): PaguModificationReque
   const lower = text.toLowerCase();
 
   // Must have keywords related to changing / adding / pagu
-  const isPaguChange = /\b(ubah|ngubah|mengubah|ganti|mengganti|edit|revisi|koreksi|tambah|nambah|menambah|tambahkan|menambahkan|masukkan|input|sisip|sisipkan)\b/i.test(lower) &&
+  const isPaguChange = /\b(ubah|ngubah|mengubah|ganti|mengganti|edit|revisi|koreksi|tambah|nambah|menambah|tambahkan|menambahkan|masukkan|input|sisip|sisipkan|salah|harusnya|keliru|bukan|pindah)\b/i.test(lower) &&
     /\b(pagu|rincian|kuantitas|qty|harga|satuan|bahan|item|ih\d+|ii\d+|eh\d+|ei\d+|\d{2}\/\d{2}\/\d{2}\/\d{2}|po)\b/i.test(lower);
 
   if (!isPaguChange) return null;
@@ -70,13 +70,14 @@ export function staticParsePaguModification(text: string): PaguModificationReque
 
   // 1. Extract Order Reference (e.g. IH001, II005, EI001, EI002, 03/31/08/26) - prefer short ID code if available
   const specificIdMatch = text.match(/\b((?:SPPG\d*[-_])?(?:IH|II|EH|EI|TRX)\d{3,})\b/i);
-  const datePoMatch = text.match(/\b(\d{2}\/\d{2}\/\d{2}\/\d{2})\b/);
+  const datePoMatch = text.match(/\b(?:PO[-_\s]*)?(\d{2}\/\d{2}\/\d{2}\/\d{2})\b/i);
   const orderRef = specificIdMatch ? specificIdMatch[1].toUpperCase() : (datePoMatch ? datePoMatch[1] : undefined);
 
   // 2. Extract Price (e.g. 5rb, 5000, 32.000, rp 5000)
   let price: number | undefined;
-  const priceMatch = text.match(/(?:harga\s*(?:satuan(?:nya)?)?|@|sebesar|rp)\s*[:=]?\s*(\d+(?:[.,]\d+)?\s*(?:rb|ribu|jt|juta|k\b)?|\d{3,})/i) ||
-    text.match(/(\d+(?:[.,]\d+)?\s*(?:rb|ribu|k\b))\s*(?:per|\/|\s*$)/i);
+  const priceMatch = text.match(/(?:harga\s*(?:satuan(?:nya)?)?|@|sebesar|rp\.?)\s*[:=]?\s*(\d+(?:[.,]\d+)?\s*(?:rb|ribu|jt|juta|k\b)?|\d{3,})/i) ||
+    text.match(/\b(\d+(?:[.,]\d+)?\s*(?:rb|ribu|jt|juta|k\b))/i) ||
+    text.match(/(?:\s|^)(\d{1,3}(?:\.\d{3})+)(?:\s+(?:per|\/|ke|di|pada|untuk|supplier|toko|rekanan|pagu|po)|$)/i);
   if (priceMatch) {
     const rawP = priceMatch[1].toLowerCase().trim();
     if (/(?:jt|juta)/i.test(rawP)) {
@@ -215,7 +216,7 @@ export function staticParsePaguModification(text: string): PaguModificationReque
 
   // Supplier (optional)
   let supplier: string | undefined;
-  const supplierMatch = text.match(/(?:supplier|toko|rekanan)\s*[:=]?\s*([a-zA-Z0-9\s]+?)(?:\s+(?:kuantitas|qty|harga|satuan)|$)/i);
+  const supplierMatch = text.match(/(?:target\s*)?(?:supplier|toko|rekanan)\s*[:=]?\s*([a-zA-Z0-9\s]+?)(?:\s+(?:kuantitas|qty|harga|satuan|di|pada|ke|dalam|pagu|po)|$)/i);
   if (supplierMatch) {
     supplier = supplierMatch[1].trim();
   }

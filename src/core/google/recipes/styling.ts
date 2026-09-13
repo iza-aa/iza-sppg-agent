@@ -17,15 +17,15 @@ export function createInit5TabsBatchRequests(defaultSheetId: number = 0): sheets
           title: SHEET_NAMES.DASHBOARD,
           tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.DEEP_NAVY) },
           gridProperties: {
-            rowCount: 45,
-            columnCount: 16,
+            rowCount: 56,
+            columnCount: 14,
             hideGridlines: false
           }
         },
         fields: 'title,tabColorStyle,gridProperties(rowCount,columnCount,hideGridlines)'
       }
     },
-    // 2. Tab 02_PAGU_PENERIMAAN
+    // 2. Tab 02_Pendapatan
     {
       addSheet: {
         properties: {
@@ -35,13 +35,13 @@ export function createInit5TabsBatchRequests(defaultSheetId: number = 0): sheets
           tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.SOFT_SKY_BLUE) },
           gridProperties: {
             rowCount: 2000,
-            columnCount: 10,
+            columnCount: 12,
             frozenRowCount: 1
           }
         }
       }
     },
-    // 3. Tab 03_RINCIAN_PENDAPATAN
+    // 3. Tab 03_Rincian Pendapatan
     {
       addSheet: {
         properties: {
@@ -51,13 +51,13 @@ export function createInit5TabsBatchRequests(defaultSheetId: number = 0): sheets
           tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.EMBLEM_GOLD) },
           gridProperties: {
             rowCount: 5000,
-            columnCount: 10,
+            columnCount: 12,
             frozenRowCount: 1
           }
         }
       }
     },
-    // 4. Tab 04_PAGU_PENGELUARAN
+    // 4. Tab 04_Pengeluaran
     {
       addSheet: {
         properties: {
@@ -67,13 +67,13 @@ export function createInit5TabsBatchRequests(defaultSheetId: number = 0): sheets
           tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.CRIMSON_RED) },
           gridProperties: {
             rowCount: 5000,
-            columnCount: 10,
+            columnCount: 12,
             frozenRowCount: 1
           }
         }
       }
     },
-    // 5. Tab 05_RINCIAN_PENGELUARAN (Tab Baru)
+    // 5. Tab 05_Rincian Pengeluaran
     {
       addSheet: {
         properties: {
@@ -83,7 +83,7 @@ export function createInit5TabsBatchRequests(defaultSheetId: number = 0): sheets
           tabColorStyle: { rgbColor: hexToRgbColor('#E65100') },
           gridProperties: {
             rowCount: 5000,
-            columnCount: 10,
+            columnCount: 13,
             frozenRowCount: 1
           }
         }
@@ -99,19 +99,36 @@ export function createInit5TabsBatchRequests(defaultSheetId: number = 0): sheets
           tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.FOREST_GREEN) },
           gridProperties: {
             rowCount: 5000,
-            columnCount: 13,
+            columnCount: 16,
             frozenRowCount: 1
           }
         }
       }
     },
-    // 7. Tab 07_MASTER_DATA (Tersembunyi / Hidden)
+    // 7. Tab 07_AKTIVITAS (Log Aktivitas Bot - Terbuka / Unhidden)
+    {
+      addSheet: {
+        properties: {
+          sheetId: SHEET_IDS.LOG_AKTIVITAS,
+          title: SHEET_NAMES.LOG_AKTIVITAS,
+          index: 6,
+          tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.SLATE_GRAY) },
+          hidden: false,
+          gridProperties: {
+            rowCount: 5000,
+            columnCount: 10,
+            frozenRowCount: 1
+          }
+        }
+      }
+    },
+    // 8. Tab 08_MASTER_DATA (Tersembunyi / Hidden)
     {
       addSheet: {
         properties: {
           sheetId: SHEET_IDS.MASTER_DATA,
           title: SHEET_NAMES.MASTER_DATA,
-          index: 6,
+          index: 7,
           tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.SLATE_GRAY) },
           hidden: true,
           gridProperties: {
@@ -165,7 +182,7 @@ export function createDataValidationBatchRequests(sheetMap?: Map<string, number>
           startRowIndex: 1,
           endRowIndex: 5000,
           startColumnIndex: 0,
-          endColumnIndex: 10,
+          endColumnIndex: 12,
         },
       },
     },
@@ -176,7 +193,7 @@ export function createDataValidationBatchRequests(sheetMap?: Map<string, number>
           startRowIndex: 1,
           endRowIndex: 5000,
           startColumnIndex: 0,
-          endColumnIndex: 10,
+          endColumnIndex: 12,
         },
       },
     },
@@ -187,7 +204,7 @@ export function createDataValidationBatchRequests(sheetMap?: Map<string, number>
           startRowIndex: 1,
           endRowIndex: 5000,
           startColumnIndex: 0,
-          endColumnIndex: 13,
+          endColumnIndex: 15,
         },
       },
     },
@@ -205,7 +222,7 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
   const perbandinganMarginId = resolveSheetId(sheetMap, SHEET_NAMES.PERBANDINGAN_MARGIN, SHEET_IDS.PERBANDINGAN_MARGIN);
 
   return [
-    // Tab 02 (PAGU_PENERIMAAN): Tanggal Pesanan (Kolom C)
+    // Tab 02 (PENDAPATAN): Tanggal (Kolom C)
     {
       repeatCell: {
         range: {
@@ -223,7 +240,7 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
         fields: 'userEnteredFormat.numberFormat'
       }
     },
-    // Tab 02 (PAGU_PENERIMAAN): Total Pagu Anggaran (Kolom F)
+    // Tab 02 (PENDAPATAN): Total Pendapatan (Kolom F)
     {
       repeatCell: {
         range: {
@@ -259,7 +276,7 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
         fields: 'userEnteredFormat.numberFormat'
       }
     },
-    // Tab 03 (RINCIAN_PENDAPATAN): Harga Pagu Satuan & Total Pagu (Kolom H & I)
+    // Tab 03 (RINCIAN_PENDAPATAN): Harga Satuan & Total Pagu (Kolom H & I)
     {
       repeatCell: {
         range: {
@@ -277,15 +294,15 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
         fields: 'userEnteredFormat.numberFormat'
       }
     },
-    // Tab 04 (PAGU_PENGELUARAN): Tanggal Transaksi (Kolom C)
+    // Tab 04 (PENGELUARAN): Tanggal (Kolom D)
     {
       repeatCell: {
         range: {
           sheetId: paguPengeluaranId,
           startRowIndex: 1,
           endRowIndex: 5000,
-          startColumnIndex: 2,
-          endColumnIndex: 3
+          startColumnIndex: 3,
+          endColumnIndex: 4
         },
         cell: {
           userEnteredFormat: {
@@ -295,15 +312,15 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
         fields: 'userEnteredFormat.numberFormat'
       }
     },
-    // Tab 04 (PAGU_PENGELUARAN): Total Nominal Tagihan (Kolom F)
+    // Tab 04 (PENGELUARAN): Total Tagihan (Kolom G)
     {
       repeatCell: {
         range: {
           sheetId: paguPengeluaranId,
           startRowIndex: 1,
           endRowIndex: 5000,
-          startColumnIndex: 5,
-          endColumnIndex: 6
+          startColumnIndex: 6,
+          endColumnIndex: 7
         },
         cell: {
           userEnteredFormat: {
@@ -321,7 +338,7 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
           startRowIndex: 1,
           endRowIndex: 5000,
           startColumnIndex: 0,
-          endColumnIndex: 10,
+          endColumnIndex: 13,
         },
         cell: {
           userEnteredFormat: {
@@ -337,15 +354,15 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
         fields: 'userEnteredFormat(textFormat,verticalAlignment)',
       },
     },
-    // Tab 05 (RINCIAN_PENGELUARAN): Kuantitas (Kolom F)
+    // Tab 05 (RINCIAN_PENGELUARAN): Kuantitas (Kolom G)
     {
       repeatCell: {
         range: {
           sheetId: rincianPengeluaranId,
           startRowIndex: 1,
           endRowIndex: 5000,
-          startColumnIndex: 5,
-          endColumnIndex: 6
+          startColumnIndex: 6,
+          endColumnIndex: 7
         },
         cell: {
           userEnteredFormat: {
@@ -356,15 +373,15 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
         fields: 'userEnteredFormat(horizontalAlignment,numberFormat)'
       }
     },
-    // Tab 05 (RINCIAN_PENGELUARAN): Harga Satuan Invoice & Total Belanja (Kolom H & I)
+    // Tab 05 (RINCIAN_PENGELUARAN): Harga Satuan Invoice & Total Belanja (Kolom I & J)
     {
       repeatCell: {
         range: {
           sheetId: rincianPengeluaranId,
           startRowIndex: 1,
           endRowIndex: 5000,
-          startColumnIndex: 7,
-          endColumnIndex: 9
+          startColumnIndex: 8,
+          endColumnIndex: 10
         },
         cell: {
           userEnteredFormat: {
@@ -375,15 +392,15 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
         fields: 'userEnteredFormat(horizontalAlignment,numberFormat)'
       }
     },
-    // Tab 06 (PERBANDINGAN_MARGIN): Tanggal (Kolom B)
+    // Tab 06 (PERBANDINGAN_MARGIN): Tanggal (Kolom D)
     {
       repeatCell: {
         range: {
           sheetId: perbandinganMarginId,
           startRowIndex: 1,
           endRowIndex: 5000,
-          startColumnIndex: 1,
-          endColumnIndex: 2
+          startColumnIndex: 3,
+          endColumnIndex: 4
         },
         cell: {
           userEnteredFormat: {
@@ -393,15 +410,15 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
         fields: 'userEnteredFormat.numberFormat'
       }
     },
-    // Tab 06 (PERBANDINGAN_MARGIN): Kuantitas (Kolom E)
+    // Tab 06 (PERBANDINGAN_MARGIN): Kuantitas (Kolom G)
     {
       repeatCell: {
         range: {
           sheetId: perbandinganMarginId,
           startRowIndex: 1,
           endRowIndex: 5000,
-          startColumnIndex: 4,
-          endColumnIndex: 5
+          startColumnIndex: 6,
+          endColumnIndex: 7
         },
         cell: {
           userEnteredFormat: {
@@ -411,15 +428,15 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
         fields: 'userEnteredFormat.numberFormat'
       }
     },
-    // Tab 06 (PERBANDINGAN_MARGIN): Harga Pagu, Total Pagu, Harga Invoice, Total Realisasi, Margin Bersih (Kolom G..K)
+    // Tab 06 (PERBANDINGAN_MARGIN): Harga Pagu, Total Pagu, Harga Invoice, Total Realisasi, Margin Bersih (Kolom I..M)
     {
       repeatCell: {
         range: {
           sheetId: perbandinganMarginId,
           startRowIndex: 1,
           endRowIndex: 5000,
-          startColumnIndex: 6,
-          endColumnIndex: 11
+          startColumnIndex: 8,
+          endColumnIndex: 13
         },
         cell: {
           userEnteredFormat: {
@@ -429,15 +446,15 @@ export function createNumberFormattingBatchRequests(sheetMap?: Map<string, numbe
         fields: 'userEnteredFormat.numberFormat'
       }
     },
-    // Tab 06 (PERBANDINGAN_MARGIN): % Margin (Kolom L)
+    // Tab 06 (PERBANDINGAN_MARGIN): % Margin (Kolom N)
     {
       repeatCell: {
         range: {
           sheetId: perbandinganMarginId,
           startRowIndex: 1,
           endRowIndex: 5000,
-          startColumnIndex: 11,
-          endColumnIndex: 12
+          startColumnIndex: 13,
+          endColumnIndex: 14
         },
         cell: {
           userEnteredFormat: {
@@ -466,8 +483,8 @@ export function createConditionalFormattingBatchRequests(sheetMap?: Map<string, 
               sheetId: perbandinganMarginId,
               startRowIndex: 1,
               endRowIndex: 5000,
-              startColumnIndex: 12,
-              endColumnIndex: 13
+              startColumnIndex: 14,
+              endColumnIndex: 15
             }
           ],
           booleanRule: {
@@ -496,8 +513,8 @@ export function createConditionalFormattingBatchRequests(sheetMap?: Map<string, 
               sheetId: perbandinganMarginId,
               startRowIndex: 1,
               endRowIndex: 5000,
-              startColumnIndex: 12,
-              endColumnIndex: 13
+              startColumnIndex: 14,
+              endColumnIndex: 15
             }
           ],
           booleanRule: {
@@ -526,8 +543,8 @@ export function createConditionalFormattingBatchRequests(sheetMap?: Map<string, 
               sheetId: perbandinganMarginId,
               startRowIndex: 1,
               endRowIndex: 5000,
-              startColumnIndex: 12,
-              endColumnIndex: 13
+              startColumnIndex: 14,
+              endColumnIndex: 15
             }
           ],
           booleanRule: {
@@ -556,8 +573,8 @@ export function createConditionalFormattingBatchRequests(sheetMap?: Map<string, 
               sheetId: perbandinganMarginId,
               startRowIndex: 1,
               endRowIndex: 5000,
-              startColumnIndex: 12,
-              endColumnIndex: 13
+              startColumnIndex: 14,
+              endColumnIndex: 15
             }
           ],
           booleanRule: {
@@ -586,8 +603,8 @@ export function createConditionalFormattingBatchRequests(sheetMap?: Map<string, 
               sheetId: perbandinganMarginId,
               startRowIndex: 1,
               endRowIndex: 5000,
-              startColumnIndex: 12,
-              endColumnIndex: 13
+              startColumnIndex: 14,
+              endColumnIndex: 15
             }
           ],
           booleanRule: {
@@ -606,6 +623,209 @@ export function createConditionalFormattingBatchRequests(sheetMap?: Map<string, 
         },
         index: 4
       }
+    },
+    // 6. % Margin = 0%: Teks Biru Tebal
+    {
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [
+            {
+              sheetId: perbandinganMarginId,
+              startRowIndex: 1,
+              endRowIndex: 5000,
+              startColumnIndex: 13,
+              endColumnIndex: 14
+            }
+          ],
+          booleanRule: {
+            condition: {
+              type: 'NUMBER_EQ',
+              values: [{ userEnteredValue: '0' }]
+            },
+            format: {
+              textFormat: {
+                foregroundColor: hexToRgbColor('#0369A1'),
+                bold: true
+              }
+            }
+          }
+        },
+        index: 5
+      }
+    },
+    // 7. % Margin >= 15%: Teks Hijau Tebal
+    {
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [
+            {
+              sheetId: perbandinganMarginId,
+              startRowIndex: 1,
+              endRowIndex: 5000,
+              startColumnIndex: 13,
+              endColumnIndex: 14
+            }
+          ],
+          booleanRule: {
+            condition: {
+              type: 'NUMBER_GREATER_THAN_EQ',
+              values: [{ userEnteredValue: '0,15' }]
+            },
+            format: {
+              textFormat: {
+                foregroundColor: hexToRgbColor('#166534'),
+                bold: true
+              }
+            }
+          }
+        },
+        index: 6
+      }
+    },
+    // 8. % Margin 5%..14.99%: Teks Amber/Cokelat Tebal
+    {
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [
+            {
+              sheetId: perbandinganMarginId,
+              startRowIndex: 1,
+              endRowIndex: 5000,
+              startColumnIndex: 13,
+              endColumnIndex: 14
+            }
+          ],
+          booleanRule: {
+            condition: {
+              type: 'NUMBER_BETWEEN',
+              values: [{ userEnteredValue: '0,05' }, { userEnteredValue: '0,1499' }]
+            },
+            format: {
+              textFormat: {
+                foregroundColor: hexToRgbColor('#B45309'),
+                bold: true
+              }
+            }
+          }
+        },
+        index: 7
+      }
+    },
+    // 9. % Margin < 5%: Teks Merah Tebal
+    {
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [
+            {
+              sheetId: perbandinganMarginId,
+              startRowIndex: 1,
+              endRowIndex: 5000,
+              startColumnIndex: 13,
+              endColumnIndex: 14
+            }
+          ],
+          booleanRule: {
+            condition: {
+              type: 'NUMBER_LESS',
+              values: [{ userEnteredValue: '0,05' }]
+            },
+            format: {
+              textFormat: {
+                foregroundColor: hexToRgbColor('#DC2626'),
+                bold: true
+              }
+            }
+          }
+        },
+        index: 8
+      }
+    },
+    // 10. Margin Bersih (Rp) = 0: Teks Biru Tebal
+    {
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [
+            {
+              sheetId: perbandinganMarginId,
+              startRowIndex: 1,
+              endRowIndex: 5000,
+              startColumnIndex: 12,
+              endColumnIndex: 13
+            }
+          ],
+          booleanRule: {
+            condition: {
+              type: 'NUMBER_EQ',
+              values: [{ userEnteredValue: '0' }]
+            },
+            format: {
+              textFormat: {
+                foregroundColor: hexToRgbColor('#0369A1'),
+                bold: true
+              }
+            }
+          }
+        },
+        index: 9
+      }
+    },
+    // 11. Margin Bersih (Rp) > 0: Teks Hijau Tebal
+    {
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [
+            {
+              sheetId: perbandinganMarginId,
+              startRowIndex: 1,
+              endRowIndex: 5000,
+              startColumnIndex: 12,
+              endColumnIndex: 13
+            }
+          ],
+          booleanRule: {
+            condition: {
+              type: 'NUMBER_GREATER',
+              values: [{ userEnteredValue: '0' }]
+            },
+            format: {
+              textFormat: {
+                foregroundColor: hexToRgbColor('#166534'),
+                bold: true
+              }
+            }
+          }
+        },
+        index: 10
+      }
+    },
+    // 12. Margin Bersih (Rp) < 0: Teks Merah Tebal
+    {
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [
+            {
+              sheetId: perbandinganMarginId,
+              startRowIndex: 1,
+              endRowIndex: 5000,
+              startColumnIndex: 12,
+              endColumnIndex: 13
+            }
+          ],
+          booleanRule: {
+            condition: {
+              type: 'NUMBER_LESS',
+              values: [{ userEnteredValue: '0' }]
+            },
+            format: {
+              textFormat: {
+                foregroundColor: hexToRgbColor('#DC2626'),
+                bold: true
+              }
+            }
+          }
+        },
+        index: 11
+      }
     }
   ];
 }
@@ -619,32 +839,37 @@ export function createHeaderStylingBatchRequests(sheetMap?: Map<string, number>)
   const masterDataId = resolveSheetId(sheetMap, SHEET_NAMES.MASTER_DATA, SHEET_IDS.MASTER_DATA);
 
   const tabWidths: { sheetId: number; widths: number[] }[] = [
-    // Tab 02: PAGU_PENERIMAAN (10 Kolom)
+    // Tab 02: PENDAPATAN (10 Kolom)
     {
       sheetId: resolveSheetId(sheetMap, SHEET_NAMES.PAGU_PENERIMAAN, SHEET_IDS.PAGU_PENERIMAAN),
-      widths: [130, 140, 110, 110, 120, 140, 120, 220, 150, 180]
+      widths: [190, 150, 135, 130, 130, 160, 165, 160, 170, 300]
     },
-    // Tab 03: RINCIAN_PENDAPATAN (10 Kolom)
+    // Tab 03: RINCIAN_PENDAPATAN (12 Kolom)
     {
       sheetId: resolveSheetId(sheetMap, SHEET_NAMES.RINCIAN_PENDAPATAN, SHEET_IDS.RINCIAN_PENDAPATAN),
-      widths: [120, 140, 65, 150, 200, 85, 85, 120, 140, 160]
+      widths: [190, 150, 65, 220, 160, 90, 90, 135, 140, 140, 170, 260]
     },
-    // Tab 04: PAGU_PENGELUARAN (10 Kolom)
+    // Tab 04: PENGELUARAN (12 Kolom)
     {
       sheetId: resolveSheetId(sheetMap, SHEET_NAMES.PAGU_PENGELUARAN, SHEET_IDS.PAGU_PENGELUARAN),
-      widths: [130, 140, 110, 150, 130, 140, 110, 120, 130, 180]
+      widths: [190, 150, 150, 120, 180, 165, 150, 105, 130, 140, 170, 300]
     },
-    // Tab 05: RINCIAN_PENGELUARAN (10 Kolom)
+    // Tab 05: RINCIAN_PENGELUARAN (13 Kolom)
     {
       sheetId: resolveSheetId(sheetMap, SHEET_NAMES.RINCIAN_PENGELUARAN, SHEET_IDS.RINCIAN_PENGELUARAN),
-      widths: [130, 150, 70, 180, 260, 95, 90, 140, 150, 180]
+      widths: [190, 150, 160, 70, 180, 260, 95, 90, 135, 150, 140, 170, 260]
     },
-    // Tab 06: PERBANDINGAN_MARGIN (13 Kolom)
+    // Tab 06: MARGIN (15 Kolom)
     {
       sheetId: resolveSheetId(sheetMap, SHEET_NAMES.PERBANDINGAN_MARGIN, SHEET_IDS.PERBANDINGAN_MARGIN),
-      widths: [120, 105, 140, 180, 75, 75, 115, 135, 115, 135, 135, 85, 140]
+      widths: [190, 150, 150, 110, 160, 200, 85, 85, 125, 140, 125, 140, 140, 90, 150]
     },
-    // Tab 07: MASTER_DATA (3 Kolom)
+    // Tab 07: AKTIVITAS (9 Kolom)
+    {
+      sheetId: resolveSheetId(sheetMap, SHEET_NAMES.LOG_AKTIVITAS, SHEET_IDS.LOG_AKTIVITAS),
+      widths: [180, 120, 160, 100, 120, 300, 350, 150, 120]
+    },
+    // Tab 08: MASTER_DATA (3 Kolom)
     {
       sheetId: masterDataId,
       widths: [200, 120, 160]
@@ -741,18 +966,24 @@ export function createBandingBatchRequests(
   const paguPengeluaranId = resolveSheetId(sheetMap, SHEET_NAMES.PAGU_PENGELUARAN, SHEET_IDS.PAGU_PENGELUARAN);
   const rincianPengeluaranId = resolveSheetId(sheetMap, SHEET_NAMES.RINCIAN_PENGELUARAN, SHEET_IDS.RINCIAN_PENGELUARAN);
   const perbandinganMarginId = resolveSheetId(sheetMap, SHEET_NAMES.PERBANDINGAN_MARGIN, SHEET_IDS.PERBANDINGAN_MARGIN);
+  const logAktivitasId = resolveSheetId(sheetMap, SHEET_NAMES.LOG_AKTIVITAS, SHEET_IDS.LOG_AKTIVITAS);
 
   const targets = [
     { sheetId: paguPenerimaanId, endCol: 10, endRow: 2000 },
-    { sheetId: rincianPendapatanId, endCol: 10, endRow: 5000 },
-    { sheetId: paguPengeluaranId, endCol: 10, endRow: 5000 },
-    { sheetId: rincianPengeluaranId, endCol: 10, endRow: 5000 },
-    { sheetId: perbandinganMarginId, endCol: 13, endRow: 5000 },
+    { sheetId: rincianPendapatanId, endCol: 12, endRow: 5000 },
+    { sheetId: paguPengeluaranId, endCol: 12, endRow: 5000 },
+    { sheetId: rincianPengeluaranId, endCol: 13, endRow: 5000 },
+    { sheetId: perbandinganMarginId, endCol: 15, endRow: 5000 },
+    { sheetId: logAktivitasId, endCol: 9, endRow: 5000 },
   ];
 
   const requests: sheets_v4.Schema$Request[] = [];
+  const availableSheetIds = sheetMap ? new Set(sheetMap.values()) : null;
 
   for (const t of targets) {
+    if (availableSheetIds && !availableSheetIds.has(t.sheetId)) {
+      continue; // Skip if sheet doesn't exist in spreadsheet
+    }
     if (existingBandedSheetIds.has(t.sheetId)) {
       continue; // Skip if this sheet already has a banded range to avoid Google API collision
     }

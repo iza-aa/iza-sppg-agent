@@ -37,11 +37,11 @@ describe("Layer 3 Static Fallback Unit Tests", () => {
       if (result?.type === "SUPPLIER_EXPENSE") {
         expect(result.data.total_amount).toBe(200000);
         expect(result.data.supplier_name.toLowerCase()).toContain("pasar ayam");
-        expect(result.data.payment_method).toBe("Cash");
+        expect(result.data.payment_method).toBe("Tunai");
       }
     });
 
-    it("should parse 'beli beras 2 karung 700.000 di Hj Muliadi'", () => {
+    it("should parse 'beli beras 2 karung 700.000 di Hj Muliadi' with undefined payment_method", () => {
       const result = staticParseTransaction("beli beras 2 karung 700.000 di Hj Muliadi");
       expect(result).not.toBeNull();
       expect(result?.type).toBe("SUPPLIER_EXPENSE");
@@ -50,6 +50,21 @@ describe("Layer 3 Static Fallback Unit Tests", () => {
         expect(result.data.supplier_name).toBe("Hj Muliadi");
         expect(result.data.items[0].qty).toBe(2);
         expect(result.data.items[0].unit).toBe("karung");
+        expect(result.data.payment_method).toBeUndefined();
+      }
+    });
+
+    it("should parse 'Beli telur ayam 20 rak 600rb di Toko Unggas Barokah' with undefined payment_method", () => {
+      const result = staticParseTransaction("Beli telur ayam 20 rak 600rb di Toko Unggas Barokah");
+      expect(result).not.toBeNull();
+      expect(result?.type).toBe("SUPPLIER_EXPENSE");
+      if (result?.type === "SUPPLIER_EXPENSE") {
+        expect(result.data.total_amount).toBe(600000);
+        expect(result.data.supplier_name).toBe("Toko Unggas Barokah");
+        expect(result.data.items[0].item_name.toLowerCase()).toContain("telur ayam");
+        expect(result.data.items[0].qty).toBe(20);
+        expect(result.data.items[0].unit.toLowerCase()).toBe("rak");
+        expect(result.data.payment_method).toBeUndefined();
       }
     });
 

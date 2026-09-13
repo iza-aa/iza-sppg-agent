@@ -21,66 +21,75 @@ export interface SheetsWebhookPayload {
 const TAB_COLUMN_MAP: Record<string, string[]> = {
   [SHEET_NAMES.PAGU_RINCIAN]: [
     "No SPPG Ref (A)",
-    "ID Ref (B)",
+    "ID Pendapatan (B)",
     "No Urut (C)",
-    "Target Supplier (D)",
-    "Uraian Bahan (E)",
+    "Uraian Bahan (D)",
+    "Target Supplier (E)",
     "Kuantitas (F)",
     "Satuan (G)",
-    "Harga Pagu Satuan (H)",
+    "Harga Satuan (H)",
     "Total Pagu (I)",
-    "Keterangan / Spesifikasi (J)",
+    "Pengguna (J)",
+    "Waktu Input (K)",
+    "Keterangan (L)",
   ],
   [SHEET_NAMES.PENGELUARAN_SUPPLIER]: [
     "No SPPG Ref (A)",
-    "ID Transaksi (B)",
-    "Tanggal Transaksi (C)",
-    "Nama Supplier (D)",
-    "No Invoice Supplier (E)",
-    "Total Nominal Tagihan (F)",
-    "Metode Pembayaran (G)",
-    "Link Bukti Nota (H)",
-    "PIC / Operator (I)",
-    "Catatan / Keterangan (J)",
+    "ID Pendapatan (B)",
+    "ID Pengeluaran (C)",
+    "Tanggal (D)",
+    "Nama Supplier (E)",
+    "No Invoice Supplier (F)",
+    "Total Tagihan (G)",
+    "Metode (H)",
+    "Link Bukti Nota (I)",
+    "Pengguna (J)",
+    "Waktu Input (K)",
+    "Keterangan (L)",
   ],
   [SHEET_NAMES.RINCIAN_PENGELUARAN]: [
     "No SPPG Ref (A)",
-    "ID Transaksi Belanja (B)",
-    "No Urut (C)",
-    "Nama Supplier (D)",
-    "Uraian Bahan / Barang Belanja (E)",
-    "Kuantitas (F)",
-    "Satuan (G)",
-    "Harga Satuan Invoice (H)",
-    "Total Belanja (I)",
-    "Keterangan / No Nota (J)",
+    "ID Pendapatan (B)",
+    "ID Pengeluaran (C)",
+    "No Urut (D)",
+    "Nama Supplier (E)",
+    "Uraian Bahan Belanja (F)",
+    "Kuantitas (G)",
+    "Satuan (H)",
+    "Harga Satuan (I)",
+    "Total Belanja (J)",
+    "Pengguna (K)",
+    "Waktu Input (L)",
+    "Keterangan (M)",
   ],
   [SHEET_NAMES.PAGU_RINGKASAN]: [
-    "No SPPG (A)",
-    "ID Transaksi (B)",
-    "Tanggal Pesanan (C)",
-    "Jumlah Item Bahan (D)",
-    "Jumlah Target Supplier (E)",
-    "Total Pagu Anggaran (F)",
+    "No SPPG Ref (A)",
+    "ID Pendapatan (B)",
+    "Tanggal (C)",
+    "Jumlah Bahan (D)",
+    "Target Supplier (E)",
+    "Total Pendapatan (F)",
     "Link Bukti Dokumen (G)",
-    "Pesan Asli Telegram (H)",
-    "PIC / Penanggung Jawab (I)",
-    "Riwayat Edit (J)",
+    "Penanggung Jawab (H)",
+    "Waktu Input (I)",
+    "Keterangan (J)",
   ],
   [SHEET_NAMES.REKAP_MARGIN]: [
     "No SPPG Ref (A)",
-    "Tanggal (B)",
-    "Nama Supplier (C)",
-    "Uraian Bahan (D)",
-    "Kuantitas (E)",
-    "Satuan (F)",
-    "Harga Pagu (G)",
-    "Total Pagu (H)",
-    "Harga Invoice (I)",
-    "Total Realisasi (J)",
-    "Margin Bersih (K)",
-    "% Margin (L)",
-    "Status (M)",
+    "ID Pendapatan (B)",
+    "ID Pengeluaran (C)",
+    "Tanggal (D)",
+    "Nama Supplier (E)",
+    "Uraian Bahan (F)",
+    "Kuantitas (G)",
+    "Satuan (H)",
+    "Harga Pagu (I)",
+    "Total Pagu (J)",
+    "Harga Invoice (K)",
+    "Total Realisasi (L)",
+    "Margin Bersih (M)",
+    "% Margin (N)",
+    "Status (O)",
   ],
 };
 
@@ -199,7 +208,7 @@ export class DeltaSyncDaemon {
       try {
         const res = await client.spreadsheets.values.get({
           spreadsheetId,
-          range: `'${sheetName}'!A2:M1000`,
+          range: `'${sheetName}'!A2:O1000`,
         });
         const currentRows: string[][] = (res.data?.values || []).map((row: any[]) =>
           row.map((c) => (c !== null && c !== undefined ? String(c).trim() : ""))
@@ -246,19 +255,25 @@ export class DeltaSyncDaemon {
     const getRowKey = (row: string[]): string => {
       if (!row || row.length === 0) return "";
       if (sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN) {
-        return `${(row[1] || "").trim()}_${(row[4] || "").trim().toLowerCase()}`;
+        const expId = row[2] || row[1] || "";
+        const item = row[5] || row[4] || "";
+        return `${expId.trim()}_${item.trim().toLowerCase()}`;
       }
       if (sheetName === SHEET_NAMES.PAGU_PENGELUARAN) {
-        return (row[1] || row[0] || "").trim();
+        return (row[2] || row[1] || row[0] || "").trim();
       }
       if (sheetName === SHEET_NAMES.RINCIAN_PENDAPATAN) {
-        return `${(row[0] || "").trim()}_${(row[4] || "").trim().toLowerCase()}`;
+        const paguId = row[1] || row[0] || "";
+        const item = row[3] || "";
+        return `${paguId.trim()}_${item.trim().toLowerCase()}`;
       }
       if (sheetName === SHEET_NAMES.PAGU_PENERIMAAN) {
-        return (row[0] || "").trim();
+        return (row[1] || row[0] || "").trim();
       }
       if (sheetName === SHEET_NAMES.PERBANDINGAN_MARGIN) {
-        return `${(row[0] || "").trim()}_${(row[3] || "").trim().toLowerCase()}`;
+        const orderOrPagu = row[1] || row[0] || "";
+        const item = row[5] || row[3] || "";
+        return `${orderOrPagu.trim()}_${item.trim().toLowerCase()}`;
       }
       return row.slice(0, 3).join("_").trim();
     };
@@ -351,9 +366,9 @@ export class DeltaSyncDaemon {
         });
 
         // Trigger cascading reconciliations for new row if applicable
-        if (sheetName === SHEET_NAMES.PAGU_PENGELUARAN && insRow[5]) {
-          const newAmount = parseNum(insRow[5]);
-          const expenseId = insRow[1] || insRow[0];
+        if (sheetName === SHEET_NAMES.PAGU_PENGELUARAN && (insRow[7] || insRow[6] || insRow[5])) {
+          const newAmount = parseNum(insRow[7] || insRow[6] || insRow[5]);
+          const expenseId = insRow[2] || insRow[1] || insRow[0];
           if (expenseId && newAmount >= 0) {
             await this.sheetsService.updateMasterTransactionRow(expenseId, {
               total_amount: newAmount,
@@ -418,10 +433,10 @@ export class DeltaSyncDaemon {
           });
 
           // Automated Cascading Reconciliations
-          // CASE A: Total Nominal Tagihan in 04_PAGU_PENGELUARAN (Col F / index 5) changed
-          if (sheetName === SHEET_NAMES.PAGU_PENGELUARAN && cIdx === 5) {
+          // CASE A: Total Nominal Tagihan in 04_PAGU_PENGELUARAN (Col H / index 7, or fallback Col G / Col F) changed
+          if (sheetName === SHEET_NAMES.PAGU_PENGELUARAN && (cIdx === 7 || cIdx === 6 || cIdx === 5)) {
             const newAmount = parseNum(newVal);
-            const expenseId = currRow[1] || currRow[0];
+            const expenseId = currRow[2] || currRow[1] || currRow[0];
             if (expenseId && newAmount >= 0) {
               await this.sheetsService.updateMasterTransactionRow(expenseId, {
                 total_amount: newAmount,
@@ -436,12 +451,13 @@ export class DeltaSyncDaemon {
             }
           }
 
-          // CASE B: Total Pagu Anggaran in 02_PAGU_PENERIMAAN (Col F / index 5) changed
-          if (sheetName === SHEET_NAMES.PAGU_PENERIMAAN && cIdx === 5) {
+          // CASE B: Total Pagu Anggaran in 02_PENDAPATAN (Col G / index 6, or Col I / index 8) changed
+          if (sheetName === SHEET_NAMES.PAGU_PENERIMAAN && (cIdx === 6 || cIdx === 8)) {
             const newPaguAmount = parseNum(newVal);
             const orderNo = currRow[0];
+            const paguId = currRow[1] || currRow[0];
             if (orderNo && newPaguAmount >= 0) {
-              await this.sheetsService.updateMasterTransactionRow(orderNo, {
+              await this.sheetsService.updateMasterTransactionRow(paguId || orderNo, {
                 total_amount: newPaguAmount,
               });
 
@@ -449,16 +465,16 @@ export class DeltaSyncDaemon {
                 await supabase
                   .from("sppg_orders")
                   .update({ total_amount: newPaguAmount })
-                  .eq("order_no", orderNo);
+                  .or(`order_no.eq.${orderNo},order_no.eq.${paguId}`);
               } catch (_) {}
             }
           }
 
-          // CASE C: Item in 03_RINCIAN_PENDAPATAN changed (Supplier, Item Name, Qty, Unit, Price)
+          // CASE C: Item in 03_RINCIAN_PENDAPATAN changed (Item Name, Supplier, Qty, Unit, Price)
           if (sheetName === SHEET_NAMES.RINCIAN_PENDAPATAN && [3, 4, 5, 6, 7].includes(cIdx)) {
             const orderNo = String(currRow[0] || "").trim();
-            const prevItemName = String(prevRow[4] || "").trim();
-            const currItemName = String(currRow[4] || "").trim();
+            const prevItemName = String(prevRow[3] || "").trim();
+            const currItemName = String(currRow[3] || "").trim();
             const itemNameForSearch = prevItemName || currItemName;
 
             if (orderNo && itemNameForSearch) {
@@ -492,10 +508,11 @@ export class DeltaSyncDaemon {
           }
 
           // CASE D: Item in 05_RINCIAN_PENGELUARAN changed (Price or Total only - never overwrite Pagu item/supplier)
-          if (sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN && [7, 8].includes(cIdx)) {
+          // 12-col: Col I (idx 8), Col J (idx 9). Old schema fallback: Col H (idx 7), Col I (idx 8)
+          if (sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN && [7, 8, 9].includes(cIdx)) {
             const orderNo = String(currRow[0] || "").trim();
-            const prevItemName = String(prevRow[4] || "").trim();
-            const currItemName = String(currRow[4] || "").trim();
+            const prevItemName = String(prevRow[5] || prevRow[4] || "").trim();
+            const currItemName = String(currRow[5] || currRow[4] || "").trim();
             const itemNameForSearch = prevItemName || currItemName;
 
             if (itemNameForSearch) {
@@ -544,16 +561,17 @@ export class DeltaSyncDaemon {
     const client = await (this.sheetsService as any).getClient();
     const tabsToScan = [
       SHEET_NAMES.PAGU_RINCIAN,
-      SHEET_NAMES.PENGELUARAN_SUPPLIER,
+      SHEET_NAMES.PAGU_PENGELUARAN,
+      SHEET_NAMES.RINCIAN_PENGELUARAN,
       SHEET_NAMES.PAGU_RINGKASAN,
-      SHEET_NAMES.REKAP_MARGIN,
+      SHEET_NAMES.PERBANDINGAN_MARGIN,
     ];
 
     for (const sheetName of tabsToScan) {
       try {
         const res = await client.spreadsheets.values.get({
           spreadsheetId,
-          range: `'${sheetName}'!A2:M1000`,
+          range: `'${sheetName}'!A2:O1000`,
         });
         const rows: string[][] = (res.data?.values || []).map((row: any[]) =>
           row.map((c) => (c !== null && c !== undefined ? String(c).trim() : ""))

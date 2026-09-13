@@ -25,6 +25,8 @@ import {
   ExpenseSheetsService,
   type ExpenseInsertionTarget,
   calculateExpenseInsertionTarget,
+  BotActivityLoggerService,
+  type BotActivityLogEntry,
 } from "./services/index.js";
 
 // Re-export all domain types and utilities for backward compatibility
@@ -37,6 +39,7 @@ export {
   type ExpenseInsertionTarget,
   calculateExpenseInsertionTarget,
   type MasterAuditLogEntry,
+  type BotActivityLogEntry,
 };
 
 /**
@@ -74,6 +77,7 @@ export class GoogleSheetsService {
     this.reporting,
     (id) => this.ensure5TabStructure(id)
   );
+  private activityLogger = new BotActivityLoggerService(this.clientProvider);
 
   /**
    * Returns an authenticated Google Sheets client instance.
@@ -109,8 +113,8 @@ export class GoogleSheetsService {
 
       // 1. Rename existing legacy tabs if needed (highest to lowest to avoid collision)
       const renameRequests: sheets_v4.Schema$Request[] = [];
-      if ((sheetByTitle.has("06_MASTER_DATA") || sheetByTitle.has("05_MASTER_DATA")) && !sheetByTitle.has(SHEET_NAMES.MASTER_DATA)) {
-        const id = sheetByTitle.get("06_MASTER_DATA") ?? sheetByTitle.get("05_MASTER_DATA")!;
+      if ((sheetByTitle.has("07_MASTER_DATA") || sheetByTitle.has("06_MASTER_DATA") || sheetByTitle.has("05_MASTER_DATA")) && !sheetByTitle.has(SHEET_NAMES.MASTER_DATA)) {
+        const id = sheetByTitle.get("07_MASTER_DATA") ?? sheetByTitle.get("06_MASTER_DATA") ?? sheetByTitle.get("05_MASTER_DATA")!;
         renameRequests.push({
           updateSheetProperties: {
             properties: { sheetId: id, title: SHEET_NAMES.MASTER_DATA },
@@ -118,8 +122,17 @@ export class GoogleSheetsService {
           },
         });
       }
-      if ((sheetByTitle.has("05_REKAP_MARGIN") || sheetByTitle.has("04_REKAP_MARGIN_HARIAN")) && !sheetByTitle.has(SHEET_NAMES.PERBANDINGAN_MARGIN)) {
-        const id = sheetByTitle.get("05_REKAP_MARGIN") ?? sheetByTitle.get("04_REKAP_MARGIN_HARIAN")!;
+      if ((sheetByTitle.has("08_LOG_AKTIVITAS") || sheetByTitle.has("07_LOG_AKTIVITAS")) && !sheetByTitle.has(SHEET_NAMES.LOG_AKTIVITAS)) {
+        const id = sheetByTitle.get("08_LOG_AKTIVITAS") ?? sheetByTitle.get("07_LOG_AKTIVITAS")!;
+        renameRequests.push({
+          updateSheetProperties: {
+            properties: { sheetId: id, title: SHEET_NAMES.LOG_AKTIVITAS },
+            fields: "title",
+          },
+        });
+      }
+      if ((sheetByTitle.has("06_Margin") || sheetByTitle.has("06_Perbandingan Margin") || sheetByTitle.has("05_REKAP_MARGIN") || sheetByTitle.has("04_REKAP_MARGIN_HARIAN")) && !sheetByTitle.has(SHEET_NAMES.PERBANDINGAN_MARGIN)) {
+        const id = sheetByTitle.get("06_Margin") ?? sheetByTitle.get("06_Perbandingan Margin") ?? sheetByTitle.get("05_REKAP_MARGIN") ?? sheetByTitle.get("04_REKAP_MARGIN_HARIAN")!;
         renameRequests.push({
           updateSheetProperties: {
             properties: { sheetId: id, title: SHEET_NAMES.PERBANDINGAN_MARGIN },
@@ -127,8 +140,17 @@ export class GoogleSheetsService {
           },
         });
       }
-      if ((sheetByTitle.has("04_PENGELUARAN_SUPPLIER") || sheetByTitle.has("03_PENGELUARAN_SUPPLIER")) && !sheetByTitle.has(SHEET_NAMES.PAGU_PENGELUARAN)) {
-        const id = sheetByTitle.get("04_PENGELUARAN_SUPPLIER") ?? sheetByTitle.get("03_PENGELUARAN_SUPPLIER")!;
+      if (sheetByTitle.has("05_Rincian Pengeluaran") && !sheetByTitle.has(SHEET_NAMES.RINCIAN_PENGELUARAN)) {
+        const id = sheetByTitle.get("05_Rincian Pengeluaran")!;
+        renameRequests.push({
+          updateSheetProperties: {
+            properties: { sheetId: id, title: SHEET_NAMES.RINCIAN_PENGELUARAN },
+            fields: "title",
+          },
+        });
+      }
+      if ((sheetByTitle.has("04_Pengeluaran") || sheetByTitle.has("04_PENGELUARAN_SUPPLIER") || sheetByTitle.has("03_PENGELUARAN_SUPPLIER")) && !sheetByTitle.has(SHEET_NAMES.PAGU_PENGELUARAN)) {
+        const id = sheetByTitle.get("04_Pengeluaran") ?? sheetByTitle.get("04_PENGELUARAN_SUPPLIER") ?? sheetByTitle.get("03_PENGELUARAN_SUPPLIER")!;
         renameRequests.push({
           updateSheetProperties: {
             properties: { sheetId: id, title: SHEET_NAMES.PAGU_PENGELUARAN },
@@ -136,16 +158,17 @@ export class GoogleSheetsService {
           },
         });
       }
-      if (sheetByTitle.has("03_PAGU_RINCIAN") && !sheetByTitle.has(SHEET_NAMES.RINCIAN_PENDAPATAN)) {
+      if ((sheetByTitle.has("03_Rincian Pendapatan") || sheetByTitle.has("03_PAGU_RINCIAN")) && !sheetByTitle.has(SHEET_NAMES.RINCIAN_PENDAPATAN)) {
+        const id = sheetByTitle.get("03_Rincian Pendapatan") ?? sheetByTitle.get("03_PAGU_RINCIAN")!;
         renameRequests.push({
           updateSheetProperties: {
-            properties: { sheetId: sheetByTitle.get("03_PAGU_RINCIAN")!, title: SHEET_NAMES.RINCIAN_PENDAPATAN },
+            properties: { sheetId: id, title: SHEET_NAMES.RINCIAN_PENDAPATAN },
             fields: "title",
           },
         });
       }
-      if ((sheetByTitle.has("02_PAGU_RINGKASAN") || sheetByTitle.has("02_PENDAPATAN_SPPG")) && !sheetByTitle.has(SHEET_NAMES.PAGU_PENERIMAAN)) {
-        const id = sheetByTitle.get("02_PAGU_RINGKASAN") ?? sheetByTitle.get("02_PENDAPATAN_SPPG")!;
+      if ((sheetByTitle.has("02_Pendapatan") || sheetByTitle.has("02_PAGU_RINGKASAN") || sheetByTitle.has("02_PENDAPATAN_SPPG")) && !sheetByTitle.has(SHEET_NAMES.PAGU_PENERIMAAN)) {
+        const id = sheetByTitle.get("02_Pendapatan") ?? sheetByTitle.get("02_PAGU_RINGKASAN") ?? sheetByTitle.get("02_PENDAPATAN_SPPG")!;
         renameRequests.push({
           updateSheetProperties: {
             properties: { sheetId: id, title: SHEET_NAMES.PAGU_PENERIMAAN },
@@ -212,7 +235,7 @@ export class GoogleSheetsService {
       if (!currentTitles.includes(SHEET_NAMES.MASTER_DATA)) {
         const props: sheets_v4.Schema$SheetProperties = {
           title: SHEET_NAMES.MASTER_DATA,
-          index: 6,
+          index: 7,
           tabColorStyle: { rgbColor: hexToRgbColor(BGN_PALETTE.SLATE_GRAY) },
           hidden: true,
           gridProperties: { rowCount: 200, columnCount: 5, frozenRowCount: 1 },
@@ -279,6 +302,10 @@ export class GoogleSheetsService {
 
   async ensureGuidelineTab(spreadsheetId: string, unitName?: string, force = false): Promise<void> {
     return this.clientProvider.ensureGuidelineTab(spreadsheetId, unitName, force);
+  }
+
+  async migrateTabNamesAndHeaders(spreadsheetId: string, unitName?: string): Promise<{ renamedCount: number }> {
+    return this.clientProvider.migrateTabNamesAndHeaders(spreadsheetId, unitName);
   }
 
   async appendMasterAuditLog(entry: MasterAuditLogEntry): Promise<void> {
@@ -388,9 +415,23 @@ export class GoogleSheetsService {
       total_amount?: number;
       supplier_name?: string;
       notes?: string;
+      updatedBy?: string;
     }
   ) {
     return this.cascadeDelete.updateTransactionRow(spreadsheetId, transactionId, updates);
+  }
+
+  async linkExpenseToPagu(
+    spreadsheetId: string,
+    expenseQuery: string,
+    paguQuery: string,
+    callerName = "Admin"
+  ) {
+    return this.expense.linkExpenseToPagu(spreadsheetId, expenseQuery, paguQuery, callerName);
+  }
+
+  async getExpenseItems(spreadsheetId: string, expenseId: string) {
+    return this.expense.getExpenseItems(spreadsheetId, expenseId);
   }
 
   async getPaguOrders(spreadsheetId: string): Promise<PaguOrderSummary[]> {
@@ -462,9 +503,11 @@ export class GoogleSheetsService {
       notes?: string;
       sppgRefNo?: string;
       receiptNo?: string;
-    }>
+      pic?: string;
+    }>,
+    picName?: string
   ) {
-    return this.expense.appendOrInsertRincianPengeluaranRows(spreadsheetId, expenseId, items);
+    return this.expense.appendOrInsertRincianPengeluaranRows(spreadsheetId, expenseId, items, picName);
   }
 
   async addExpenseItemToTransaction(
@@ -523,6 +566,20 @@ export class GoogleSheetsService {
     deletedBy = "Telegram User"
   ) {
     return this.pagu.deletePaguChildItem(spreadsheetId, orderNo, itemName, deletedBy);
+  }
+
+  logBotActivity(spreadsheetId: string, entry: BotActivityLogEntry): void {
+    this.activityLogger.logActivity(spreadsheetId, entry);
+  }
+
+  async updateBotActivityStatus(
+    spreadsheetId: string,
+    refId: string,
+    newStatus: string,
+    updatedAction?: string,
+    newUserMessage?: string
+  ): Promise<boolean> {
+    return this.activityLogger.updateActivityStatus(spreadsheetId, refId, newStatus, updatedAction, newUserMessage);
   }
 }
 

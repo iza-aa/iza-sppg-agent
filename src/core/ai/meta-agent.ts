@@ -13,11 +13,12 @@ export type MetaAgentIntent =
   | { type: "GET_PANDUAN" }
   | { type: "LIST_TRANSACTIONS"; limit?: number }
   | { type: "DETAIL_TRANSACTION"; transactionId: string }
-  | { type: "DELETE_TRANSACTION"; transactionId: string }
+  | { type: "DELETE_TRANSACTION"; transactionId: string; transactionIds?: string[] }
   | { type: "DELETE_ITEM"; transactionId: string; itemName: string; itemNames?: string[] }
   | { type: "EDIT_TRANSACTION"; transactionId: string; newAmount?: number; newSupplier?: string }
   | { type: "PAGU_MODIFICATION"; request: PaguModificationRequest }
   | { type: "INVITE"; name: string; role: "super_admin" | "admin" | "member" }
+  | { type: "LINK_EXPENSE_TO_PAGU"; expenseId: string; paguId: string }
   | { type: "RECORD_TRANSACTION"; parsed: ParsedTextTransaction }
   | { type: "GENERAL_CHAT"; reply: string };
 
@@ -113,7 +114,8 @@ export class MetaAgent {
 
     // Detail Transaction: e.g. "detail EI002", "cek EI002", "lihat SPPG0126-EI002", "rincian EI002", or standalone code "EI002"
     const isExplicitRecord = /\b(catat|simpan|input|masukkan|rekam|tulis)\b/i.test(text);
-    const isExplicitAction = /\b(ubah|ngubah|mengubah|ganti|mengganti|edit|revisi|koreksi|hapus|delete|batal(?:kan)?|tambah|nambah|menambah|tambahkan|menambahkan|masukkan|input|sisip|sisipkan)\b/i.test(text);
+    const isExplicitAction = /\b(ubah|ngubah|mengubah|ganti|mengganti|edit|revisi|koreksi|hapus|delete|batal(?:kan)?|tambah|nambah|menambah|tambahkan|menambahkan|masukkan|input|sisip|sisipkan|salah|harusnya|keliru|bukan|pindah)\b/i.test(text);
+    const isPaguContext = /\b(?:ke|di|pada|untuk)?\s*(?:pagu|po|anggaran)\b/i.test(text);
 
     const detailPrefixMatch = text.match(/\b(?:detail|lihat|cek|rincian|buka|info)\s+(?:data\s+)?(?:untuk\s+)?(?:kode\s+)?(?:transaksi\s+|nota\s+)?([A-Za-z0-9_-]{3,35})\b/i);
     const standaloneCodeMatch = text.trim().match(/^(?:SPPG\d*[-_])?(?:[EI][A-Z]|TRX)\d+$/i);
@@ -125,7 +127,7 @@ export class MetaAgent {
     if (standaloneCodeMatch) {
       return { type: "DETAIL_TRANSACTION", transactionId: standaloneCodeMatch[0] };
     }
-    if (specificIdInText && !isExplicitRecord && !isExplicitAction) {
+    if (specificIdInText && !isExplicitRecord && !isExplicitAction && !isPaguContext) {
       return { type: "DETAIL_TRANSACTION", transactionId: specificIdInText[1] };
     }
 
@@ -136,6 +138,16 @@ export class MetaAgent {
     const deleteChildItemInvertedMatch = text.match(
       /\b(?:hapus|delete|batal(?:kan)?)\s+(?:dari|di|pada|ke)\s+(?:transaksi\s+|nota\s+|po\s+|pagu\s+)?([A-Za-z0-9_/-]{3,35})\s+(?:rincian\s+|bahan\s+|pagu\s+|item\s+belanja\s+|item\s+)?(.+)\b/i
     );
+
+    const isTrxCode = (s: string) => {
+      const clean = s.trim().replace(/^#/g, "");
+      return (
+        /^(?:SPPG\d*[-_])?(?:[EI][A-Z]|TRX)\d+$/i.test(clean) ||
+        /^PO-[A-Za-z0-9_/-]+$/i.test(clean) ||
+        /^\d{2}\/\d{2}\/\d{2}\/\d{2}$/.test(clean) ||
+        /^(?:ORD|SUPP)-(?:SPPG|EXP)-\d+$/i.test(clean)
+      );
+    };
 
     const extractItemNames = (raw: string): string[] => {
       return raw
@@ -170,34 +182,108 @@ export class MetaAgent {
       }
     }
 
-    // Delete Child Item without transaction ID: e.g. "hapus rincian ceker ayam"
-    const deleteItemOnlyMatch = text.match(
-      /\b(?:hapus|delete|batal(?:kan)?)\s+(?:rincian\s+|bahan\s+|pagu\s+|item\s+belanja\s+|item\s+)(.+)\b/i
+    // Link Expense to Pagu: e.g. "ei001 kaitkan dengan pagu ii001", "kaitkan ei001 ke pagu ii001", "tautkan pengeluaran ei001 ke pagu ii001"
+    const linkMatch =
+      text.match(/\b(?:kaitkan|tautkan|hubungkan|sambungkan)\s+(?:transaksi\s+|pengeluaran\s+)?([A-Za-z0-9_/-]{3,35})\s+(?:ke|dengan|pada)\s+(?:pagu\s+|pesanan\s+)?([A-Za-z0-9_/-]{3,35})\b/i) ||
+      text.match(/\b([A-Za-z0-9_/-]{3,35})\s+(?:kaitkan|tautkan|hubungkan|sambungkan)\s+(?:ke|dengan|pada)\s+(?:pagu\s+|pesanan\s+)?([A-Za-z0-9_/-]{3,35})\b/i);
+
+    if (linkMatch) {
+      const cand1 = linkMatch[1].trim();
+      const cand2 = linkMatch[2].trim();
+      let expenseId = cand1;
+      let paguId = cand2;
+      if (
+        (cand1.toLowerCase().includes("ii") || cand1.toLowerCase().startsWith("po-")) &&
+        cand2.toLowerCase().includes("ei")
+      ) {
+        expenseId = cand2;
+        paguId = cand1;
+      }
+      return { type: "LINK_EXPENSE_TO_PAGU", expenseId, paguId };
+    }
+
+    // General Delete Command: e.g.
+    // - "hapus pendapatan ii001 dan ii002"
+    // - "hapus pagu ii001 dan ii002"
+    // - "hapus belanja ei001 dan ei002"
+    // - "hapus ii001 dan ii002"
+    // - "hapus EI002"
+    // - "hapus pagu wortel dan telur"
+    const generalDeleteMatch = text.match(
+      /\b(?:hapus|delete|batal(?:kan)?)\s+(.+)$/i
     );
-    if (deleteItemOnlyMatch) {
-      let candidate = deleteItemOnlyMatch[1].trim();
-      candidate = candidate.replace(/^(?:pagu|bahan|rincian|item)\s+/i, "").trim();
-      const isCode = /^(?:SPPG\d*[-_])?(?:[EI][A-Z]|TRX)\d+$/i.test(candidate) || /^PO-/i.test(candidate);
-      if (isCode) {
-        return { type: "DELETE_TRANSACTION", transactionId: candidate };
-      } else if (candidate) {
-        const items = extractItemNames(candidate);
+    if (generalDeleteMatch) {
+      const rawPayload = generalDeleteMatch[1].trim();
+      const descriptorRegex = /^(?:transaksi|nota|pendapatan|pengeluaran|pagu|pesanan|belanja|faktur|data|rincian|bahan|item\s+belanja|item|kode|id)\s+/i;
+      let payload = rawPayload;
+
+      while (descriptorRegex.test(payload)) {
+        payload = payload.replace(descriptorRegex, "").trim();
+      }
+
+      const candidateTokens = payload
+        .split(/,|\bdan\b|&|\bserta\b|\s+/i)
+        .map((s) => s.trim().replace(/^#/g, ""))
+        .filter((s) => Boolean(s) && s.length > 0);
+
+      const allAreTrxCodes = candidateTokens.length > 0 && candidateTokens.every((t) => isTrxCode(t));
+
+      if (allAreTrxCodes) {
         return {
-          type: "DELETE_ITEM",
-          transactionId: "",
-          itemName: items[0],
-          ...(items.length > 1 ? { itemNames: items } : {}),
+          type: "DELETE_TRANSACTION",
+          transactionId: candidateTokens[0],
+          transactionIds: candidateTokens,
         };
+      }
+
+      // Not transaction codes: check if user wants to delete child items/ingredients
+      if (payload) {
+        const items = extractItemNames(payload);
+        if (items.length > 0) {
+          return {
+            type: "DELETE_ITEM",
+            transactionId: "",
+            itemName: items[0],
+            ...(items.length > 1 ? { itemNames: items } : {}),
+          };
+        }
       }
     }
 
-    // Delete Transaction: e.g. "hapus EI002" or "batalkan EI002"
-    const deleteMatch = text.match(/\b(?:hapus|delete|batal(?:kan)?)\s+(?:transaksi\s+|nota\s+)?([A-Za-z0-9_-]{3,35})\b/i);
-    if (deleteMatch) {
-      return { type: "DELETE_TRANSACTION", transactionId: deleteMatch[1] };
+    // 1. Edit Transaction: e.g. "edit EI002 nominal 500000", "ubah EI002 jadi 500rb", or "edit ei005 total belanja jadi 1500000"
+    const editMatch = text.match(
+      /\b(?:edit|ubah|ganti|koreksi|revisi)\s+(?:total(?:\s+belanja)?\s+|nominal\s+)?(?:transaksi\s+|nota\s+|belanja\s+|pengeluaran\s+)?((?:SPPG\d*[-_])?(?:IH|II|EH|EI|TRX)\d{3,}|[A-Za-z0-9_-]{3,35})(.*)/i
+    );
+    if (editMatch) {
+      const transactionId = editMatch[1];
+      const rest = (editMatch[2] || "").trim();
+      const hasItemKeywords = /\b(kuantitas|qty|satuan|kg|kilogram|rak|biji|butir|ekor|jerigen|liter|ikat|ember|karung|bungkus|paket|gram|ons)\b/i.test(rest);
+      const isExplicitTotal = /\b(total|nominal|belanja)\b/i.test(lower);
+
+      // If it doesn't specify item modifications or explicitly specifies total/nominal, handle as EDIT_TRANSACTION
+      if (!hasItemKeywords || isExplicitTotal) {
+        const nominalMatch = rest.match(/(\d+(?:[.,]\d+)?\s*(?:rb|k|ribu|jt|juta)?|\d{4,})/i);
+        let newAmount: number | undefined;
+        if (nominalMatch) {
+          const raw = nominalMatch[1].toLowerCase().trim();
+          if (raw.includes("jt") || raw.includes("juta")) {
+            const cleanFloat = parseFloat(raw.replace(/,/g, ".").replace(/[^\d.]/g, ""));
+            newAmount = Math.round(cleanFloat * 1000000);
+          } else if (raw.includes("rb") || raw.includes("ribu") || raw.includes("k")) {
+            const cleanFloat = parseFloat(raw.replace(/,/g, ".").replace(/[^\d.]/g, ""));
+            newAmount = Math.round(cleanFloat * 1000);
+          } else {
+            newAmount = parseInt(raw.replace(/[^\d]/g, ""), 10);
+          }
+        }
+
+        if (newAmount !== undefined || isExplicitTotal || !rest) {
+          return { type: "EDIT_TRANSACTION", transactionId, newAmount };
+        }
+      }
     }
 
-    const hasPaguActionVerb = /\b(ubah|ngubah|mengubah|ganti|mengganti|edit|revisi|koreksi|tambah|nambah|menambah|tambahkan|menambahkan|masukkan|input|sisip|sisipkan)\b/i.test(lower);
+    const hasPaguActionVerb = /\b(ubah|ngubah|mengubah|ganti|mengganti|edit|revisi|koreksi|tambah|nambah|menambah|tambahkan|menambahkan|masukkan|input|sisip|sisipkan|salah|harusnya|keliru|bukan|pindah)\b/i.test(lower);
     const isPaguModificationText =
       hasPaguActionVerb && (
         /\b(pagu|rincian|kuantitas|qty|harga|satuan|bahan|item)\b/i.test(lower) ||
@@ -211,29 +297,6 @@ export class MetaAgent {
       if (paguMod) {
         return { type: "PAGU_MODIFICATION", request: paguMod };
       }
-    }
-
-    // Edit Transaction: e.g. "edit EI002 nominal 500000" or "ubah EI002 jadi 500rb"
-    const editMatch = text.match(/\b(?:edit|ubah|ganti)\s+(?:transaksi\s+|nota\s+)?([A-Za-z0-9_-]{3,35})(.*)/i);
-    if (editMatch) {
-      const transactionId = editMatch[1];
-      const rest = editMatch[2] || "";
-      const nominalMatch = rest.match(/(\d+(?:[.,]\d+)?\s*(?:rb|k|ribu|jt|juta)?|\d{4,})/i);
-      let newAmount: number | undefined;
-      if (nominalMatch) {
-        const raw = nominalMatch[1].toLowerCase().trim();
-        if (raw.includes("jt") || raw.includes("juta")) {
-          const cleanFloat = parseFloat(raw.replace(/,/g, ".").replace(/[^\d.]/g, ""));
-          newAmount = Math.round(cleanFloat * 1000000);
-        } else if (raw.includes("rb") || raw.includes("ribu") || raw.includes("k")) {
-          const cleanFloat = parseFloat(raw.replace(/,/g, ".").replace(/[^\d.]/g, ""));
-          newAmount = Math.round(cleanFloat * 1000);
-        } else {
-          newAmount = parseInt(raw.replace(/[^\d]/g, ""), 10);
-        }
-      }
-
-      return { type: "EDIT_TRANSACTION", transactionId, newAmount };
     }
 
     // List Transactions

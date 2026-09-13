@@ -34,16 +34,22 @@ export const BGN_PALETTE = {
 export const SHEET_IDS = {
   PANDUAN: 1000,
   DASHBOARD: 1001,
-  PAGU_PENERIMAAN: 1002,
+  PENDAPATAN: 1002,
   RINCIAN_PENDAPATAN: 1003,
-  PAGU_PENGELUARAN: 1004,
+  PENGELUARAN: 1004,
   RINCIAN_PENGELUARAN: 1005,
-  PERBANDINGAN_MARGIN: 1006,
-  MASTER_DATA: 1007,
+  MARGIN: 1006,
+  LOG_AKTIVITAS: 1007,
+  AKTIVITAS: 1007,
+  MASTER_DATA: 1008,
   // Backward compat aliases
+  PAGU_PENERIMAAN: 1002,
   PAGU_RINGKASAN: 1002,
   PAGU_RINCIAN: 1003,
+  PAGU_RINCIAN_PENDAPATAN: 1003,
+  PAGU_PENGELUARAN: 1004,
   PENGELUARAN_SUPPLIER: 1004,
+  PERBANDINGAN_MARGIN: 1006,
   REKAP_MARGIN: 1006,
   RINGKASAN_EKSEKUTIF: 1001,
   PENDAPATAN_SPPG: 1002,
@@ -53,21 +59,26 @@ export const SHEET_IDS = {
 export const SHEET_NAMES = {
   PANDUAN: "00_PANDUAN_OPERASIONAL",
   DASHBOARD: "01_DASHBOARD",
-  PAGU_PENERIMAAN: "02_PAGU_PENERIMAAN",
+  PENDAPATAN: "02_PENDAPATAN",
   RINCIAN_PENDAPATAN: "03_RINCIAN_PENDAPATAN",
-  PAGU_PENGELUARAN: "04_PAGU_PENGELUARAN",
+  PENGELUARAN: "04_PENGELUARAN",
   RINCIAN_PENGELUARAN: "05_RINCIAN_PENGELUARAN",
-  PERBANDINGAN_MARGIN: "06_PERBANDINGAN_MARGIN",
-  MASTER_DATA: "07_MASTER_DATA",
+  MARGIN: "06_MARGIN",
+  LOG_AKTIVITAS: "07_AKTIVITAS",
+  AKTIVITAS: "07_AKTIVITAS",
+  MASTER_DATA: "08_MASTER_DATA",
   // Backward compat aliases
-  PAGU_RINGKASAN: "02_PAGU_PENERIMAAN",
+  PAGU_PENERIMAAN: "02_PENDAPATAN",
+  PAGU_RINGKASAN: "02_PENDAPATAN",
   PAGU_RINCIAN: "03_RINCIAN_PENDAPATAN",
   PAGU_RINCIAN_PENDAPATAN: "03_RINCIAN_PENDAPATAN",
-  PENGELUARAN_SUPPLIER: "04_PAGU_PENGELUARAN",
-  REKAP_MARGIN: "06_PERBANDINGAN_MARGIN",
+  PAGU_PENGELUARAN: "04_PENGELUARAN",
+  PENGELUARAN_SUPPLIER: "04_PENGELUARAN",
+  PERBANDINGAN_MARGIN: "06_MARGIN",
+  REKAP_MARGIN: "06_MARGIN",
   RINGKASAN_EKSEKUTIF: "01_DASHBOARD",
-  PENDAPATAN_SPPG: "02_PAGU_PENERIMAAN",
-  REKAP_MARGIN_HARIAN: "06_PERBANDINGAN_MARGIN",
+  PENDAPATAN_SPPG: "02_PENDAPATAN",
+  REKAP_MARGIN_HARIAN: "06_MARGIN",
 } as const;
 
 export const MASTER_SHEET_IDS = {
@@ -110,5 +121,27 @@ export function hexToRgbColor(hex: string, alpha: number = 1.0): sheets_v4.Schem
 }
 
 export function resolveSheetId(sheetMap: Map<string, number> | undefined, title: string, fallback: number): number {
-  return sheetMap?.get(title) ?? fallback;
+  if (!sheetMap) return fallback;
+  if (sheetMap.has(title)) return sheetMap.get(title)!;
+  // Case-insensitive lookup
+  const lowerTitle = title.toLowerCase();
+  for (const [key, id] of sheetMap.entries()) {
+    if (key.toLowerCase() === lowerTitle) return id;
+  }
+  // Robust mapping for legacy titles
+  const legacyMap: Record<string, string[]> = {
+    "02_Pendapatan": ["02_PAGU_PENERIMAAN", "02_PENDAPATAN_SPPG", "02_PAGU_RINGKASAN", "02_PENDAPATAN"],
+    "03_Rincian Pendapatan": ["03_RINCIAN_PENDAPATAN", "03_PAGU_RINCIAN", "03_RINCIAN_PENDAPATAN"],
+    "04_Pengeluaran": ["04_PAGU_PENGELUARAN", "03_PENGELUARAN_SUPPLIER", "04_PENGELUARAN_SUPPLIER", "04_PENGELUARAN"],
+    "05_Rincian Pengeluaran": ["05_RINCIAN_PENGELUARAN"],
+    "06_Margin": ["06_PERBANDINGAN_MARGIN", "06_REKAP_MARGIN", "04_REKAP_MARGIN", "06_MARGIN"],
+  };
+  const alternatives = legacyMap[title] || [];
+  for (const alt of alternatives) {
+    if (sheetMap.has(alt)) return sheetMap.get(alt)!;
+    for (const [key, id] of sheetMap.entries()) {
+      if (key.toLowerCase() === alt.toLowerCase()) return id;
+    }
+  }
+  return fallback;
 }

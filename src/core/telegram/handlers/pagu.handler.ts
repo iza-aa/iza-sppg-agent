@@ -27,7 +27,7 @@ export async function sendPaguOrders(bCtx: BotContext, ctx: Context) {
       await ctx.reply(
         `📋 <b>KELOLA PAGU / RINCIAN BAHAN</b>\n` +
         `Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>\n\n` +
-        `ℹ️ Belum ada data Surat Pesanan (PO) di Tab 02_PAGU_PENERIMAAN. Silakan upload nota pesanan atau input anggaran terlebih dahulu.`,
+        `ℹ️ Belum ada data Surat Pesanan (PO) di Tab 02 (Pendapatan). Silakan upload nota pesanan atau input anggaran terlebih dahulu.`,
         { parse_mode: "HTML" }
       );
       return;
@@ -87,7 +87,7 @@ export function registerPaguHandlers(bCtx: BotContext) {
     if (items.length === 0) {
       await safeEditMessageText(
         ctx,
-        `⚠️ Tidak ditemukan rincian bahan untuk PO <code>${escapeHtml(orderNo)}</code> di Tab 03_RINCIAN_PENDAPATAN.`,
+        `⚠️ Tidak ditemukan rincian bahan untuk PO <code>${escapeHtml(orderNo)}</code> di Tab 03 (Rincian Pendapatan).`,
         {
           parse_mode: "HTML",
           reply_markup: new InlineKeyboard().text("🔙 Kembali ke Daftar PO", "v:pagu_orders"),
@@ -177,8 +177,8 @@ export function registerPaguHandlers(bCtx: BotContext) {
       `Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>`,
       `No PO: <code>${escapeHtml(orderNo)}</code>`,
       `------------------------------------------`,
-      `• <b>Nama Bahan:</b> <b>${escapeHtml(item.itemName)}</b>`,
-      `• <b>Target Rekanan:</b> ${escapeHtml(item.supplier || "-")}`,
+      `• <b>Uraian Bahan:</b> <b>${escapeHtml(item.itemName)}</b>`,
+      `• <b>Target Supplier:</b> ${escapeHtml(item.supplier || "-")}`,
       `• <b>Kuantitas:</b> <b>${item.qty} ${escapeHtml(item.unit)}</b>`,
       `• <b>Harga Pagu Satuan:</b> <b>${formatRupiah(item.price)}</b>`,
       `• <b>Total Subtotal Pagu:</b> <b>${formatRupiah(item.totalAmount)}</b>`,
@@ -298,13 +298,13 @@ export function registerPaguHandlers(bCtx: BotContext) {
       `Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>`,
       `No PO: <code>${escapeHtml(orderNo)}</code>`,
       `------------------------------------------`,
-      `• <b>Bahan:</b> <b>${escapeHtml(result.updatedItem?.itemName || "-")}</b>`,
-      `• <b>Target Rekanan:</b> ${escapeHtml(result.updatedItem?.supplier || "-")}`,
+      `• <b>Uraian Bahan:</b> <b>${escapeHtml(result.updatedItem?.itemName || "-")}</b>`,
+      `• <b>Target Supplier:</b> ${escapeHtml(result.updatedItem?.supplier || "-")}`,
       `• <b>Kuantitas:</b> <b>${result.updatedItem?.qty} ${escapeHtml(result.updatedItem?.unit || "")}</b>`,
       `• <b>Harga Pagu:</b> <b>${formatRupiah(result.updatedItem?.price || 0)}</b>`,
       `• <b>Subtotal Baru:</b> <b>${formatRupiah(result.updatedItem?.totalAmount || 0)}</b>`,
       `------------------------------------------`,
-      `🔄 <i>Perubahan otomatis disinkronkan ke Tab 03_RINCIAN_PENDAPATAN dan Tab 06_PERBANDINGAN_MARGIN.</i>`,
+      `🔄 <i>Perubahan otomatis disinkronkan ke Tab 03 (Rincian Pendapatan) dan Tab 06 (Margin).</i>`,
     ].join("\n");
 
     const kb = new InlineKeyboard()
@@ -443,7 +443,7 @@ export function registerPaguHandlers(bCtx: BotContext) {
         ? `🔄 <i>Bahan belanja telah disisipkan rapi mengelompok di bawah transaksi ${escapeHtml(draft.expenseId || draft.orderNo)} pada Tab 05. Urutan ID bahan lain bergeser turun otomatis, dan total tagihan Tab 04 otomatis terakumulasi.</i>`
         : (draft.action === "ADD"
             ? `🔄 <i>Bahan baru telah disisipkan ke Tab 03 & Tab 06. Urutan ID bahan lain bergeser ke bawah dengan rapi, dan total anggaran Tab 02 otomatis bertambah.</i>`
-            : `🔄 <i>Tab 03_RINCIAN_PENDAPATAN dan Tab 06_PERBANDINGAN_MARGIN telah diperbarui dan otomatis tersinkronisasi.</i>`);
+            : `🔄 <i>Tab 03 (Rincian Pendapatan) dan Tab 06 (Margin) telah diperbarui dan otomatis tersinkronisasi.</i>`);
 
       const successCard = [
         title,
@@ -456,7 +456,7 @@ export function registerPaguHandlers(bCtx: BotContext) {
         `• <b>Kuantitas:</b> <b>${draft.qty} ${escapeHtml(draft.unit)}</b>`,
         `• <b>Harga Satuan:</b> <b>${formatRupiah(draft.price)}</b>`,
         `• <b>Total Belanja:</b> <b>${formatRupiah(draft.qty * draft.price)}</b>`,
-        draft.supplier ? (draft.isExpense ? `• <b>Supplier:</b> ${escapeHtml(draft.supplier)}` : `• <b>Target Rekanan:</b> ${escapeHtml(draft.supplier)}`) : "",
+        draft.supplier ? (draft.isExpense ? `• <b>Nama Supplier:</b> ${escapeHtml(draft.supplier)}` : `• <b>Target Supplier:</b> ${escapeHtml(draft.supplier)}`) : "",
         `------------------------------------------`,
         syncNote,
       ].filter(Boolean).join("\n");
@@ -479,6 +479,14 @@ export function registerPaguHandlers(bCtx: BotContext) {
         parse_mode: "HTML",
       });
     }
+  });
+
+  // Cancel Incomplete Item Addition
+  bCtx.bot.callbackQuery(/^v:item_add:cancel$/, async (ctx) => {
+    const state = bCtx.getState(ctx.from.id);
+    state.pendingItemAddition = null;
+    await ctx.answerCallbackQuery({ text: "Penambahan bahan dibatalkan." });
+    await safeEditMessageText(ctx, "❌ <b>Penambahan bahan dibatalkan.</b>", { parse_mode: "HTML" });
   });
 
   // User chose: Simpan sebagai Belanja Non-Pagu / Taktis
@@ -535,8 +543,8 @@ export function registerPaguHandlers(bCtx: BotContext) {
         `• <b>Total Belanja:</b> <b>${formatRupiah(subtotal)}</b>`,
         draft.supplier ? `• <b>Supplier:</b> ${escapeHtml(draft.supplier)}` : "",
         `------------------------------------------`,
-        `🔄 <i>Bahan belanja disisipkan rapi di bawah transaksi ${escapeHtml(draft.expenseId)} pada Tab 05_RINCIAN_PENGELUARAN.</i>`,
-        `📉 <i>Otomatis dicatat ke Tab 06_PERBANDINGAN_MARGIN dengan status 🔴 <b>NON-PAGU</b> (memotong margin keuntungan dapur SPPG sebesar ${formatRupiah(subtotal)}).</i>`,
+        `🔄 <i>Bahan belanja disisipkan rapi di bawah transaksi ${escapeHtml(draft.expenseId)} pada Tab 05 (Rincian Pengeluaran).</i>`,
+        `📉 <i>Otomatis dicatat ke Tab 06 (Margin) dengan status 🔴 <b>NON-PAGU</b> (memotong margin keuntungan dapur SPPG sebesar ${formatRupiah(subtotal)}).</i>`,
       ].filter(Boolean).join("\n");
 
       const kb = new InlineKeyboard()

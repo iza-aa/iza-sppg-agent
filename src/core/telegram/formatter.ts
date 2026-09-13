@@ -2,8 +2,9 @@ import { Context } from "grammy";
 import { SppgOrder } from "../ai/schemas/sppg-order.schema.js";
 import { SupplierReceipt } from "../ai/schemas/supplier-receipt.schema.js";
 import { PendingActionStatus } from "../db/repositories/pending-action.repository.js";
+import { formatWibDisplay } from "../utils/date-time.js";
 
-export function escapeHtml(str: string): string {
+export function escapeHtml(str?: string | null): string {
   if (!str) return "";
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -21,12 +22,32 @@ export function renderSppgOrderDraftCard(
   draftId: string,
   status: PendingActionStatus
 ): string {
-  const statusBadge =
-    status === "SAVED"
-      ? "✅ <b>STATUS: TERSIMPAN KE TAB 02_PAGU_PENERIMAAN, 03_RINCIAN & 06_PERBANDINGAN</b>"
-      : status === "CANCELLED"
-      ? "❌ <b>STATUS: DRAF DIBATALKAN</b>"
-      : "⏳ <b>STATUS: MENUNGGU KONFIRMASI</b>";
+  // Ensure total_amount strictly equals the sum of items
+  if (order.items && order.items.length > 0) {
+    const computedTotal = order.items.reduce(
+      (sum, item) => sum + (Number(item.qty) * Number(item.price) || Number(item.total_price) || 0),
+      0
+    );
+    if (computedTotal > 0) {
+      order.total_amount = computedTotal;
+    }
+  }
+
+  const isMissingOrderNo = !order.order_no || order.order_no === "PO-AUTO" || order.order_no === "-" || order.order_no.trim() === "";
+  const orderNoDisplay = isMissingOrderNo ? "❓ <i>Belum ditentukan</i>" : `<code>${escapeHtml(order.order_no)}</code>`;
+
+  let statusBadge = "";
+  if (status === "SAVED") {
+    statusBadge = "✅ <b>STATUS: TERSIMPAN KE TAB 02 (Pendapatan), TAB 03 (Rincian) & TAB 06 (Margin)</b>";
+  } else if (status === "CANCELLED") {
+    statusBadge = "❌ <b>STATUS: DRAF DIBATALKAN</b>";
+  } else if (status === "EXPIRED") {
+    statusBadge = "⌛ <b>STATUS: DRAF KEDALUWARSA</b>\n\n<i>Sesi konfirmasi telah berakhir. Silakan kirim ulang dokumen atau input transaksi baru.</i>";
+  } else if (isMissingOrderNo) {
+    statusBadge = "⚠️ <b>STATUS: MENUNGGU NO SURAT PESANAN (PO)</b>\n\n👉 <i>Silakan masukkan Nomor Surat Pesanan (PO) resmi pada tombol di bawah atau ketik di chat (misal: PO-2026/09/SPPG2-01):</i>";
+  } else {
+    statusBadge = "⏳ <b>STATUS: MENUNGGU KONFIRMASI</b>";
+  }
 
   const topItems = order.items.slice(0, 5).map((item, idx) => {
     return `${idx + 1}. <b>${escapeHtml(item.item_name)}</b>: ${item.qty} ${escapeHtml(item.unit)} @ ${formatRupiah(item.price)} = <i>${formatRupiah(item.total_price)}</i> (${escapeHtml(item.supplier_target || "-")})`;
@@ -38,12 +59,12 @@ export function renderSppgOrderDraftCard(
   return [
     `📋 <b>DRAF NOTA PESANAN SPPG (PAGU ANGGARAN RESMI)</b>`,
     `Unit: <b>${escapeHtml(order.sppg_unit)}</b>`,
-    `No Pesanan: <code>${escapeHtml(order.order_no)}</code>`,
-    `📅 Tanggal Terbit: <b>${order.order_date}</b>`,
-    `🚚 Tanggal Tiba : <b>${order.arrival_date}</b>`,
+    `No Pesanan: ${orderNoDisplay}`,
+    `📅 Tanggal : <b>${order.order_date}</b>`,
+    `🕒 Waktu Input : <b>${formatWibDisplay()}</b>`,
     `🍲 Total Ragam : <b>${order.items.length} Komoditas Bahan</b>`,
     `💰 <b>TOTAL PAGU : ${formatRupiah(order.total_amount)}</b>`,
-    `✍️ Penandatangan: ${escapeHtml(order.signed_by || "-")}`,
+    `✍️ Penandatangan: <b>${escapeHtml(order.signed_by || "Kepala SPPG")}</b>`,
     `------------------------------------------`,
     `<b>Ringkasan Bahan:</b>`,
     itemsText,
@@ -63,12 +84,12 @@ export function renderSppgOrderItemsDetail(order: SppgOrder): string {
     `📋 <b>RINCIAN LENGKAP ${order.items.length} BAHAN MAKANAN</b>`,
     `No Pesanan: <code>${escapeHtml(order.order_no)}</code>`,
     `Unit Dapur: <b>${escapeHtml(order.sppg_unit)}</b>`,
-    `Tanggal: <b>${order.order_date}</b> (Tiba: <b>${order.arrival_date}</b>)`,
+    `Tanggal: <b>${order.order_date}</b>`,
     `💰 <b>TOTAL PAGU: ${formatRupiah(order.total_amount)}</b>`,
     `------------------------------------------`,
     itemsList,
     `------------------------------------------`,
-    `<i>💡 Data rincian ini akan dicatat ke Tab 03_RINCIAN_PENDAPATAN dan dicocokkan otomatis di Tab 06_PERBANDINGAN_MARGIN.</i>`,
+    `<i>💡 Data rincian ini akan dicatat ke Tab 03 (Rincian Pendapatan) dan dicocokkan otomatis di Tab 06 (Margin).</i>`,
   ].join("\n");
 }
 
@@ -110,18 +131,65 @@ export function renderSupplierExpenseDraftCard(
   const candidatesCount = (expense as any).paguCandidates?.length || 0;
   const firstItemName = expense.items?.[0]?.item_name || "Bahan";
 
-  const statusBadge =
-    status === "SAVED"
-      ? (isMultiSupplier
-          ? `✅ <b>STATUS: TERSIMPAN KE TAB 04 (${supplierGroups.size} TRANSAKSI PER TOKO), TAB 05 & 06</b>`
-          : "✅ <b>STATUS: TERSIMPAN KE TAB 04_PAGU_PENGELUARAN, 05_RINCIAN & 06_PERBANDINGAN</b>")
-      : status === "CANCELLED"
-      ? "❌ <b>STATUS: DRAF DIBATALKAN</b>"
-      : isSelectionRequired
-      ? "⏳ <b>STATUS: MENUNGGU PILIHAN ANGGARAN MENU</b>"
-      : "⏳ <b>STATUS: MENUNGGU KONFIRMASI</b>";
+  const isMissingPayment = !expense.payment_method || expense.payment_method.trim() === "" || expense.payment_method === "-";
+  const isMissingSupplier = !expense.supplier_name || expense.supplier_name.trim() === "" || expense.supplier_name === "Supplier Pasar";
+  const isMissingAmount = !expense.total_amount || Number(expense.total_amount) <= 0;
+  const isMissingItems =
+    !expense.items ||
+    expense.items.length === 0 ||
+    expense.items.every((it) => {
+      const n = (it.item_name || "").trim().toLowerCase();
+      return (
+        !n ||
+        n === "belanja bahan pangan" ||
+        n === "bahan makanan" ||
+        n === "bahan pangan" ||
+        n === "barang" ||
+        n === "bahan" ||
+        n === "-"
+      );
+    });
 
-  let supplierSection = `🏪 <b>Nama Supplier / Toko</b>: <b>${escapeHtml(expense.supplier_name)}</b>`;
+  const missingLabels: string[] = [];
+  if (isMissingItems) missingLabels.push("RINCIAN BARANG");
+  if (isMissingAmount) missingLabels.push("TOTAL NOMINAL");
+  if (isMissingPayment) missingLabels.push("METODE PEMBAYARAN");
+  if (isMissingSupplier) missingLabels.push("NAMA TOKO / SUPPLIER");
+
+  let statusBadge = "";
+  if (status === "SAVED") {
+    statusBadge = isMultiSupplier
+      ? `✅ <b>STATUS: TERSIMPAN KE TAB 04 (${supplierGroups.size} TOKO), TAB 05 & 06</b>`
+      : "✅ <b>STATUS: TERSIMPAN KE TAB 04 (Pengeluaran), TAB 05 (Rincian) & TAB 06 (Margin)</b>";
+  } else if (status === "CANCELLED") {
+    statusBadge = "❌ <b>STATUS: DRAF DIBATALKAN</b>";
+  } else if (status === "EXPIRED") {
+    statusBadge = "⌛ <b>STATUS: DRAF KEDALUWARSA</b>\n\n<i>Sesi konfirmasi telah berakhir. Silakan kirim ulang dokumen atau input transaksi baru.</i>";
+  } else if (missingLabels.length > 0) {
+    let guideInstruction = "";
+    if (isMissingItems && isMissingAmount) {
+      guideInstruction = "Silakan sebutkan nama barang belanjaan dan total nominalnya di chat (misal: <code>telur ayam 20 rak 600rb</code>):";
+    } else if (isMissingItems) {
+      guideInstruction = "Silakan masukkan nama bahan belanja dan kuantitasnya pada tombol di bawah atau ketik di chat (misal: <code>telur ayam 20 rak</code>):";
+    } else if (isMissingAmount && !isMissingPayment && !isMissingSupplier) {
+      guideInstruction = "Silakan masukkan total nominal belanja pada tombol di bawah atau ketik langsung di chat (misal: <code>600rb</code> atau <code>600.000</code>):";
+    } else if (isMissingPayment && !isMissingAmount && !isMissingSupplier) {
+      guideInstruction = "Silakan tentukan metode pembayaran di bawah ini (Tunai atau Transfer):";
+    } else if (isMissingSupplier && !isMissingAmount && !isMissingPayment) {
+      guideInstruction = "Silakan sebutkan nama toko / supplier belanja pada tombol di bawah atau ketik di chat:";
+    } else {
+      guideInstruction = "Silakan lengkapi data transaksi yang belum diisi pada tombol di bawah atau ketik di chat:";
+    }
+    statusBadge = `⚠️ <b>STATUS: MENUNGGU ${missingLabels.join(" & ")}</b>\n\n👉 <i>${guideInstruction}</i>`;
+  } else if (isSelectionRequired) {
+    statusBadge =
+      "⚠️ <b>STATUS: MENUNGGU ALOKASI PAGU</b>\n\n" +
+      "👉 <i>Silakan pilih alokasi belanja ini pada tombol di bawah atau ketik langsung di chat (misal: <code>pagu ii001</code> atau <code>non pagu</code>):</i>";
+  } else {
+    statusBadge = "⏳ <b>STATUS: MENUNGGU KONFIRMASI</b>";
+  }
+
+  let supplierSection = "";
   if (isMultiSupplier) {
     const suppLines: string[] = [];
     let idx = 1;
@@ -129,37 +197,35 @@ export function renderSupplierExpenseDraftCard(
       suppLines.push(`  ${idx++}. <b>${escapeHtml(sName)}</b>: ${formatRupiah(data.total)} (<i>${data.count} bahan</i>)`);
     }
     supplierSection = `🏪 <b>Rincian Rekanan (${supplierGroups.size} Toko Multi-Supplier):</b>\n${suppLines.join("\n")}`;
+  } else if (isMissingSupplier) {
+    supplierSection = `🏪 <b>Nama Supplier / Toko</b>: ❓ <i>Belum ditentukan</i>`;
+  } else {
+    supplierSection = `🏪 <b>Nama Supplier / Toko</b>: <b>${escapeHtml(expense.supplier_name)}</b>`;
   }
 
-  const itemsText = expense.items
-    .slice(0, 4)
-    .map((i) => {
-      const sTag = (i as any).supplier_name ? ` [${escapeHtml((i as any).supplier_name)}]` : "";
-      return `• ${escapeHtml(i.item_name)} (${i.qty} ${escapeHtml(i.unit)} @ ${formatRupiah(i.price)})${sTag}`;
-    })
-    .join("\n");
+  const itemsText = isMissingItems
+    ? "• ❓ <i>Belum diisi (komoditas & kuantitas)</i>"
+    : expense.items
+        .slice(0, 4)
+        .map((i) => {
+          const sTag = (i as any).supplier_name ? ` [${escapeHtml((i as any).supplier_name)}]` : "";
+          const priceText = Number(i.price) > 0 ? `@ ${formatRupiah(i.price)}` : "<i>(Harga belum diisi)</i>";
+          return `• ${escapeHtml(i.item_name)} (${i.qty} ${escapeHtml(i.unit)} ${priceText})${sTag}`;
+        })
+        .join("\n");
 
   const driveSection = driveLink
-    ? `📁 <b>Bukti Foto</b>: <a href="${driveLink}">📸 Lihat Nota di Google Drive</a>`
-    : `📁 <b>Bukti Foto</b>: <i>Tersimpan lokal</i>`;
+    ? `📁 <b>Bukti Foto</b>: <a href="${driveLink}">📸 Lihat Foto Nota</a>`
+    : (status === "PENDING"
+        ? `📁 <b>Bukti Foto</b>: <i>📸 Nota Terlampir (Dari Telegram)</i>`
+        : `📁 <b>Bukti Foto</b>: <i>-</i>`);
 
   const ctx = (expense as any).paguContext as PaguDraftContext | undefined;
   let allocSection = "";
   let statusPaguLine = "";
 
   if (isSelectionRequired) {
-    const isMultiItem = expense.items && expense.items.length > 1;
-    const poList = Array.from(
-      new Set(((expense as any).paguCandidates || []).map((c: any) => c.sppg_ref_no))
-    ).filter(Boolean);
-    const poText = poList.length > 0 ? ` (${poList.join(", ")})` : "";
-    const itemDesc = isMultiItem
-      ? `bahan-bahan belanjaan ini`
-      : `bahan "${escapeHtml(firstItemName)}"`;
-
-    allocSection =
-      `❓ <b>Alokasi Anggaran: ⚠️ BELUM DIPILIH</b>\n` +
-      `<i>Ditemukan ${poList.length || candidatesCount} rencana menu aktif yang membutuhkan ${itemDesc}${poText}. Silakan tentukan alokasi PO pada tombol di bawah:</i>`;
+    allocSection = `📄 <b>Alokasi Anggaran</b>: ❓ <i>Belum ditentukan</i>`;
   } else if (ctx && ctx.sppg_ref_no && ctx.sppg_ref_no !== "-") {
     const supplierInfo = ctx.pagu_supplier ? ` (${escapeHtml(ctx.pagu_supplier)})` : "";
     allocSection = `📄 <b>Alokasi Anggaran</b>: <code>${escapeHtml(ctx.sppg_ref_no)}</code>${supplierInfo}`;
@@ -183,12 +249,13 @@ export function renderSupplierExpenseDraftCard(
     isMultiSupplier ? `🧾 <b>DRAF BELANJA MULTI-SUPPLIER</b>` : `🧾 <b>DRAF BELANJA SUPPLIER</b>`,
     supplierSection,
     `📅 <b>Tanggal Nota</b>: ${expense.date}`,
+    `🕒 <b>Waktu Input</b> : ${formatWibDisplay()}`,
     allocSection + statusPaguLine,
-    `💵 <b>TOTAL BELANJA: ${formatRupiah(expense.total_amount)}</b>`,
-    `💳 Metode: ${escapeHtml(expense.payment_method)}`,
+    `💵 <b>TOTAL BELANJA: ${isMissingAmount ? "❓ <i>Belum diisi</i>" : formatRupiah(expense.total_amount)}</b>`,
+    `💳 <b>Metode:</b> ${isMissingPayment ? "❓ <i>Belum ditentukan</i>" : `<b>${escapeHtml(expense.payment_method)}</b>`}`,
     driveSection,
     `------------------------------------------`,
-    `<b>Barang Belanja:</b>\n${itemsText || "• Belanja Bahan Pangan"}${expense.items.length > 4 ? `\n<i>... dan ${expense.items.length - 4} bahan lainnya</i>` : ""}`,
+    `<b>Barang Belanja:</b>\n${itemsText}${!isMissingItems && expense.items.length > 4 ? `\n<i>... dan ${expense.items.length - 4} bahan lainnya</i>` : ""}`,
     `------------------------------------------`,
     statusBadge,
   ].join("\n");
@@ -200,6 +267,16 @@ export async function safeEditMessageText(ctx: Context, text: string, extra?: an
   } catch (err: any) {
     if (err?.description?.includes("message is not modified")) {
       return;
+    }
+    if (err?.description?.includes("there is no text in the message to edit")) {
+      try {
+        await ctx.editMessageCaption({ caption: text, ...extra });
+        return;
+      } catch (captionErr: any) {
+        if (captionErr?.description?.includes("message is not modified")) {
+          return;
+        }
+      }
     }
     throw err;
   }
@@ -351,4 +428,51 @@ export function cleanMarkdownToTelegramHtml(text: string): string {
 
   return processed;
 }
+
+export function renderLinkExpenseConfirmationCard(params: {
+  unitName: string;
+  expenseId: string;
+  paguId: string;
+  orderNo: string;
+  supplier: string;
+  amount: number;
+  items: Array<{
+    itemName: string;
+    qty: number;
+    unit: string;
+    price: number;
+    total: number;
+  }>;
+  newItemCount?: number;
+  newSupplierCount?: number;
+}): string {
+  const itemsText = params.items && params.items.length > 0
+    ? params.items.map((it) => `• <b>${escapeHtml(it.itemName)}</b> (${it.qty} ${escapeHtml(it.unit)} @ ${formatRupiah(it.price)})`).join("\n")
+    : `• Belanja Bahan (${formatRupiah(params.amount)})`;
+
+  const itemInfo = params.newItemCount ? ` (menjadi ${params.newItemCount} Item)` : "";
+  const suppInfo = params.newSupplierCount ? ` (menjadi ${params.newSupplierCount} Supplier)` : "";
+
+  return [
+    `📋 <b>KONFIRMASI PENAUTAN BELANJA KE PAGU</b>`,
+    `Unit: <b>${escapeHtml(params.unitName)}</b>`,
+    `------------------------------------------`,
+    `• <b>ID Pengeluaran:</b> <code>${escapeHtml(params.expenseId)}</code> (${escapeHtml(params.supplier)} - ${formatRupiah(params.amount)})`,
+    `• <b>Target Pagu:</b> <code>${escapeHtml(params.orderNo)}</code> (${escapeHtml(params.paguId)})`,
+    `• <b>Bahan Belanja:</b>`,
+    itemsText,
+    `------------------------------------------`,
+    `📍 <b>Dampak Sinkronisasi:</b>`,
+    `1. Bahan di atas akan disisipkan ke <b>03_RINCIAN_PENDAPATAN</b> pada pesanan <code>${escapeHtml(params.orderNo)}</code>.`,
+    `2. <b>02_PENDAPATAN</b> akan diperbarui:`,
+    `   • Jumlah Item Bahan bertambah${itemInfo}`,
+    `   • Target Supplier disesuaikan${suppInfo}`,
+    `   • Total Pagu Anggaran bertambah (+${formatRupiah(params.amount)})`,
+    `   • Keterangan ditandai <b>[Edit]</b>`,
+    `3. Realisasi belanja di <b>04_PENGELUARAN</b> & <b>05_RINCIAN_PENGELUARAN</b> ditautkan ke <code>${escapeHtml(params.orderNo)}</code>.`,
+    `4. Perbandingan margin di <b>06_MARGIN</b> diselaraskan (Status: <b>🟢 PAS</b>).\n`,
+    `<i>Apakah Anda yakin ingin menautkan transaksi pengeluaran ini ke pagu pesanan tersebut?</i>`,
+  ].join("\n");
+}
+
 

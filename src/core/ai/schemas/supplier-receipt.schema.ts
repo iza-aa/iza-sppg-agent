@@ -13,13 +13,14 @@ export const SupplierReceiptSchema = z.object({
   type: z.literal("expense").default("expense").describe("Selalu bernilai 'expense' karena ini pengeluaran belanja riil vendor"),
   supplier_name: z.string().describe("Nama toko / supplier pasar (contoh: Hj Muliadi, Ayam Pasar, Mas Pandu)"),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Tanggal transaksi faktur YYYY-MM-DD"),
+  receipt_no: z.string().optional().default("").describe("Nomor faktur, nomor nota, atau invoice supplier jika tertera di dokumen"),
   sppg_ref_no: z.string().optional().default("").describe("Nomor referensi SPPG terkait jika ada"),
   items: z.array(SupplierReceiptItemSchema).default([]).describe("Daftar rincian item barang"),
   subtotal: z.number().default(0).describe("Subtotal belanja sebelum diskon/pajak"),
   discount: z.number().default(0).describe("Diskon jika ada"),
   tax: z.number().default(0).describe("Pajak jika ada"),
   total_amount: z.number().describe("Total akhir yang dibayarkan ke supplier dalam Rupiah"),
-  payment_method: z.string().default("Cash").describe("Metode pembayaran (Cash, Transfer BCA, BRI, Mandiri)"),
+  payment_method: z.string().optional().nullable().describe("Metode pembayaran (Tunai, Cash, Transfer BCA, BRI, Mandiri, dll). Kosongkan jika user tidak menyebutkan metode pembayaran!"),
   notes: z.string().optional().describe("Keterangan tambahan dari nota belanja"),
 });
 

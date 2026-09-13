@@ -85,9 +85,8 @@ describe("Interactive Pagu Selection Logic", () => {
 
     const card = renderSupplierExpenseDraftCard(expense, "draft_test_123", "PENDING");
 
-    expect(card).toContain("Alokasi Anggaran: ⚠️ BELUM DIPILIH");
-    expect(card).toContain("Ditemukan 2 rencana menu aktif");
-    expect(card).toContain("STATUS: MENUNGGU PILIHAN ANGGARAN MENU");
+    expect(card).toContain("Alokasi Anggaran</b>: ❓ <i>Belum ditentukan</i>");
+    expect(card).toContain("STATUS: MENUNGGU ALOKASI PAGU");
   });
 
   it("should render card normally with save button once pagu is selected", () => {
