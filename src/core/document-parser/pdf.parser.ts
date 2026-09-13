@@ -5,6 +5,7 @@ import { SupplierReceipt, SupplierReceiptSchema } from "../ai/schemas/supplier-r
 import {
   cleanNumeric,
   cleanDateString,
+  detectUserCaptionIntent,
   UNIVERSAL_DOCUMENT_PARSER_PROMPT,
 } from "./image.parser.js";
 import { logger } from "../utils/logger.js";
@@ -27,6 +28,7 @@ export async function parsePdfDocument(
   }
 
   try {
+    const userIntent = detectUserCaptionIntent(userCaption);
     const parsed = await geminiKeyManager.executeWithFallback(async (genAI, modelName) => {
       const model = genAI.getGenerativeModel({
         model: modelName,
@@ -44,9 +46,14 @@ export async function parsePdfDocument(
         },
       };
 
-      const captionPrompt = userCaption?.trim()
-        ? `\nPesan/Keterangan dari pengguna: "${userCaption.trim()}". Pertimbangkan keterangan ini dalam mengklasifikasikan dokumen dan mengekstrak data.`
-        : "";
+      let captionPrompt = "";
+      if (userIntent === "EXPENSE") {
+        captionPrompt = `\nPENTING: Pengguna memberikan keterangan "${userCaption?.trim()}". Pengguna SECARA MUTLAK menetapkan dokumen ini sebagai PENGELUARAN BELANJA SUPPLIER (SUPPLIER_EXPENSE). Klasifikasikan dokumen ini WAJIB sebagai SUPPLIER_EXPENSE. Jangan jadikan SPPG_ORDER meskipun tabel ada tulisan 'PO'.`;
+      } else if (userIntent === "INCOME") {
+        captionPrompt = `\nPENTING: Pengguna memberikan keterangan "${userCaption?.trim()}". Pengguna SECARA MUTLAK menetapkan dokumen ini sebagai PENDAPATAN (SPPG_ORDER). Klasifikasikan dokumen ini WAJIB sebagai SPPG_ORDER.`;
+      } else if (userCaption?.trim()) {
+        captionPrompt = `\nPesan/Keterangan dari pengguna: "${userCaption.trim()}". Pertimbangkan keterangan ini dalam mengklasifikasikan dokumen dan mengekstrak data.`;
+      }
 
       const prompt = `Analisis, klasifikasikan (SPPG_ORDER vs SUPPLIER_EXPENSE), dan ekstrak data dokumen PDF pengadaan MBG ini untuk unit ${defaultUnit}.${captionPrompt}`;
       const result = await model.generateContent([prompt, pdfPart]);
@@ -56,6 +63,54 @@ export async function parsePdfDocument(
     });
 
     aiCircuitBreaker.recordSuccess();
+
+    // HARD DETERMINISTIC OVERRIDE BASED ON USER INTENT
+    if (userIntent === "EXPENSE" && parsed.document_type === "SPPG_ORDER" && parsed.payload) {
+      logger.info({ userCaption }, "Overriding PDF SPPG_ORDER to SUPPLIER_EXPENSE based on user caption intent");
+      const p = parsed.payload;
+      parsed.document_type = "SUPPLIER_EXPENSE";
+      parsed.payload = {
+        type: "expense",
+        supplier_name: p.items?.find((it: any) => it.supplier_target && it.supplier_target !== "Lainnya")?.supplier_target || "Supplier Rekanan",
+        receipt_no: p.order_no || "",
+        date: p.order_date || cleanDateString(""),
+        sppg_ref_no: p.order_no || "",
+        items: (p.items || []).map((it: any) => ({
+          item_name: it.item_name || "Bahan Belanja",
+          qty: cleanNumeric(it.qty, 1),
+          unit: it.unit || "unit",
+          price: cleanNumeric(it.price, 0),
+          total_price: cleanNumeric(it.total_price) || (cleanNumeric(it.qty, 1) * cleanNumeric(it.price, 0)),
+          supplier_name: it.supplier_target || "Supplier Rekanan",
+        })),
+        subtotal: cleanNumeric(p.total_amount),
+        discount: 0,
+        tax: 0,
+        total_amount: cleanNumeric(p.total_amount),
+        payment_method: "Cash",
+      };
+    } else if (userIntent === "INCOME" && parsed.document_type === "SUPPLIER_EXPENSE" && parsed.payload) {
+      logger.info({ userCaption }, "Overriding PDF SUPPLIER_EXPENSE to SPPG_ORDER based on user caption intent");
+      const p = parsed.payload;
+      parsed.document_type = "SPPG_ORDER";
+      parsed.payload = {
+        type: "income",
+        sppg_unit: defaultUnit,
+        order_no: p.receipt_no || p.sppg_ref_no || "PO-AUTO",
+        order_date: p.date || cleanDateString(""),
+        items: (p.items || []).map((it: any, idx: number) => ({
+          no: idx + 1,
+          item_name: it.item_name || "Bahan Makanan",
+          qty: cleanNumeric(it.qty, 1),
+          unit: it.unit || "KG",
+          price: cleanNumeric(it.price, 0),
+          total_price: cleanNumeric(it.total_price) || (cleanNumeric(it.qty, 1) * cleanNumeric(it.price, 0)),
+          supplier_target: it.supplier_name || "Lainnya",
+        })),
+        total_amount: cleanNumeric(p.total_amount),
+        signed_by: "Kepala SPPG",
+      };
+    }
 
     // CASE 1: SPPG ORDER (INCOME)
     if (parsed.document_type === "SPPG_ORDER" && parsed.payload) {

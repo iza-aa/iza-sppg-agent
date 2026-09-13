@@ -47,6 +47,7 @@ export function buildEditSubmenuKeyboard(
       .text("📅 Ganti Tanggal", `v:sub:date:${draftId}`)
       .row()
       .text("✍️ Ganti Penandatangan", `v:sub:signer:${draftId}`)
+      .text("🔄 Ubah Jadi Belanja", `v:sub:switch_type:${draftId}`)
       .row()
       .text("🔙 Kembali ke Draf", `v:sub:back:${draftId}`);
   } else {
@@ -57,6 +58,7 @@ export function buildEditSubmenuKeyboard(
       .text("📄 Ganti No Pagu", `v:sub:pagu:${draftId}`)
       .row()
       .text("📅 Ganti Tanggal", `v:sub:date:${draftId}`)
+      .text("🔄 Ubah Jadi Pendapatan", `v:sub:switch_type:${draftId}`)
       .row()
       .text("🔙 Kembali ke Draf", `v:sub:back:${draftId}`);
   }

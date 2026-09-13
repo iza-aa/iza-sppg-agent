@@ -784,6 +784,112 @@ export function registerDraftHandlers(bCtx: BotContext) {
     });
   });
 
+  // [🔄 Ubah Jenis Draf: Pendapatan <-> Belanja]
+  bCtx.bot.callbackQuery(/^v:sub:switch_type:(.+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const draft = await bCtx.pendingRepo.getById(draftId);
+    if (!draft || draft.status !== "PENDING") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
+    }
+
+    if (!ctx.from) return;
+    const state = bCtx.getState(ctx.from.id);
+    if (state.promptMsgId && ctx.chat) {
+      await ctx.api.deleteMessage(ctx.chat.id, state.promptMsgId).catch(() => {});
+      state.promptMsgId = undefined;
+    }
+    state.editingField = null;
+
+    let hasMultiplePagu = false;
+    if (draft.action_type === "SPPG_ORDER") {
+      // Switch SPPG_ORDER -> SUPPLIER_EXPENSE
+      const p = draft.payload;
+      const convertedPayload: any = {
+        type: "expense",
+        supplier_name: p.items?.find((it: any) => it.supplier_target && it.supplier_target !== "Lainnya")?.supplier_target || "Supplier Rekanan",
+        receipt_no: p.order_no || "",
+        date: p.order_date || new Date().toISOString().slice(0, 10),
+        sppg_ref_no: p.order_no || "",
+        items: (p.items || []).map((it: any) => ({
+          item_name: it.item_name || "Bahan Belanja",
+          qty: Number(it.qty) || 1,
+          unit: it.unit || "unit",
+          price: Number(it.price) || 0,
+          total_price: Number(it.total_price) || (Number(it.qty) * Number(it.price)) || 0,
+          supplier_name: it.supplier_target || "Supplier Rekanan",
+        })),
+        subtotal: Number(p.total_amount) || 0,
+        discount: 0,
+        tax: 0,
+        total_amount: Number(p.total_amount) || 0,
+        payment_method: "Cash",
+      };
+
+      hasMultiplePagu = await enrichReceiptWithPaguContext(bCtx.unitConfig.spreadsheetId, convertedPayload);
+
+      draft.action_type = "SUPPLIER_EXPENSE";
+      draft.payload = convertedPayload;
+
+      await bCtx.pendingRepo.updateActionType(draftId, "SUPPLIER_EXPENSE");
+      await bCtx.pendingRepo.updatePayload(draftId, convertedPayload);
+
+      await ctx.answerCallbackQuery({
+        text: "✅ Draf berhasil diubah menjadi Belanja Supplier!",
+      });
+
+      const draftCard = renderSupplierExpenseDraftCard(convertedPayload, draftId, draft.status, draft.media_url);
+      await safeEditMessageText(ctx, draftCard, {
+        parse_mode: "HTML",
+        reply_markup: getDraftConfirmationReplyMarkup(draftId, "SUPPLIER_EXPENSE", convertedPayload, undefined, hasMultiplePagu),
+      });
+    } else {
+      // Switch SUPPLIER_EXPENSE -> SPPG_ORDER
+      if (await bCtx.isCallerMember(ctx.from.id)) {
+        return ctx.answerCallbackQuery({
+          text: "⛔ Akses Dibatasi: Staf Operasional hanya berwenang mencatat Belanja.",
+          show_alert: true,
+        });
+      }
+
+      const p = draft.payload;
+      const convertedPayload: any = {
+        type: "income",
+        sppg_unit: bCtx.unitConfig.name,
+        order_no: p.receipt_no || p.sppg_ref_no || "PO-AUTO",
+        order_date: p.date || new Date().toISOString().slice(0, 10),
+        arrival_date: p.date || new Date().toISOString().slice(0, 10),
+        items: (p.items || []).map((it: any, idx: number) => ({
+          no: idx + 1,
+          item_name: it.item_name || "Bahan Makanan",
+          qty: Number(it.qty) || 1,
+          unit: it.unit || "KG",
+          price: Number(it.price) || 0,
+          total_price: Number(it.total_price) || (Number(it.qty) * Number(it.price)) || 0,
+          supplier_target: it.supplier_name || "Lainnya",
+        })),
+        total_amount: Number(p.total_amount) || 0,
+        signed_by: "Kepala SPPG",
+      };
+
+      draft.action_type = "SPPG_ORDER";
+      draft.payload = convertedPayload;
+
+      await bCtx.pendingRepo.updateActionType(draftId, "SPPG_ORDER");
+      await bCtx.pendingRepo.updatePayload(draftId, convertedPayload);
+
+      await ctx.answerCallbackQuery({
+        text: "✅ Draf berhasil diubah menjadi Pendapatan PO!",
+      });
+
+      const itemsCount = convertedPayload.items?.length || 0;
+      const draftCard = renderSppgOrderDraftCard(convertedPayload, draftId, draft.status);
+      await safeEditMessageText(ctx, draftCard, {
+        parse_mode: "HTML",
+        reply_markup: getDraftConfirmationReplyMarkup(draftId, "SPPG_ORDER", convertedPayload, itemsCount),
+      });
+    }
+  });
+
   // [❌ Batalkan Draf]
   bCtx.bot.callbackQuery(/^v:cancel:(.+)$/, async (ctx) => {
     const draftId = ctx.match[1];

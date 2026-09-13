@@ -170,6 +170,24 @@ export class PendingActionRepository {
     }
   }
 
+  async updateActionType(id: string, actionType: PendingActionType): Promise<void> {
+    const record = await this.getById(id);
+    if (record) {
+      record.action_type = actionType;
+      this.memoryStore.set(id, record);
+    }
+
+    try {
+      const uuid = toDraftUuid(id);
+      await this.supabase
+        .from("sppg_pending_actions")
+        .update({ action_type: actionType })
+        .eq("id", uuid);
+    } catch (err) {
+      logger.debug({ err }, "Database action_type update fallback to memory");
+    }
+  }
+
   async getExpiredPending(sppgId?: string): Promise<PendingActionRecord[]> {
     const expired: PendingActionRecord[] = [];
     const now = Date.now();

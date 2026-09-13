@@ -3,8 +3,8 @@ import { env } from "../../config/env.js";
 import { logger } from "../utils/logger.js";
 
 export const AVAILABLE_MODELS = [
-  "gemini-2.5-flash",
   "gemini-2.0-flash",
+  "gemini-2.5-flash",
   "gemini-1.5-flash",
 ];
 
