@@ -290,20 +290,34 @@ export function renderTransactionListCard(
     title: string;
     amount: number;
     detail: string;
-  }>
+  }>,
+  filterType: "all" | "expense" | "income" = "all"
 ): string {
   if (transactions.length === 0) {
+    if (filterType === "expense") {
+      return "ℹ️ <b>Belum ada data pengeluaran (belanja) tercatat di Spreadsheet unit ini.</b>";
+    }
+    if (filterType === "income") {
+      return "ℹ️ <b>Belum ada data pendapatan (pagu) tercatat di Spreadsheet unit ini.</b>";
+    }
     return "ℹ️ <b>Belum ada transaksi tercatat di Spreadsheet unit ini.</b>";
   }
 
+  let headerTitle = "📋 <b>RIWAYAT TRANSAKSI TERAKHIR:</b>";
+  if (filterType === "expense") {
+    headerTitle = "📉 <b>RIWAYAT PENGELUARAN (BELANJA SUPPLIER):</b>";
+  } else if (filterType === "income") {
+    headerTitle = "📈 <b>RIWAYAT PENDAPATAN (PAGU PENERIMAAN):</b>";
+  }
+
   const lines = [
-    `📋 <b>RIWAYAT TRANSAKSI TERAKHIR:</b>`,
+    headerTitle,
     `------------------------------------------`,
   ];
 
   transactions.forEach((t, i) => {
     const icon = t.type === "income" ? "🟢" : "🔴";
-    const typeLabel = t.type === "income" ? "Pagu" : "Belanja";
+    const typeLabel = t.type === "income" ? "Pendapatan" : "Pengeluaran";
     lines.push(
       `${i + 1}. ${icon} <b>${escapeHtml(t.title)}</b>\n` +
       `   • ID: <code>${escapeHtml(t.id)}</code>\n` +

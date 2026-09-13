@@ -209,10 +209,22 @@ export function buildMultiSheetSelectorKeyboard(currentUnitId?: string): InlineK
 }
 
 /**
+ * Sub-menu picker for choosing between Pendapatan (Tab 02) and Pengeluaran (Tab 04)
+ */
+export function buildTransactionHistoryPickerKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("📈 Riwayat Pendapatan", "v:tx:list:income:8")
+    .text("📉 Riwayat Pengeluaran", "v:tx:list:expense:8")
+    .row()
+    .text("🏠 Menu Utama", "qa:menu");
+}
+
+/**
  * Keyboard for listing recent transactions with detail drill-down
  */
 export function buildTransactionListKeyboard(
-  transactions: Array<{ id: string; title: string; amount: number }>
+  transactions: Array<{ id: string; title: string; amount: number }>,
+  filterType: "all" | "expense" | "income" = "all"
 ): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const trx of transactions.slice(0, 5)) {
@@ -223,6 +235,8 @@ export function buildTransactionListKeyboard(
     }).format(trx.amount);
     kb.text(`🔍 ${trx.title.slice(0, 16)} (${formattedAmt})`, `v:trx:view:${trx.id}`).row();
   }
+  kb.text("🔙 Pilih Riwayat Lain", "v:tx:picker")
+    .text("🏠 Menu Utama", "qa:menu");
   return kb;
 }
 
@@ -307,7 +321,7 @@ export function buildStartQuickActionKeyboard(role: "super_admin" | "admin" | "m
       .text("📄 Cetak SPJ", "qa:pdf")
       .row()
       .text("📋 Kelola Pagu / Rincian", "qa:pagu")
-      .text("🔍 Riwayat Belanja", "qa:transaksi")
+      .text("🔍 Riwayat Transaksi", "qa:transaksi")
       .row()
       .text("🌐 Buka Sheets", "qa:sheets")
       .text("🎟️ Undang Staf", "qa:invite_prompt")

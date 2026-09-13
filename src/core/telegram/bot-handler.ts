@@ -21,6 +21,7 @@ import {
   sendPdf,
   registerTransactionHandlers,
   sendRecentTransactions,
+  sendTransactionHistoryPicker,
   sendTransactionDetail,
   registerPaguHandlers,
   sendPaguOrders,
@@ -311,7 +312,9 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
     sendSheets: (ctx: Context) => sendSheets(bCtx, ctx),
     sendRekap: (ctx: Context) => sendRekap(bCtx, ctx),
     sendPdf: (ctx: Context, explicitOrderNo?: string) => sendPdf(bCtx, ctx, explicitOrderNo),
-    sendRecentTransactions: (ctx: Context, limit?: number) => sendRecentTransactions(bCtx, ctx, limit),
+    sendRecentTransactions: (ctx: Context, limit?: number, filterType?: "all" | "expense" | "income") =>
+      sendRecentTransactions(bCtx, ctx, limit, filterType),
+    sendTransactionHistoryPicker: (ctx: Context) => sendTransactionHistoryPicker(bCtx, ctx),
     sendTransactionDetail: (ctx: Context, transactionId: string) => sendTransactionDetail(bCtx, ctx, transactionId),
     sendPaguOrders: (ctx: Context) => sendPaguOrders(bCtx, ctx),
     logActivity: (ctx: Context, details: any) => logActivity(ctx, details),

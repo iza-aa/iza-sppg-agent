@@ -34,10 +34,14 @@ describe("MetaAgent Fast-Path & Heuristic Intent Classifier", () => {
     expect(await metaAgent.classifyAndRoute("status akun")).toEqual({ type: "GET_MY_ID" });
   });
 
-  it("should classify transaction list inquiries as LIST_TRANSACTIONS", async () => {
-    expect(await metaAgent.classifyAndRoute("transaksi")).toEqual({ type: "LIST_TRANSACTIONS", limit: 8 });
-    expect(await metaAgent.classifyAndRoute("daftar belanja")).toEqual({ type: "LIST_TRANSACTIONS", limit: 8 });
-    expect(await metaAgent.classifyAndRoute("5 transaksi")).toEqual({ type: "LIST_TRANSACTIONS", limit: 5 });
+  it("should classify transaction list inquiries as LIST_TRANSACTIONS with proper filterType", async () => {
+    expect(await metaAgent.classifyAndRoute("transaksi")).toEqual({ type: "LIST_TRANSACTIONS", limit: 8, filterType: "picker" });
+    expect(await metaAgent.classifyAndRoute("daftar belanja")).toEqual({ type: "LIST_TRANSACTIONS", limit: 8, filterType: "expense" });
+    expect(await metaAgent.classifyAndRoute("pengeluaran")).toEqual({ type: "LIST_TRANSACTIONS", limit: 8, filterType: "expense" });
+    expect(await metaAgent.classifyAndRoute("riwayat pengeluaran")).toEqual({ type: "LIST_TRANSACTIONS", limit: 8, filterType: "expense" });
+    expect(await metaAgent.classifyAndRoute("pendapatan")).toEqual({ type: "LIST_TRANSACTIONS", limit: 8, filterType: "income" });
+    expect(await metaAgent.classifyAndRoute("riwayat pendapatan")).toEqual({ type: "LIST_TRANSACTIONS", limit: 8, filterType: "income" });
+    expect(await metaAgent.classifyAndRoute("5 transaksi")).toEqual({ type: "LIST_TRANSACTIONS", limit: 5, filterType: "picker" });
   });
 
   it("should classify detail transaction inquiries with ID", async () => {

@@ -13,20 +13,48 @@ import {
   buildTransactionListKeyboard,
   buildTransactionDetailKeyboard,
   buildDeleteConfirmKeyboard,
+  buildTransactionHistoryPickerKeyboard,
 } from "../keyboards.js";
 
-export async function sendRecentTransactions(bCtx: BotContext, ctx: Context, limit = 8) {
+export async function sendRecentTransactions(
+  bCtx: BotContext,
+  ctx: Context,
+  limit = 8,
+  filterType: "all" | "expense" | "income" = "all"
+) {
   if (await bCtx.isCallerMember(ctx.from?.id)) {
     return bCtx.notifyMemberRestricted(ctx, "riwayat transaksi lengkap Google Sheets");
   }
 
   await bCtx.withTyping(ctx, async () => {
-    const transactions = await googleSheetsService.getRecentTransactions(bCtx.unitConfig.spreadsheetId, limit);
-    const text = renderTransactionListCard(transactions);
+    const transactions = await googleSheetsService.getRecentTransactions(bCtx.unitConfig.spreadsheetId, limit, filterType);
+    const text = renderTransactionListCard(transactions, filterType);
     await ctx.reply(text, {
       parse_mode: "HTML",
-      reply_markup: transactions.length > 0 ? buildTransactionListKeyboard(transactions) : undefined,
+      reply_markup: transactions.length > 0
+        ? buildTransactionListKeyboard(transactions, filterType)
+        : new InlineKeyboard().text("🔙 Pilih Riwayat Lain", "v:tx:picker").text("🏠 Menu Utama", "qa:menu"),
     });
+  });
+}
+
+export async function sendTransactionHistoryPicker(bCtx: BotContext, ctx: Context) {
+  if (await bCtx.isCallerMember(ctx.from?.id)) {
+    return bCtx.notifyMemberRestricted(ctx, "riwayat transaksi lengkap Google Sheets");
+  }
+
+  const text = [
+    `🔍 <b>PILIH KATEGORI RIWAYAT TRANSAKSI</b>`,
+    `Unit: <b>${escapeHtml(bCtx.unitConfig.name)}</b>`,
+    `------------------------------------------`,
+    `Silakan pilih kategori riwayat transaksi yang ingin Anda periksa:\n`,
+    `• 📈 <b>Riwayat Pendapatan:</b> Pagu Penerimaan & SPPG (Tab 02)`,
+    `• 📉 <b>Riwayat Pengeluaran:</b> Belanja Bahan & Supplier (Tab 04)`,
+  ].join("\n");
+
+  await ctx.reply(text, {
+    parse_mode: "HTML",
+    reply_markup: buildTransactionHistoryPickerKeyboard(),
   });
 }
 
@@ -54,9 +82,50 @@ export async function sendTransactionDetail(bCtx: BotContext, ctx: Context, tran
 }
 
 export function registerTransactionHandlers(bCtx: BotContext) {
-  bCtx.bot.command("transaksi", async (ctx) => sendRecentTransactions(bCtx, ctx, 8));
+  bCtx.bot.command(["transaksi", "riwayat"], async (ctx) => sendTransactionHistoryPicker(bCtx, ctx));
+  bCtx.bot.command(["pengeluaran", "belanja"], async (ctx) => sendRecentTransactions(bCtx, ctx, 8, "expense"));
+  bCtx.bot.command(["pendapatan", "pagu_list"], async (ctx) => sendRecentTransactions(bCtx, ctx, 8, "income"));
 
-  // [📋 Daftar Transaksi]
+  // [🔍 Sub-Menu Pemilih Riwayat]
+  bCtx.bot.callbackQuery("v:tx:picker", async (ctx) => {
+    if (await bCtx.isCallerMember(ctx.from?.id)) {
+      return ctx.answerCallbackQuery({
+        text: "⛔ Akses Ditolak: Riwayat transaksi hanya dapat diakses oleh Admin.",
+        show_alert: true,
+      });
+    }
+    await ctx.answerCallbackQuery();
+    await sendTransactionHistoryPicker(bCtx, ctx);
+  });
+
+  // [📋 Daftar Transaksi Berfilter (expense, income, all)]
+  bCtx.bot.callbackQuery(/^v:tx:list:(expense|income|all):(\d+)$/, async (ctx) => {
+    if (await bCtx.isCallerMember(ctx.from?.id)) {
+      return ctx.answerCallbackQuery({
+        text: "⛔ Akses Ditolak: Riwayat transaksi hanya dapat diakses oleh Admin.",
+        show_alert: true,
+      });
+    }
+    const filter = ctx.match[1] as "expense" | "income" | "all";
+    const limit = parseInt(ctx.match[2], 10) || 8;
+    const filterLabel = filter === "expense" ? "Pengeluaran" : (filter === "income" ? "Pendapatan" : "Transaksi");
+    await ctx.answerCallbackQuery({ text: `Memuat Riwayat ${filterLabel}...` });
+    await sendRecentTransactions(bCtx, ctx, limit, filter);
+  });
+
+  // [📋 Legacy Fallback Callback]
+  bCtx.bot.callbackQuery(/^v:tx:list:(\d+)$/, async (ctx) => {
+    if (await bCtx.isCallerMember(ctx.from?.id)) {
+      return ctx.answerCallbackQuery({
+        text: "⛔ Akses Ditolak: Riwayat transaksi hanya dapat diakses oleh Admin.",
+        show_alert: true,
+      });
+    }
+    const limit = parseInt(ctx.match[1], 10) || 8;
+    await ctx.answerCallbackQuery({ text: "Memuat Riwayat Transaksi..." });
+    await sendRecentTransactions(bCtx, ctx, limit, "all");
+  });
+
   bCtx.bot.callbackQuery("v:trx:list", async (ctx) => {
     if (await bCtx.isCallerMember(ctx.from?.id)) {
       return ctx.answerCallbackQuery({
@@ -65,7 +134,7 @@ export function registerTransactionHandlers(bCtx: BotContext) {
       });
     }
     await ctx.answerCallbackQuery();
-    await sendRecentTransactions(bCtx, ctx, 8);
+    await sendTransactionHistoryPicker(bCtx, ctx);
   });
 
   // [🔍 Lihat Detail Transaksi]
@@ -679,7 +748,7 @@ export function registerTransactionHandlers(bCtx: BotContext) {
     ].join("\n");
 
     const kb = new InlineKeyboard()
-      .text("🔍 Riwayat Belanja", "v:tx:list:5")
+      .text("📉 Riwayat Pengeluaran", "v:tx:list:expense:5")
       .text("📊 Cek Rekap", "v:rekap:today")
       .row()
       .url("🌐 Buka Spreadsheet", `https://docs.google.com/spreadsheets/d/${bCtx.unitConfig.spreadsheetId}/edit`);

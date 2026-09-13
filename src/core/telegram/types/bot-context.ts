@@ -230,7 +230,8 @@ export interface BotContext {
   sendSheets: (ctx: Context) => Promise<void>;
   sendRekap: (ctx: Context) => Promise<void>;
   sendPdf: (ctx: Context, explicitOrderNo?: string) => Promise<void>;
-  sendRecentTransactions: (ctx: Context, limit?: number) => Promise<void>;
+  sendRecentTransactions: (ctx: Context, limit?: number, filterType?: "all" | "expense" | "income") => Promise<void>;
+  sendTransactionHistoryPicker: (ctx: Context) => Promise<void>;
   sendTransactionDetail: (ctx: Context, transactionId: string) => Promise<void>;
   sendPaguOrders: (ctx: Context) => Promise<void>;
   logActivity: (

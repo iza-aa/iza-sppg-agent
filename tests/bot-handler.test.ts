@@ -197,7 +197,7 @@ describe("Telegram Bot Handler & Formatting Module", () => {
     expect(adminButtons).toContain("📊 Rekap Margin");
     expect(adminButtons).toContain("📄 Cetak SPJ");
     expect(adminButtons).toContain("🌐 Buka Sheets");
-    expect(adminButtons).toContain("🔍 Riwayat Belanja");
+    expect(adminButtons).toContain("🔍 Riwayat Transaksi");
     expect(adminButtons).toContain("🎟️ Undang Staf");
     expect(adminButtons).toContain("🆔 Cek Akun");
 

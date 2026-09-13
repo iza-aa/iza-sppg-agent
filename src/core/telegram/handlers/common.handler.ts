@@ -303,7 +303,7 @@ export function registerCommonHandlers(bCtx: BotContext) {
           `3. 📊 <b>Minta Rekap:</b> Cukup ketik <i>"rekap"</i> atau <i>"margin"</i>`,
           `4. 📄 <b>Laporan SPJ:</b> Cukup ketik <i>"kirim pdf"</i> atau <i>"cetak spj"</i>`,
           `5. 🌐 <b>Spreadsheet:</b> Cukup ketik <i>"buka sheets"</i>`,
-          `6. 🔍 <b>Riwayat Belanja:</b> Cukup ketik <i>"transaksi"</i>`,
+          `6. 🔍 <b>Riwayat Transaksi:</b> Ketik <i>"riwayat"</i>, <i>"pengeluaran"</i>, atau <i>"pendapatan"</i>`,
         ];
 
     const state = bCtx.getState(ctx.from.id);
@@ -442,8 +442,8 @@ export function registerCommonHandlers(bCtx: BotContext) {
           await bCtx.notifyMemberRestricted(ctx, "Riwayat Transaksi");
           return;
         }
-        await ctx.answerCallbackQuery({ text: "🔍 Memuat Riwayat Transaksi..." });
-        await bCtx.sendRecentTransactions(ctx, 8);
+        await ctx.answerCallbackQuery();
+        await bCtx.sendTransactionHistoryPicker(ctx);
         break;
       }
 

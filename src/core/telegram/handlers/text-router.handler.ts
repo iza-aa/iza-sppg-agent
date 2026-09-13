@@ -43,7 +43,7 @@ import {
   cancelDraftAutoExpiry,
 } from "./draft.handler.js";
 import { sendSheets, sendRekap, sendPdf } from "./report.handler.js";
-import { sendRecentTransactions, sendTransactionDetail } from "./transaction.handler.js";
+import { sendRecentTransactions, sendTransactionDetail, sendTransactionHistoryPicker } from "./transaction.handler.js";
 import { sendMyId, handleInviteCommand, sendPanduan } from "./common.handler.js";
 
 async function sendMissingFieldsPrompt(
@@ -1033,7 +1033,11 @@ export function registerTextRouterHandler(bCtx: BotContext) {
             break;
 
           case "LIST_TRANSACTIONS":
-            await sendRecentTransactions(bCtx, ctx, intent.limit || 8);
+            if (intent.filterType === "expense" || intent.filterType === "income") {
+              await sendRecentTransactions(bCtx, ctx, intent.limit || 8, intent.filterType);
+            } else {
+              await sendTransactionHistoryPicker(bCtx, ctx);
+            }
             break;
 
           case "DETAIL_TRANSACTION":

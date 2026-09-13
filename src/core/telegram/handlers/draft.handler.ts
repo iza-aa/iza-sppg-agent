@@ -87,16 +87,20 @@ export function getDraftConfirmationReplyMarkup(
       return buildPaguPromptKeyboard(draftId, payload.paguCandidates);
     }
 
-    // 2. Critical missing fields (Total Amount <= 0 or empty items)
+    // 2. Critical missing fields (Total Amount <= 0, empty items, missing payment, missing supplier)
     const isMissingAmount = !payload?.total_amount || Number(payload.total_amount) <= 0;
     const isMissingItems =
       !payload?.items ||
       payload.items.length === 0;
+    const isMissingSupplier = !payload?.supplier_name || payload.supplier_name === "-" || payload.supplier_name.trim() === "";
+    const isMissingPayment = !payload?.payment_method || payload.payment_method === "-" || payload.payment_method.trim() === "";
 
-    if (isMissingAmount || isMissingItems) {
+    if (isMissingAmount || isMissingItems || isMissingSupplier || isMissingPayment) {
       return buildMissingExpenseFieldsKeyboard(draftId, {
         isMissingAmount,
         isMissingItems,
+        isMissingSupplier,
+        isMissingPayment,
       });
     }
 

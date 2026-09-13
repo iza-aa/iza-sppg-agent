@@ -11,7 +11,7 @@ export type MetaAgentIntent =
   | { type: "GET_SHEETS" }
   | { type: "GET_MY_ID" }
   | { type: "GET_PANDUAN" }
-  | { type: "LIST_TRANSACTIONS"; limit?: number }
+  | { type: "LIST_TRANSACTIONS"; limit?: number; filterType?: "expense" | "income" | "all" | "picker" }
   | { type: "DETAIL_TRANSACTION"; transactionId: string }
   | { type: "DELETE_TRANSACTION"; transactionId: string; transactionIds?: string[] }
   | { type: "DELETE_ITEM"; transactionId: string; itemName: string; itemNames?: string[] }
@@ -299,19 +299,39 @@ export class MetaAgent {
       }
     }
 
-    // List Transactions
-    if (
+    // List Transactions / Riwayat (Pengeluaran vs Pendapatan vs General)
+    const isExpenseHistory =
+      lower.includes("riwayat pengeluaran") ||
+      lower.includes("daftar pengeluaran") ||
+      lower.includes("riwayat belanja") ||
+      lower.includes("daftar belanja") ||
+      lower === "pengeluaran" ||
+      lower === "belanja";
+
+    const isIncomeHistory =
+      lower.includes("riwayat pendapatan") ||
+      lower.includes("daftar pendapatan") ||
+      lower.includes("riwayat pagu") ||
+      lower.includes("daftar pagu") ||
+      lower.includes("riwayat pemasukan") ||
+      lower === "pendapatan" ||
+      lower === "pemasukan";
+
+    const isGeneralHistory =
       lower === "transaksi" ||
       lower === "riwayat" ||
-      lower === "daftar belanja" ||
       lower.includes("transaksi terakhir") ||
       lower.includes("daftar transaksi") ||
-      lower.includes("riwayat belanja") ||
-      /\b\d+\s+transaksi\b/i.test(lower)
-    ) {
+      lower.includes("riwayat transaksi") ||
+      /\b\d+\s+transaksi\b/i.test(lower);
+
+    if (isExpenseHistory || isIncomeHistory || isGeneralHistory) {
       const matchLimit = text.match(/(\d+)\s+transaksi/i);
       const limit = matchLimit ? parseInt(matchLimit[1], 10) : 8;
-      return { type: "LIST_TRANSACTIONS", limit };
+      const filterType: "expense" | "income" | "picker" = isExpenseHistory
+        ? "expense"
+        : (isIncomeHistory ? "income" : "picker");
+      return { type: "LIST_TRANSACTIONS", limit, filterType };
     }
 
     // Invite: e.g. "undang admin", "invite admin", "buat link undangan", "undang Budi admin"

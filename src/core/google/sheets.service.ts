@@ -390,8 +390,8 @@ export class GoogleSheetsService {
     return this.reporting.getExpensesForReport(spreadsheetId, datePrefix);
   }
 
-  async getRecentTransactions(spreadsheetId: string, limit = 10) {
-    return this.reporting.getRecentTransactions(spreadsheetId, limit);
+  async getRecentTransactions(spreadsheetId: string, limit = 10, filterType: "all" | "expense" | "income" = "all") {
+    return this.reporting.getRecentTransactions(spreadsheetId, limit, filterType);
   }
 
   getTransactionDetail = async (spreadsheetId: string, transactionId: string) => {

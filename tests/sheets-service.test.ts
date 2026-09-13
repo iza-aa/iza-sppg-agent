@@ -536,5 +536,86 @@ describe("Google Sheets 5-Tab Engine", () => {
       expect(preview.warningMessage).toContain("Data Yatim");
     });
   });
+
+  describe("Transaction History Sub-Menu & Filtering (Pendapatan vs Pengeluaran)", () => {
+    it("should build proper transaction history picker keyboard with income, expense, and main menu buttons", async () => {
+      const { buildTransactionHistoryPickerKeyboard } = await import("../src/core/telegram/keyboards.js");
+      const kb = buildTransactionHistoryPickerKeyboard();
+      const buttons = kb.inline_keyboard.flat().map((b: any) => b.text);
+
+      expect(buttons).toContain("📈 Riwayat Pendapatan");
+      expect(buttons).toContain("📉 Riwayat Pengeluaran");
+      expect(buttons).toContain("🏠 Menu Utama");
+    });
+
+    it("should filter only expenses when filterType is expense in getRecentTransactions", async () => {
+      const { ReportingService } = await import("../src/core/google/services/reporting.service.js");
+      const { SHEET_NAMES } = await import("../src/core/google/sheets-recipes.js");
+
+      const mockClient = {
+        spreadsheets: {
+          values: {
+            get: vi.fn().mockImplementation(async ({ range }: { range: string }) => {
+              if (range.includes(SHEET_NAMES.PENGELUARAN_SUPPLIER)) {
+                return {
+                  data: {
+                    values: [
+                      ["No Ref", "ID Transaksi", "ID Expense", "2026-09-02", "Toko Berkah", "Ayam", "350000", "350000", "http://drive", "", "", "Detail"],
+                    ],
+                  },
+                };
+              }
+              if (range.includes(SHEET_NAMES.PAGU_RINGKASAN)) {
+                return {
+                  data: {
+                    values: [
+                      ["PO-01", "SPPG0226-II001", "2026-09-01", "Menu A", "Unit 2", "7500000"],
+                    ],
+                  },
+                };
+              }
+              return { data: { values: [] } };
+            }),
+          },
+        },
+      };
+
+      const mockProvider = {
+        getClient: vi.fn().mockResolvedValue(mockClient),
+      } as any;
+
+      const reportingService = new ReportingService(mockProvider, async () => {});
+
+      // 1. Filter expense only
+      const expenseOnly = await reportingService.getRecentTransactions("fake-sheet-id", 8, "expense");
+      expect(expenseOnly.length).toBe(1);
+      expect(expenseOnly[0].type).toBe("expense");
+      expect(expenseOnly.every((t) => t.type === "expense")).toBe(true);
+
+      // 2. Filter income only
+      const incomeOnly = await reportingService.getRecentTransactions("fake-sheet-id", 8, "income");
+      expect(incomeOnly.length).toBe(1);
+      expect(incomeOnly[0].type).toBe("income");
+      expect(incomeOnly.every((t) => t.type === "income")).toBe(true);
+    });
+
+    it("should render proper card headers for filtered transaction list", async () => {
+      const { renderTransactionListCard } = await import("../src/core/telegram/formatter.js");
+
+      const mockExpense = [
+        { id: "EI001", date: "2026-09-02", type: "expense" as const, title: "Toko Berkah", amount: 350000, detail: "Ayam" },
+      ];
+      const expenseCard = renderTransactionListCard(mockExpense, "expense");
+      expect(expenseCard).toContain("RIWAYAT PENGELUARAN (BELANJA SUPPLIER)");
+      expect(expenseCard).toContain("Pengeluaran");
+
+      const mockIncome = [
+        { id: "II001", date: "2026-09-01", type: "income" as const, title: "Nota SPPG PO-01", amount: 7500000, detail: "Pagu" },
+      ];
+      const incomeCard = renderTransactionListCard(mockIncome, "income");
+      expect(incomeCard).toContain("RIWAYAT PENDAPATAN (PAGU PENERIMAAN)");
+      expect(incomeCard).toContain("Pendapatan");
+    });
+  });
 });
 

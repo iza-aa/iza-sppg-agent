@@ -198,11 +198,12 @@ export class ReportingService {
   }
 
   /**
-   * Retrieves recent transactions (expenses and income) from Google Sheets
+   * Retrieves recent transactions (expenses, income, or both) from Google Sheets
    */
   async getRecentTransactions(
     spreadsheetId: string,
-    limit = 8
+    limit = 8,
+    filterType: "all" | "expense" | "income" = "all"
   ): Promise<
     Array<{
       id: string;
@@ -228,105 +229,109 @@ export class ReportingService {
     }> = [];
 
     try {
-      // 1. Fetch expenses from 04_PENGELUARAN_SUPPLIER or fallback 03_PENGELUARAN_SUPPLIER
-      let expRes = await client.spreadsheets.values
-        .get({
-          spreadsheetId,
-          range: `'${SHEET_NAMES.PENGELUARAN_SUPPLIER}'!A2:L`,
-        })
-        .catch(() => ({ data: { values: null } }));
-
-      let isNewExpenseTab = true;
-      if (!expRes.data.values || expRes.data.values.length === 0) {
-        isNewExpenseTab = false;
-        expRes = await client.spreadsheets.values
+      // 1. Fetch expenses from 04_PENGELUARAN_SUPPLIER if filter allows
+      if (filterType !== "income") {
+        let expRes = await client.spreadsheets.values
           .get({
             spreadsheetId,
-            range: "'03_PENGELUARAN_SUPPLIER'!A2:L",
+            range: `'${SHEET_NAMES.PENGELUARAN_SUPPLIER}'!A2:L`,
           })
           .catch(() => ({ data: { values: null } }));
-      }
 
-      const expRows = expRes.data?.values || [];
-      for (let i = expRows.length - 1; i >= 0 && results.length < limit; i--) {
-        const row = expRows[i];
-        if (row && (row[0] || row[1])) {
-          const is12Col = isNewExpenseTab && row.length >= 12;
-          const isMazhabEksekutif = is12Col && /^\d{4}-\d{2}-\d{2}$/.test(String(row[3] || "").trim());
-          const isModern = isNewExpenseTab && (String(row[2] || "").startsWith("SPPG") || String(row[1] || "").startsWith("SPPG"));
-          const trxId = is12Col ? String(row[2]) : (isModern ? String(row[1]) : String(row[0]));
-          const trxDate = isMazhabEksekutif
-            ? String(row[3] || "-")
-            : (is12Col ? String(row[4] || "-") : (isModern ? String(row[3] || row[2] || "-") : String(row[1] || "-")));
-          const amount = isMazhabEksekutif
-            ? parseCurrencyNumber(row[6])
-            : (is12Col
-                ? parseCurrencyNumber(row[7])
-                : (isNewExpenseTab ? (parseCurrencyNumber(row[6]) || parseCurrencyNumber(row[5])) : parseCurrencyNumber(row[8])));
-          results.push({
-            id: trxId,
-            date: trxDate,
-            type: "expense",
-            title: isMazhabEksekutif
-              ? String(row[4] || "Supplier")
-              : (is12Col ? String(row[5] || "Supplier") : (isModern ? String(row[4] || "Supplier") : String(row[3] || "Supplier"))),
-            amount,
-            detail: is12Col ? String(row[11] || row[0] || "-") : (isNewExpenseTab ? String(row[10] || row[0] || "-") : String(row[4] || "-")),
-            link: isMazhabEksekutif
-              ? String(row[8] || "")
-              : (is12Col ? String(row[9] || "") : (isNewExpenseTab ? String(row[8] || "") : String(row[9] || ""))),
-          });
+        let isNewExpenseTab = true;
+        if (!expRes.data.values || expRes.data.values.length === 0) {
+          isNewExpenseTab = false;
+          expRes = await client.spreadsheets.values
+            .get({
+              spreadsheetId,
+              range: "'03_PENGELUARAN_SUPPLIER'!A2:L",
+            })
+            .catch(() => ({ data: { values: null } }));
+        }
+
+        const expRows = expRes.data?.values || [];
+        for (let i = expRows.length - 1; i >= 0 && results.length < limit * 2; i--) {
+          const row = expRows[i];
+          if (row && (row[0] || row[1])) {
+            const is12Col = isNewExpenseTab && row.length >= 12;
+            const isMazhabEksekutif = is12Col && /^\d{4}-\d{2}-\d{2}$/.test(String(row[3] || "").trim());
+            const isModern = isNewExpenseTab && (String(row[2] || "").startsWith("SPPG") || String(row[1] || "").startsWith("SPPG"));
+            const trxId = is12Col ? String(row[2]) : (isModern ? String(row[1]) : String(row[0]));
+            const trxDate = isMazhabEksekutif
+              ? String(row[3] || "-")
+              : (is12Col ? String(row[4] || "-") : (isModern ? String(row[3] || row[2] || "-") : String(row[1] || "-")));
+            const amount = isMazhabEksekutif
+              ? parseCurrencyNumber(row[6])
+              : (is12Col
+                  ? parseCurrencyNumber(row[7])
+                  : (isNewExpenseTab ? (parseCurrencyNumber(row[6]) || parseCurrencyNumber(row[5])) : parseCurrencyNumber(row[8])));
+            results.push({
+              id: trxId,
+              date: trxDate,
+              type: "expense",
+              title: isMazhabEksekutif
+                ? String(row[4] || "Supplier")
+                : (is12Col ? String(row[5] || "Supplier") : (isModern ? String(row[4] || "Supplier") : String(row[3] || "Supplier"))),
+              amount,
+              detail: is12Col ? String(row[11] || row[0] || "-") : (isNewExpenseTab ? String(row[10] || row[0] || "-") : String(row[4] || "-")),
+              link: isMazhabEksekutif
+                ? String(row[8] || "")
+                : (is12Col ? String(row[9] || "") : (isNewExpenseTab ? String(row[8] || "") : String(row[9] || ""))),
+            });
+          }
         }
       }
 
-      // 2. Fetch orders from 02_PAGU_RINGKASAN or fallback 02_PENDAPATAN_SPPG
-      let orderRes = await client.spreadsheets.values
-        .get({
-          spreadsheetId,
-          range: `'${SHEET_NAMES.PAGU_RINGKASAN}'!A2:K`,
-        })
-        .catch(() => ({ data: { values: null } }));
-
-      let isNewOrderTab = true;
-      if (!orderRes.data.values || orderRes.data.values.length === 0) {
-        isNewOrderTab = false;
-        orderRes = await client.spreadsheets.values
+      // 2. Fetch orders from 02_PAGU_RINGKASAN if filter allows
+      if (filterType !== "expense") {
+        let orderRes = await client.spreadsheets.values
           .get({
             spreadsheetId,
-            range: "'02_PENDAPATAN_SPPG'!A2:L",
+            range: `'${SHEET_NAMES.PAGU_RINGKASAN}'!A2:K`,
           })
           .catch(() => ({ data: { values: null } }));
-      }
 
-      const orderRows = orderRes.data?.values || [];
-      for (let i = orderRows.length - 1; i >= 0 && results.length < limit * 2; i--) {
-        const row = orderRows[i];
-        if (row && (row[0] || row[1])) {
-          const isModern = isNewOrderTab && String(row[1] || "").startsWith("SPPG");
-          const trxId = isModern ? String(row[1]) : String(row[0]);
-          const isMazhabEksekutifOrd = isNewOrderTab && /^\d{4}-\d{2}-\d{2}$/.test(String(row[2] || "").trim());
-          const trxDate = isMazhabEksekutifOrd
-            ? String(row[2] || "-")
-            : (isModern ? String(row[3] || row[2] || "-") : String(row[1] || "-"));
-          const noSppg = isModern ? String(row[0] || "") : String(row[2] || "");
-          const amount = isMazhabEksekutifOrd
-            ? parseCurrencyNumber(row[5])
-            : (isNewOrderTab
-                ? (parseCurrencyNumber(row[6]) || parseCurrencyNumber(row[5]))
-                : parseCurrencyNumber(row[8]));
-          results.push({
-            id: trxId,
-            date: trxDate,
-            type: "income",
-            title: isNewOrderTab ? `Nota SPPG ${noSppg}` : `Nota SPPG ${row[3] || ""}`,
-            amount,
-            detail: isMazhabEksekutifOrd
-              ? String(row[9] || "Pagu Anggaran")
-              : (isNewOrderTab ? String(row[9] || row[4] || "Pagu Anggaran") : String(row[4] || "-")),
-            link: isMazhabEksekutifOrd
-              ? String(row[6] || "")
-              : (isNewOrderTab ? String(row[7] || row[6] || "") : undefined),
-          });
+        let isNewOrderTab = true;
+        if (!orderRes.data.values || orderRes.data.values.length === 0) {
+          isNewOrderTab = false;
+          orderRes = await client.spreadsheets.values
+            .get({
+              spreadsheetId,
+              range: "'02_PENDAPATAN_SPPG'!A2:L",
+            })
+            .catch(() => ({ data: { values: null } }));
+        }
+
+        const orderRows = orderRes.data?.values || [];
+        for (let i = orderRows.length - 1; i >= 0 && results.length < limit * 2; i--) {
+          const row = orderRows[i];
+          if (row && (row[0] || row[1])) {
+            const isModern = isNewOrderTab && String(row[1] || "").startsWith("SPPG");
+            const trxId = isModern ? String(row[1]) : String(row[0]);
+            const isMazhabEksekutifOrd = isNewOrderTab && /^\d{4}-\d{2}-\d{2}$/.test(String(row[2] || "").trim());
+            const trxDate = isMazhabEksekutifOrd
+              ? String(row[2] || "-")
+              : (isModern ? String(row[3] || row[2] || "-") : String(row[1] || "-"));
+            const noSppg = isModern ? String(row[0] || "") : String(row[2] || "");
+            const amount = isMazhabEksekutifOrd
+              ? parseCurrencyNumber(row[5])
+              : (isNewOrderTab
+                  ? (parseCurrencyNumber(row[6]) || parseCurrencyNumber(row[5]))
+                  : parseCurrencyNumber(row[8]));
+            results.push({
+              id: trxId,
+              date: trxDate,
+              type: "income",
+              title: isNewOrderTab ? `Nota SPPG ${noSppg}` : `Nota SPPG ${row[3] || ""}`,
+              amount,
+              detail: isMazhabEksekutifOrd
+                ? String(row[9] || "Pagu Anggaran")
+                : (isNewOrderTab ? String(row[9] || row[4] || "Pagu Anggaran") : String(row[4] || "-")),
+              link: isMazhabEksekutifOrd
+                ? String(row[6] || "")
+                : (isNewOrderTab ? String(row[7] || row[6] || "") : undefined),
+            });
+          }
         }
       }
 
@@ -334,7 +339,7 @@ export class ReportingService {
       results.sort((a, b) => b.date.localeCompare(a.date));
       return results.slice(0, limit);
     } catch (err) {
-      logger.error({ err, spreadsheetId }, "Failed to get recent transactions from sheets");
+      logger.error({ err, spreadsheetId, filterType }, "Failed to get recent transactions from sheets");
       return [];
     }
   }
