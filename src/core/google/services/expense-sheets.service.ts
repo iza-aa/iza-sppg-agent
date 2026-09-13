@@ -2228,6 +2228,15 @@ export class ExpenseSheetsService {
     let maxNoUrut = 0;
     const existingPOItems: Array<{ name: string; supplier: string }> = [];
 
+    const normalizeFoodItem = (s: string): string =>
+      String(s || "")
+        .toLowerCase()
+        .replace(/\bsaos\b/g, "saus")
+        .replace(/\bcabe\b/g, "cabai")
+        .replace(/\btelor\b/g, "telur")
+        .replace(/bombay/g, "bombai")
+        .replace(/[^a-z0-9]/g, "");
+
     for (let i = 0; i < tab03Rows.length; i++) {
       const row = tab03Rows[i];
       const rowOrderNo = String(row[0] || "").trim();
@@ -2242,7 +2251,7 @@ export class ExpenseSheetsService {
           maxNoUrut = noUrut;
         }
         existingPOItems.push({
-          name: String(row[3] || "").trim().toLowerCase(),
+          name: String(row[3] || "").trim(),
           supplier: String(row[4] || "").trim(),
         });
       }
@@ -2250,9 +2259,11 @@ export class ExpenseSheetsService {
 
     for (const it of expenseItems) {
       const cleanItName = it.itemName.trim().toLowerCase();
-      const alreadyInTab03 = existingPOItems.some(
-        (ex) => ex.name === cleanItName || cleanItName.includes(ex.name) || ex.name.includes(cleanItName)
-      );
+      const normItName = normalizeFoodItem(it.itemName);
+      const alreadyInTab03 = existingPOItems.some((ex) => {
+        const normEx = normalizeFoodItem(ex.name);
+        return normEx === normItName || (normEx.length >= 4 && normItName.length >= 4 && (normEx.includes(normItName) || normItName.includes(normEx)));
+      });
 
       if (!alreadyInTab03) {
         maxNoUrut += 1;
