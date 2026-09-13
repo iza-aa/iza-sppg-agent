@@ -982,13 +982,12 @@ export class ExpenseSheetsService {
           item.price,
           itemTotal,
           `=IF(L${targetRow}=""; ""; J${targetRow}-L${targetRow})`,
-          `=IF(OR(J${targetRow}=""; L${targetRow}=""); ""; IFERROR(M${targetRow}/J${targetRow}; 0))`,
           "🔴 NON-PAGU",
         ];
 
         await client.spreadsheets.values.update({
           spreadsheetId,
-          range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A${targetRow}:O${targetRow}`,
+          range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A${targetRow}:N${targetRow}`,
           valueInputOption: "USER_ENTERED",
           requestBody: { values: [newRow] },
         });
@@ -1008,7 +1007,6 @@ export class ExpenseSheetsService {
           item.price,
           itemTotal,
           `=IF(L${targetRow}=""; ""; J${targetRow}-L${targetRow})`,
-          `=IF(OR(J${targetRow}=""; L${targetRow}=""); ""; IFERROR(M${targetRow}/J${targetRow}; 0))`,
           "🔴 NON-PAGU",
         ];
         await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PERBANDINGAN_MARGIN, [newRow]);
@@ -1030,7 +1028,7 @@ export class ExpenseSheetsService {
         const actualRow = rIdx + 1; // 1-based
         const targetQty = parseCurrencyNumber(isNewLayout ? row[6] : row[4]);
         const prevRealisasi = parseCurrencyNumber(isNewLayout ? row[11] : row[9]);
-        const statusStr = String((isNewLayout ? row[14] : row[12]) || "").trim();
+        const statusStr = String((isNewLayout ? row[13] : row[12]) || "").trim();
         const invoicePriceCol = isNewLayout ? row[10] : row[8];
 
         let prevFulfilledQty = 0;
@@ -1061,7 +1059,7 @@ export class ExpenseSheetsService {
               values: [[item.price, newAccumulatedRealisasi]],
             });
             batchUpdates.push({
-              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!O${actualRow}`,
+              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!N${actualRow}`,
               values: [[statusText]],
             });
           } else {
@@ -1071,7 +1069,7 @@ export class ExpenseSheetsService {
               values: [[item.price, newAccumulatedRealisasi]],
             });
             batchUpdates.push({
-              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!O${actualRow}`,
+              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!N${actualRow}`,
               values: [[formulaStatus]],
             });
           }
@@ -1823,7 +1821,7 @@ export class ExpenseSheetsService {
         const rowRef = String(row[0] || "").trim();
         const isNew = row.length >= 14 || (row[1] && String(row[1]).startsWith("SPPG"));
         const rowName = String((isNew ? row[5] : row[3]) || "").toLowerCase().trim();
-        const rowStatus = String((isNew ? row[14] : row[12]) || "").trim();
+        const rowStatus = String((isNew ? row[13] : row[12]) || "").trim();
 
         const isRefMatch = cleanRefNo === "-" || !rowRef || rowRef.toLowerCase() === cleanRefNo.toLowerCase();
         const isNameMatch =
@@ -1870,7 +1868,7 @@ export class ExpenseSheetsService {
         const actualRow = rIdx + 1; // 1-based
         const targetQty = parseCurrencyNumber(isNewLayout ? row[6] : row[4]);
         const prevRealisasi = parseCurrencyNumber(isNewLayout ? row[11] : row[9]);
-        const statusStr = String((isNewLayout ? row[14] : row[12]) || "").trim();
+        const statusStr = String((isNewLayout ? row[13] : row[12]) || "").trim();
         const invoicePriceCol = isNewLayout ? row[10] : row[8];
 
         let prevFulfilledQty = 0;
@@ -1897,7 +1895,7 @@ export class ExpenseSheetsService {
               values: [["", ""]],
             });
             batchUpdates.push({
-              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!O${actualRow}`,
+              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!N${actualRow}`,
               values: [["🟡 MENUNGGU INVOICE"]],
             });
           } else if (targetQty > 0 && newAccumulatedQty < targetQty) {
@@ -1907,7 +1905,7 @@ export class ExpenseSheetsService {
               values: [[deletedItem.price, newAccumulatedRealisasi]],
             });
             batchUpdates.push({
-              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!O${actualRow}`,
+              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!N${actualRow}`,
               values: [[statusText]],
             });
           } else {
@@ -1917,7 +1915,7 @@ export class ExpenseSheetsService {
               values: [[deletedItem.price, newAccumulatedRealisasi]],
             });
             batchUpdates.push({
-              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!O${actualRow}`,
+              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!N${actualRow}`,
               values: [[formulaStatus]],
             });
           }
@@ -2489,7 +2487,7 @@ export class ExpenseSheetsService {
         const invoicePriceCol = isNew ? rowInTab06?.[10] : rowInTab06?.[8];
 
         // Check previous fulfilled qty
-        const statusStr = rowInTab06 ? String((isNew ? rowInTab06[14] : rowInTab06[12]) || "").trim() : "";
+        const statusStr = rowInTab06 ? String((isNew ? rowInTab06[13] : rowInTab06[12]) || "").trim() : "";
         let prevFulfilledQty = 0;
         const belumMatch = statusStr.match(/BELUM LENGKAP \((\d+(?:\.\d+)?)\//i);
         if (belumMatch) {
@@ -2519,7 +2517,7 @@ export class ExpenseSheetsService {
           });
 
           tab06BatchUpdates.push({
-            range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!I${r}:O${r}`,
+            range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!I${r}:N${r}`,
             values: [
               [
                 finalPaguPrice,
@@ -2527,7 +2525,6 @@ export class ExpenseSheetsService {
                 it.price,
                 newAccumulatedRealisasi,
                 `=IF(L${r}=""; ""; J${r}-L${r})`,
-                `=IF(OR(J${r}=""; L${r}=""); ""; IFERROR(M${r}/J${r}; 0))`,
                 statusFormulaOrText,
               ],
             ],
@@ -2576,7 +2573,7 @@ export class ExpenseSheetsService {
       } else if (standaloneRowIdx > 0) {
         const r = standaloneRowIdx;
         tab06BatchUpdates.push({
-          range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A${r}:O${r}`,
+          range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!A${r}:N${r}`,
           values: [
             [
               orderNo,
@@ -2592,7 +2589,6 @@ export class ExpenseSheetsService {
               it.price,
               it.total,
               `=IF(L${r}=""; ""; J${r}-L${r})`,
-              `=IF(OR(J${r}=""; L${r}=""); ""; IFERROR(M${r}/J${r}; 0))`,
               `=IF(L${r}=""; "🟡 MENUNGGU INVOICE"; IF(M${r}>0; "🟢 HEMAT"; IF(M${r}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`,
             ],
           ],
@@ -2614,7 +2610,6 @@ export class ExpenseSheetsService {
           it.price,
           it.total,
           `=IF(L${targetRow}=""; ""; J${targetRow}-L${targetRow})`,
-          `=IF(OR(J${targetRow}=""; L${targetRow}=""); ""; IFERROR(M${targetRow}/J${targetRow}; 0))`,
           `=IF(L${targetRow}=""; "🟡 MENUNGGU INVOICE"; IF(M${targetRow}>0; "🟢 HEMAT"; IF(M${targetRow}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`,
         ];
         await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PERBANDINGAN_MARGIN, [newRow]);

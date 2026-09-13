@@ -994,13 +994,13 @@ export class CascadeDeleteService {
                   if (targetQty > 0 && qty < targetQty) {
                     const statusText = `🟠 BELUM LENGKAP (${qty}/${targetQty} ${unit})`;
                     batchUpdates.push({
-                      range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!O${rekapRowNum}`,
+                      range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!N${rekapRowNum}`,
                       values: [[statusText]],
                     });
                   } else {
                     const formulaStatus = `=IF(L${rekapRowNum}=""; "🟡 MENUNGGU INVOICE"; IF(M${rekapRowNum}>0; "🟢 HEMAT"; IF(M${rekapRowNum}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`;
                     batchUpdates.push({
-                      range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!O${rekapRowNum}`,
+                      range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!N${rekapRowNum}`,
                       values: [[formulaStatus]],
                     });
                   }

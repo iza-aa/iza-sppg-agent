@@ -212,8 +212,7 @@ export class PaguSheetsService {
         "",                                                       // K: Harga Invoice
         "",                                                       // L: Total Realisasi
         `=IF(L${r}=""; ""; J${r}-L${r})`,                         // M: Margin Bersih (Rp)
-        `=IF(OR(J${r}=""; L${r}=""); ""; IFERROR(M${r}/J${r}; 0))`, // N: % Margin
-        `=IF(L${r}=""; "🟡 MENUNGGU INVOICE"; IF(M${r}>0; "🟢 HEMAT"; IF(M${r}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`, // O: Status
+        `=IF(L${r}=""; "🟡 MENUNGGU INVOICE"; IF(M${r}>0; "🟢 HEMAT"; IF(M${r}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`, // N: Status
       ];
     });
 
@@ -971,7 +970,6 @@ export class PaguSheetsService {
                 "",
                 "",
                 `=IF(L${targetRekapRowIdx}=""; ""; J${targetRekapRowIdx}-L${targetRekapRowIdx})`,
-                `=IF(OR(J${targetRekapRowIdx}=""; L${targetRekapRowIdx}=""); ""; IFERROR(M${targetRekapRowIdx}/J${targetRekapRowIdx}; 0))`,
                 `=IF(L${targetRekapRowIdx}=""; "🟡 MENUNGGU INVOICE"; IF(M${targetRekapRowIdx}>0; "🟢 HEMAT"; IF(M${targetRekapRowIdx}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`,
               ],
             ],
@@ -994,7 +992,6 @@ export class PaguSheetsService {
           "",
           "",
           `=IF(L${targetRekapRowIdx}=""; ""; J${targetRekapRowIdx}-L${targetRekapRowIdx})`,
-          `=IF(OR(J${targetRekapRowIdx}=""; L${targetRekapRowIdx}=""); ""; IFERROR(M${targetRekapRowIdx}/J${targetRekapRowIdx}; 0))`,
           `=IF(L${targetRekapRowIdx}=""; "🟡 MENUNGGU INVOICE"; IF(M${targetRekapRowIdx}>0; "🟢 HEMAT"; IF(M${targetRekapRowIdx}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`,
         ];
         await this.appendRowsSafely(spreadsheetId, SHEET_NAMES.PERBANDINGAN_MARGIN, [rekapRow]);

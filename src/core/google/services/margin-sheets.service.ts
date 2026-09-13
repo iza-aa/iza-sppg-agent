@@ -232,7 +232,7 @@ export class MarginSheetsService {
                 : `=IF(L${rekapRowNum}=""; "🟡 MENUNGGU INVOICE"; IF(M${rekapRowNum}>0; "🟢 HEMAT"; IF(M${rekapRowNum}=0; "🟢 PAS"; "🔴 OVER BUDGET")))`;
             await client.spreadsheets.values.update({
               spreadsheetId,
-              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!O${rekapRowNum}`,
+              range: `'${SHEET_NAMES.PERBANDINGAN_MARGIN}'!N${rekapRowNum}`,
               valueInputOption: "USER_ENTERED",
               requestBody: { values: [[statusFormula]] },
             });
