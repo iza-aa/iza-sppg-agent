@@ -161,7 +161,7 @@ export async function handleIncomingImage(bCtx: BotContext, ctx: Context, fileId
       refId: draftId,
       status: "PENDING",
     });
-  });
+  }, "📸 <i>Foto nota diterima! Sedang membaca rincian nota...</i>");
 }
 
 export function registerMediaHandlers(bCtx: BotContext) {
@@ -265,7 +265,7 @@ export function registerMediaHandlers(bCtx: BotContext) {
           { parse_mode: "HTML" }
         );
       }
-    });
+    }, "🎙️ <i>Pesan suara diterima! Sedang mendengarkan & mencatat rincian belanja...</i>");
   });
 
   // Document Handler (Images, Spreadsheets, PDFs)
@@ -382,7 +382,7 @@ export function registerMediaHandlers(bCtx: BotContext) {
           logger.error({ parseErr }, "Spreadsheet parsing error");
           await ctx.reply(`❌ Gagal membaca file spreadsheet: ${escapeHtml(parseErr?.message || parseErr)}`, { parse_mode: "HTML" });
         }
-      });
+      }, "📊 <i>Dokumen Excel diterima! Sedang memproses data transaksi...</i>");
       return;
     }
 
@@ -471,7 +471,7 @@ export function registerMediaHandlers(bCtx: BotContext) {
           refId: draftId,
           status: "PENDING",
         });
-      });
+      }, "📄 <i>Dokumen PDF diterima! Sedang membaca berkas transaksi...</i>");
       return;
     }
 

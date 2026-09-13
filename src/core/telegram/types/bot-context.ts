@@ -222,7 +222,7 @@ export interface BotContext {
   trackKeyboardMessage: (chatId: number, msgId: number) => void;
   clearAllActiveKeyboards: (chatId?: number, preserveMsgIds?: number[]) => Promise<void>;
   getState: (userId: number) => UserInteractionState;
-  withTyping: <T>(ctx: Context, action: () => Promise<T>) => Promise<T>;
+  withTyping: <T>(ctx: Context, action: () => Promise<T>, statusText?: string) => Promise<T>;
   isCallerMember: (userId?: number) => Promise<boolean>;
   notifyMemberRestricted: (ctx: Context, featureDesc: string) => Promise<void>;
   safeReplyHtml: (ctx: Context, text: string, reply_markup?: any) => Promise<any>;

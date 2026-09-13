@@ -40,6 +40,34 @@ export {
 };
 
 /**
+ * Helper typing action keep-alive with optional instant status chat bubble.
+ * If statusText is provided, sends a quick chat bubble immediately and
+ * automatically deletes it in finally when action completes or fails.
+ */
+export async function withTyping<T>(
+  ctx: Context,
+  action: () => Promise<T>,
+  statusText?: string
+): Promise<T> {
+  let statusMsg: any = null;
+  if (statusText && ctx.chat?.id) {
+    statusMsg = await ctx.reply(statusText, { parse_mode: "HTML" }).catch(() => null);
+  }
+  await ctx.replyWithChatAction("typing").catch(() => {});
+  const interval = setInterval(() => {
+    ctx.replyWithChatAction("typing").catch(() => {});
+  }, 4000);
+  try {
+    return await action();
+  } finally {
+    clearInterval(interval);
+    if (statusMsg?.message_id && ctx.chat?.id) {
+      await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
+    }
+  }
+}
+
+/**
  * Factory creating and configuring the Grammy Bot instance for an SPPG Unit.
  * Assembles all domain handlers and global middlewares cleanly.
  */
@@ -137,19 +165,6 @@ export function createSppgBot(unitConfig: SPPGUnitConfig): Bot<Context> {
       userStates.set(userId, {});
     }
     return userStates.get(userId)!;
-  }
-
-  // Helper typing action keep-alive
-  async function withTyping<T>(ctx: Context, action: () => Promise<T>): Promise<T> {
-    await ctx.replyWithChatAction("typing").catch(() => {});
-    const interval = setInterval(() => {
-      ctx.replyWithChatAction("typing").catch(() => {});
-    }, 4000);
-    try {
-      return await action();
-    } finally {
-      clearInterval(interval);
-    }
   }
 
   // RBAC helper for Member role

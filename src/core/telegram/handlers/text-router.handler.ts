@@ -2052,7 +2052,7 @@ export function registerTextRouterHandler(bCtx: BotContext) {
             break;
           }
         }
-      });
+      }, "⏳ <i>Pesan diterima! Sedang diproses...</i>");
     } catch (fatalErr: any) {
       logger.error({ fatalErr }, "Fatal error during text message processing, serving static fallback");
       const user = await bCtx.userRepo.getUser(userId);
