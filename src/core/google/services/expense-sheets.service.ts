@@ -2425,25 +2425,56 @@ export class ExpenseSheetsService {
         .replace(/bombay/g, "bombai")
         .replace(/[^a-z0-9]/g, "");
 
+    const matchedTab06Rows = new Set<number>();
+
     for (const it of expenseItems) {
       const cleanItem = normalizeItem(it.itemName);
       let matchingRowIdx = -1;
       let standaloneRowIdx = -1;
 
+      // Pass 1: Prioritize EXACT match within the target orderNo on unassigned rows
       for (let r = 0; r < tab06Rows.length; r++) {
+        const rowNum = r + 2;
+        if (matchedTab06Rows.has(rowNum)) continue;
+
         const row = tab06Rows[r];
         const isNew = row.length >= 14 || (row[1] && String(row[1]).startsWith("SPPG"));
         const rowRef = String(row[0] || "").trim();
         const rowItem = normalizeItem(String((isNew ? row[5] : row[3]) || ""));
-        const isItemMatch = rowItem.includes(cleanItem) || cleanItem.includes(rowItem);
 
-        if (!isItemMatch) continue;
-
-        if (rowRef.toLowerCase() === orderNo.toLowerCase()) {
-          matchingRowIdx = r + 2;
-        } else if (rowRef === "-" || rowRef === "") {
-          standaloneRowIdx = r + 2;
+        if (rowRef.toLowerCase() === orderNo.toLowerCase() && rowItem === cleanItem) {
+          matchingRowIdx = rowNum;
+          break;
         }
+      }
+
+      // Pass 2: Fallback to fuzzy substring match on unassigned rows
+      if (matchingRowIdx < 0) {
+        for (let r = 0; r < tab06Rows.length; r++) {
+          const rowNum = r + 2;
+          if (matchedTab06Rows.has(rowNum)) continue;
+
+          const row = tab06Rows[r];
+          const isNew = row.length >= 14 || (row[1] && String(row[1]).startsWith("SPPG"));
+          const rowRef = String(row[0] || "").trim();
+          const rowItem = normalizeItem(String((isNew ? row[5] : row[3]) || ""));
+          const isItemMatch = rowItem.includes(cleanItem) || cleanItem.includes(rowItem);
+
+          if (!isItemMatch) continue;
+
+          if (rowRef.toLowerCase() === orderNo.toLowerCase()) {
+            matchingRowIdx = rowNum;
+            break;
+          } else if (rowRef === "-" || rowRef === "") {
+            if (standaloneRowIdx < 0) standaloneRowIdx = rowNum;
+          }
+        }
+      }
+
+      if (matchingRowIdx > 0) {
+        matchedTab06Rows.add(matchingRowIdx);
+      } else if (standaloneRowIdx > 0) {
+        matchedTab06Rows.add(standaloneRowIdx);
       }
 
       if (matchingRowIdx > 0) {
@@ -2467,9 +2498,12 @@ export class ExpenseSheetsService {
           prevFulfilledQty = Math.round(prevRealisasi / parseCurrencyNumber(invoicePriceCol));
         }
 
+        const rowExistingExpenseId = rowInTab06 ? String(rowInTab06[2] || "").trim() : "";
+        const isSameExpenseRelink = rowExistingExpenseId === cleanExpenseId;
+
         const finalPaguPrice = existingPaguPrice > 0 ? existingPaguPrice : it.price;
-        const newAccumulatedRealisasi = existingPaguPrice > 0 ? (prevRealisasi + it.total) : it.total;
-        const newAccumulatedQty = existingPaguPrice > 0 ? (prevFulfilledQty + (it.qty || 1)) : (it.qty || 1);
+        const newAccumulatedRealisasi = (!isSameExpenseRelink && existingPaguPrice > 0) ? (prevRealisasi + it.total) : it.total;
+        const newAccumulatedQty = (!isSameExpenseRelink && existingPaguPrice > 0) ? (prevFulfilledQty + (it.qty || 1)) : (it.qty || 1);
 
         if (isNew) {
           let statusFormulaOrText: string;
