@@ -498,10 +498,24 @@ export class ExpenseSheetsService {
 
     // 3. Automated Linking and Allocation to Pagu
     if (receipt.sppg_ref_no && receipt.sppg_ref_no !== "-") {
-      try {
-        await this.linkExpenseToPagu(spreadsheetId, expenseId!, receipt.sppg_ref_no, picName || "Admin");
-      } catch (linkErr: any) {
-        logger.warn({ err: linkErr?.message || linkErr, expenseId, sppgRef: receipt.sppg_ref_no }, "Error during auto-linking expense to pagu");
+      let linked = false;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await this.linkExpenseToPagu(spreadsheetId, expenseId!, receipt.sppg_ref_no, picName || "Admin");
+          linked = true;
+          break;
+        } catch (linkErr: any) {
+          logger.warn(
+            { attempt, err: linkErr?.message || linkErr, expenseId, sppgRef: receipt.sppg_ref_no },
+            "Warning/error during auto-linking expense to pagu, retrying with backoff..."
+          );
+          if (attempt < 3) {
+            await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+          }
+        }
+      }
+      if (!linked) {
+        logger.error({ expenseId, sppgRef: receipt.sppg_ref_no }, "Failed to link expense to pagu after 3 attempts");
       }
     } else {
       logger.info({ expenseId }, "Expense is Belanja Tambahan (Non-Pagu, '-'). Skipping Pagu allocation.");
@@ -699,10 +713,19 @@ export class ExpenseSheetsService {
 
     // 2. Batch auto-linking and allocation to Pagu
     for (const item of linkedExpenses) {
-      try {
-        await this.linkExpenseToPagu(spreadsheetId, item.expenseId, item.sppgRefNo, picName || "Admin");
-      } catch (linkErr: any) {
-        logger.warn({ err: linkErr?.message || linkErr, expenseId: item.expenseId, sppgRefNo: item.sppgRefNo }, "Error during batch auto-linking expense to pagu");
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await this.linkExpenseToPagu(spreadsheetId, item.expenseId, item.sppgRefNo, picName || "Admin");
+          break;
+        } catch (linkErr: any) {
+          logger.warn(
+            { attempt, err: linkErr?.message || linkErr, expenseId: item.expenseId, sppgRefNo: item.sppgRefNo },
+            "Error during batch auto-linking expense to pagu, retrying..."
+          );
+          if (attempt < 3) {
+            await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+          }
+        }
       }
     }
 
@@ -2393,8 +2416,17 @@ export class ExpenseSheetsService {
     const tab06BatchUpdates: { range: string; values: any[][] }[] = [];
     const tab06RowsToDelete: number[] = [];
 
+    const normalizeItem = (s: string) =>
+      s
+        .toLowerCase()
+        .replace(/\bsaos\b/g, "saus")
+        .replace(/\bcabe\b/g, "cabai")
+        .replace(/\btelor\b/g, "telur")
+        .replace(/bombay/g, "bombai")
+        .replace(/[^a-z0-9]/g, "");
+
     for (const it of expenseItems) {
-      const cleanItem = it.itemName.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const cleanItem = normalizeItem(it.itemName);
       let matchingRowIdx = -1;
       let standaloneRowIdx = -1;
 
@@ -2402,7 +2434,7 @@ export class ExpenseSheetsService {
         const row = tab06Rows[r];
         const isNew = row.length >= 14 || (row[1] && String(row[1]).startsWith("SPPG"));
         const rowRef = String(row[0] || "").trim();
-        const rowItem = String((isNew ? row[5] : row[3]) || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const rowItem = normalizeItem(String((isNew ? row[5] : row[3]) || ""));
         const isItemMatch = rowItem.includes(cleanItem) || cleanItem.includes(rowItem);
 
         if (!isItemMatch) continue;
