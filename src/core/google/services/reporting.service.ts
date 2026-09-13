@@ -458,40 +458,87 @@ export class ReportingService {
           };
         }
       }
-    } catch (err) {
-      // continue
+    } catch (err: any) {
+      logger.warn({ err: err?.message || err, transactionId }, "Transient error reading Tab 02 in getTransactionDetail, retrying...");
+      try {
+        await new Promise((r) => setTimeout(r, 350));
+        const retryRes = await client.spreadsheets.values.get({
+          spreadsheetId,
+          range: `'${SHEET_NAMES.PAGU_RINGKASAN}'!A:J`,
+        });
+        const ordRows = retryRes.data?.values || [];
+        for (let idx = 0; idx < ordRows.length; idx++) {
+          const row = ordRows[idx];
+          const col0 = String(row?.[0] || "");
+          const col1 = String(row?.[1] || "");
+          if (matchesId(col0) || matchesId(col1)) {
+            const isModern = col1.toUpperCase().startsWith("SPPG");
+            const trxId = isModern ? (col1 || cleanId) : (col0 || cleanId);
+            const isMazhabEksekutif = /^\d{4}-\d{2}-\d{2}$/.test(String(row[2] || "").trim());
+            const trxDate = String((isMazhabEksekutif ? row[2] : (isModern ? row[3] : row[1])) || "-");
+            const itemCount = String((isMazhabEksekutif ? row[3] : row[4]) || "Pagu Anggaran");
+            const supplier = String((isMazhabEksekutif ? row[4] : row[5]) || "Badan Gizi Nasional");
+            const amount = parseCurrencyNumber(isMazhabEksekutif ? row[5] : row[6]);
+            const rawLink = String((isMazhabEksekutif ? row[6] : row[7]) || "");
+            const link = rawLink.startsWith("http") || rawLink.startsWith("=HYPERLINK") ? rawLink : "";
+            const notes = String(row[9] || "-");
+            return {
+              found: true,
+              id: trxId,
+              sheetName: SHEET_NAMES.PAGU_RINGKASAN,
+              rowIndex: idx + 1,
+              type: "income",
+              date: trxDate,
+              supplierOrUnit: supplier,
+              items: itemCount,
+              amount,
+              orderNo: col0.trim(),
+              isProtected: false,
+              link,
+              notes,
+            };
+          }
+        }
+      } catch (retryErr) {
+        logger.error({ retryErr }, "Retry reading Tab 02 also failed in getTransactionDetail");
+      }
     }
 
     // 3. Search in 03_RINCIAN_PENDAPATAN (protected child items)
-    try {
-      const rincianRes = await client.spreadsheets.values.get({
-        spreadsheetId,
-        range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A:K`,
-      });
-      const rincianRows = rincianRes.data.values || [];
-      for (let idx = 0; idx < rincianRows.length; idx++) {
-        const row = rincianRows[idx];
-        const col0 = String(row?.[0] || "");
-        const col1 = String(row?.[1] || "");
-        if (matchesId(col1) || (cleanId.length >= 4 && matchesId(col0))) {
-          return {
-            found: true,
-            id: col1 || cleanId,
-            sheetName: SHEET_NAMES.PAGU_RINCIAN,
-            rowIndex: idx + 1,
-            type: "income",
-            date: "-",
-            supplierOrUnit: String(row[4] || "Target Supplier"),
-            items: String(row[3] || "Rincian Bahan"),
-            amount: parseCurrencyNumber(row[8]),
-            orderNo: col0.trim(),
-            isProtected: true,
-            notes: `Rincian Pagu Item #${row[2] || idx + 1}`,
-          };
+    // Note: If cleanId is explicitly an income transaction ID (II...), it is a Pagu Induk ID,
+    // not an individual child ingredient. Do not treat it as a protected child item.
+    const isExplicitIncomeTrx = cleanId.startsWith("II") || cleanId.includes("-II") || cleanId.includes("_II");
+    if (!isExplicitIncomeTrx) {
+      try {
+        const rincianRes = await client.spreadsheets.values.get({
+          spreadsheetId,
+          range: `'${SHEET_NAMES.PAGU_RINCIAN}'!A:K`,
+        });
+        const rincianRows = rincianRes.data.values || [];
+        for (let idx = 0; idx < rincianRows.length; idx++) {
+          const row = rincianRows[idx];
+          const col0 = String(row?.[0] || "");
+          const col1 = String(row?.[1] || "");
+          if (matchesId(col1) || (cleanId.length >= 4 && matchesId(col0))) {
+            return {
+              found: true,
+              id: col1 || cleanId,
+              sheetName: SHEET_NAMES.PAGU_RINCIAN,
+              rowIndex: idx + 1,
+              type: "income",
+              date: "-",
+              supplierOrUnit: String(row[4] || "Target Supplier"),
+              items: String(row[3] || "Rincian Bahan"),
+              amount: parseCurrencyNumber(row[8]),
+              orderNo: col0.trim(),
+              isProtected: true,
+              notes: `Rincian Pagu Item #${row[2] || idx + 1}`,
+            };
+          }
         }
+      } catch (err) {
+        // continue
       }
-    } catch (err) {
-      // continue
     }
 
     // 4. Search in 05_RINCIAN_PENGELUARAN (protected child items for expenses)

@@ -232,7 +232,12 @@ export function registerTransactionHandlers(bCtx: BotContext) {
       message: string;
     }> = [];
 
-    for (const item of batchItems) {
+    for (let idx = 0; idx < batchItems.length; idx++) {
+      const item = batchItems[idx];
+      if (idx > 0) {
+        // Safe throttle to prevent Google Sheets 429 quota exhaustion and read-after-write desync
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
       const res = await googleSheetsService.deleteTransactionRow(
         bCtx.unitConfig.spreadsheetId,
         item.transactionId

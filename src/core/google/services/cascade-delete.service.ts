@@ -1,7 +1,7 @@
 import { sheets_v4 } from "googleapis";
 import { env } from "../../../config/env.js";
 import { logger } from "../../utils/logger.js";
-import { SHEET_NAMES } from "../recipes/index.js";
+import { SHEET_NAMES, SHEET_IDS } from "../recipes/index.js";
 import { SheetsClientProvider, parseCurrencyNumber } from "./sheets-client.provider.js";
 import { ReportingService } from "./reporting.service.js";
 import { MasterSyncService } from "./master-sync.service.js";
@@ -66,6 +66,52 @@ export class CascadeDeleteService {
     }
 
     if (detail.sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN) {
+      // Check if this row in Tab 05 is orphaned (parent in Tab 04 / Tab 02 already gone)
+      let isOrphaned = false;
+      try {
+        const client = await this.getClient();
+        const tab04Res = await client.spreadsheets.values.get({
+          spreadsheetId,
+          range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!A:C`,
+        });
+        const t04Rows = tab04Res.data.values || [];
+        const parentInTab04 = t04Rows.some((r) => {
+          const c0 = String(r[0] || "").trim();
+          const c1 = String(r[1] || "").trim();
+          const c2 = String(r[2] || "").trim();
+          return (detail.id && (c2 === detail.id || c1 === detail.id)) || (detail.orderNo && detail.orderNo !== "-" && c0 === detail.orderNo);
+        });
+
+        const tab02Res = await client.spreadsheets.values.get({
+          spreadsheetId,
+          range: `'${SHEET_NAMES.PAGU_PENERIMAAN}'!A:B`,
+        });
+        const t02Rows = tab02Res.data.values || [];
+        const parentInTab02 = t02Rows.some((r) => {
+          const c0 = String(r[0] || "").trim();
+          const c1 = String(r[1] || "").trim();
+          return (detail.orderNo && detail.orderNo !== "-" && c0 === detail.orderNo) || (detail.id && (c1 === detail.id || c0 === detail.id));
+        });
+
+        if (!parentInTab04 && !parentInTab02) {
+          isOrphaned = true;
+        }
+      } catch {}
+
+      if (isOrphaned) {
+        return {
+          found: true,
+          canDelete: true,
+          isProtected: false,
+          sheetName: detail.sheetName,
+          orderNo: detail.orderNo,
+          transactionId: detail.id,
+          amount: detail.amount,
+          items: detail.items,
+          warningMessage: `ℹ️ Data Yatim: Rincian belanja ini tidak lagi memiliki data induk di Tab 04 maupun Tab 02. Baris ini dapat dihapus mandiri untuk pembersihan.`,
+        };
+      }
+
       return {
         found: true,
         canDelete: false,
@@ -295,20 +341,55 @@ export class CascadeDeleteService {
       return { success: false, message: `Transaksi ${transactionId} tidak ditemukan di Google Sheets.` };
     }
 
-    // Guard: Child rincian sheets are protected from standalone deletion
+    // Guard: Child rincian sheets are protected from standalone deletion UNLESS orphaned
     if (
       detail.sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN ||
       detail.sheetName === SHEET_NAMES.RINCIAN_PENDAPATAN ||
       detail.sheetName === SHEET_NAMES.PAGU_RINCIAN ||
       detail.isProtected
     ) {
-      const tabName = detail.sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN ? "Rincian Pengeluaran (Tab 05)" : "Rincian Pendapatan (Tab 03)";
-      const parentTab = detail.sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN ? "Pagu Pengeluaran di Tab 04" : `Pagu Penerimaan (${detail.orderNo || "Tab 02"})`;
-      return {
-        success: false,
-        isProtected: true,
-        message: `⛔ ${tabName} adalah data turunan dan terproteksi. Data ini tidak dapat dihapus mandiri karena terikat langsung dengan data induknya. Silakan kelola melalui ${parentTab}.`,
-      };
+      let isOrphaned = false;
+      if (detail.sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN) {
+        try {
+          const client = await this.getClient();
+          const tab04Res = await client.spreadsheets.values.get({
+            spreadsheetId,
+            range: `'${SHEET_NAMES.PAGU_PENGELUARAN}'!A:C`,
+          });
+          const t04Rows = tab04Res.data.values || [];
+          const parentInTab04 = t04Rows.some((r) => {
+            const c0 = String(r[0] || "").trim();
+            const c1 = String(r[1] || "").trim();
+            const c2 = String(r[2] || "").trim();
+            return (detail.id && (c2 === detail.id || c1 === detail.id)) || (detail.orderNo && detail.orderNo !== "-" && c0 === detail.orderNo);
+          });
+
+          const tab02Res = await client.spreadsheets.values.get({
+            spreadsheetId,
+            range: `'${SHEET_NAMES.PAGU_PENERIMAAN}'!A:B`,
+          });
+          const t02Rows = tab02Res.data.values || [];
+          const parentInTab02 = t02Rows.some((r) => {
+            const c0 = String(r[0] || "").trim();
+            const c1 = String(r[1] || "").trim();
+            return (detail.orderNo && detail.orderNo !== "-" && c0 === detail.orderNo) || (detail.id && (c1 === detail.id || c0 === detail.id));
+          });
+
+          if (!parentInTab04 && !parentInTab02) {
+            isOrphaned = true;
+          }
+        } catch {}
+      }
+
+      if (!isOrphaned) {
+        const tabName = detail.sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN ? "Rincian Pengeluaran (Tab 05)" : "Rincian Pendapatan (Tab 03)";
+        const parentTab = detail.sheetName === SHEET_NAMES.RINCIAN_PENGELUARAN ? "Pagu Pengeluaran di Tab 04" : `Pagu Penerimaan (${detail.orderNo || "Tab 02"})`;
+        return {
+          success: false,
+          isProtected: true,
+          message: `⛔ ${tabName} adalah data turunan dan terproteksi. Data ini tidak dapat dihapus mandiri karena terikat langsung dengan data induknya. Silakan kelola melalui ${parentTab}.`,
+        };
+      }
     }
 
     const client = await this.getClient();
@@ -409,13 +490,29 @@ export class CascadeDeleteService {
         }
 
         // 3. Tab 05 (RINCIAN_PENGELUARAN)
-        const rincianExpSheetId = sheetMap.get(SHEET_NAMES.RINCIAN_PENGELUARAN);
+        const rincianExpSheetId = sheetMap.get(SHEET_NAMES.RINCIAN_PENGELUARAN) ?? SHEET_IDS.RINCIAN_PENGELUARAN;
         if (typeof rincianExpSheetId === "number") {
-          const reRes = await client.spreadsheets.values.get({
-            spreadsheetId,
-            range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:B`,
-          }).catch(() => ({ data: { values: null } }));
-          const rows = reRes.data?.values || [];
+          let rows: (string | number)[][] = [];
+          try {
+            const reRes = await client.spreadsheets.values.get({
+              spreadsheetId,
+              range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:B`,
+            });
+            rows = (reRes.data?.values || []) as (string | number)[][];
+          } catch (fetchErr) {
+            logger.warn({ fetchErr }, "Transient error reading Tab 05 in cascade delete, retrying...");
+            try {
+              await new Promise((r) => setTimeout(r, 350));
+              const retryRes = await client.spreadsheets.values.get({
+                spreadsheetId,
+                range: `'${SHEET_NAMES.RINCIAN_PENGELUARAN}'!A:B`,
+              });
+              rows = (retryRes.data?.values || []) as (string | number)[][];
+            } catch (retryErr) {
+              logger.error({ retryErr }, "Retry reading Tab 05 failed in cascade delete");
+            }
+          }
+
           const indicesToDelete: number[] = [];
           for (let i = 0; i < rows.length; i++) {
             const c0 = String(rows[i]?.[0] || "").trim();

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { googleSheetsService } from "../src/core/google/sheets.service.js";
 import { SppgOrder } from "../src/core/ai/schemas/sppg-order.schema.js";
 import { SupplierReceipt } from "../src/core/ai/schemas/supplier-receipt.schema.js";
@@ -402,4 +402,139 @@ describe("Google Sheets 5-Tab Engine", () => {
       expect(appendedRows[0].rows[0][8]).toBe("SUKSES");
     });
   });
+
+  describe("Cascade Delete Resilience & Orphan Detection", () => {
+    it("should never misclassify explicit Income IDs (II...) as protected Tab 03 child items", async () => {
+      const { ReportingService } = await import("../src/core/google/services/reporting.service.js");
+      const { SHEET_NAMES } = await import("../src/core/google/sheets-recipes.js");
+
+      const mockClient = {
+        spreadsheets: {
+          values: {
+            get: vi.fn().mockImplementation(async ({ range }: { range: string }) => {
+              if (range.includes(SHEET_NAMES.PAGU_RINGKASAN)) {
+                // Simulate transient error on Tab 02
+                throw new Error("429 Quota Exceeded");
+              }
+              if (range.includes(SHEET_NAMES.PAGU_RINCIAN)) {
+                // Tab 03 has PO number in col 0 and item id / pagu id in col 1
+                return {
+                  data: {
+                    values: [
+                      ["PO Number", "ID Pendapatan", "No", "Nama Bahan", "Supplier Target", "Jumlah", "Satuan", "Harga Satuan", "Total Biaya", "Kwitansi Supplier", "Status"],
+                      ["PO-10/12/09/26", "II002", "1", "Beras", "Toko Sembako", "10", "Kg", "15000", "150000", "", ""],
+                    ],
+                  },
+                };
+              }
+              return { data: { values: [] } };
+            }),
+          },
+        },
+      };
+
+      const mockProvider = {
+        getClient: vi.fn().mockResolvedValue(mockClient),
+      } as any;
+
+      const reportingService = new ReportingService(mockProvider, async () => {});
+
+      // When searching for II002 (explicit income ID), it should skip Tab 03 search and NOT flag it as isProtected: true
+      const detail = await reportingService.getTransactionDetail("fake-sheet-id", "II002");
+      expect(detail.found).toBe(false);
+      expect(detail.isProtected).toBeFalsy();
+    });
+
+    it("should allow deletion of orphaned Tab 05 child rows when parent is missing", async () => {
+      const { CascadeDeleteService } = await import("../src/core/google/services/cascade-delete.service.js");
+      const { SHEET_NAMES } = await import("../src/core/google/sheets-recipes.js");
+
+      const mockClient = {
+        spreadsheets: {
+          get: vi.fn().mockResolvedValue({
+            data: {
+              sheets: [
+                { properties: { sheetId: 105, title: SHEET_NAMES.RINCIAN_PENGELUARAN } },
+                { properties: { sheetId: 104, title: SHEET_NAMES.PENGELUARAN } },
+                { properties: { sheetId: 102, title: SHEET_NAMES.PAGU_RINGKASAN } },
+              ],
+            },
+          }),
+          values: {
+            get: vi.fn().mockImplementation(async ({ range }: { range: string }) => {
+              if (range.includes(SHEET_NAMES.RINCIAN_PENGELUARAN)) {
+                return {
+                  data: {
+                    values: [
+                      ["No PO / Ref", "ID Pengeluaran", "No", "Nama Barang", "Supplier", "Qty", "Satuan", "Harga Satuan", "Total"],
+                      ["PO-2026/09/SPPG2-01", "SPPG0226-EI001", "1", "Ayam", "Pasar", "10", "Kg", "35000", "350000"],
+                    ],
+                  },
+                };
+              }
+              if (range.includes(SHEET_NAMES.PENGELUARAN)) {
+                return {
+                  data: {
+                    values: [
+                      ["No Ref PO", "ID Transaksi", "Tanggal", "Item", "Supplier", "Nominal"],
+                    ],
+                  },
+                };
+              }
+              if (range.includes(SHEET_NAMES.PAGU_RINGKASAN)) {
+                return {
+                  data: {
+                    values: [
+                      ["No Pesanan", "ID Transaksi", "Tanggal"],
+                    ],
+                  },
+                };
+              }
+              return { data: { values: [] } };
+            }),
+          },
+        },
+      };
+
+      const mockProvider = {
+        getClient: vi.fn().mockResolvedValue(mockClient),
+      } as any;
+
+      const mockReporting = {
+        getTransactionDetail: vi.fn().mockResolvedValue({
+          found: true,
+          id: "SPPG0226-EI001",
+          sheetName: SHEET_NAMES.RINCIAN_PENGELUARAN,
+          rowIndex: 2,
+          type: "expense",
+          date: "-",
+          supplierOrUnit: "Pasar",
+          items: "Ayam",
+          amount: 350000,
+          orderNo: "PO-2026/09/SPPG2-01",
+          isProtected: true,
+          notes: "Rincian Pengeluaran Item #1",
+        }),
+      } as any;
+
+      const mockMasterSync = {
+        deleteMasterTransactionRow: vi.fn().mockResolvedValue(true),
+        updateMasterTransactionRow: vi.fn().mockResolvedValue(true),
+      } as any;
+
+      const cascadeDeleteService = new CascadeDeleteService(
+        mockProvider,
+        mockReporting,
+        mockMasterSync,
+        async () => {}
+      );
+
+      const preview = await cascadeDeleteService.getCascadeDeletePreview("fake-sheet-id", "SPPG0226-EI001");
+      expect(preview.found).toBe(true);
+      expect(preview.isProtected).toBe(false);
+      expect(preview.canDelete).toBe(true);
+      expect(preview.warningMessage).toContain("Data Yatim");
+    });
+  });
 });
+
