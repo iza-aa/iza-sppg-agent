@@ -139,6 +139,11 @@ export class MetaAgent {
       /\b(?:hapus|delete|batal(?:kan)?)\s+(?:dari|di|pada|ke)\s+(?:transaksi\s+|nota\s+|po\s+|pagu\s+)?([A-Za-z0-9_/-]{3,35})\s+(?:rincian\s+|bahan\s+|pagu\s+|item\s+belanja\s+|item\s+)?(.+)\b/i
     );
 
+    // Direct match without preposition: e.g. "hapus saos tiram ii002", "hapus ceker ayam EI001"
+    const deleteChildItemDirectMatch = text.match(
+      /\b(?:hapus|delete|batal(?:kan)?)\s+(?:rincian\s+|bahan\s+|pagu\s+|item\s+belanja\s+|item\s+)?(.+?)\s+((?:SPPG\d*[-_])?(?:[EI][A-Z]|TRX)\d{3,}|PO-[A-Za-z0-9_/-]+|\d{2}\/\d{2}\/\d{2}\/\d{2})\b/i
+    );
+
     const isTrxCode = (s: string) => {
       const clean = s.trim().replace(/^#/g, "");
       return (
@@ -171,6 +176,18 @@ export class MetaAgent {
     } else if (deleteChildItemInvertedMatch) {
       const candidateId = deleteChildItemInvertedMatch[1].trim();
       const candidateRaw = deleteChildItemInvertedMatch[2].trim();
+      const items = extractItemNames(candidateRaw);
+      if (items.length > 0 && candidateId) {
+        return {
+          type: "DELETE_ITEM",
+          transactionId: candidateId,
+          itemName: items[0],
+          ...(items.length > 1 ? { itemNames: items } : {}),
+        };
+      }
+    } else if (deleteChildItemDirectMatch) {
+      const candidateRaw = deleteChildItemDirectMatch[1].trim();
+      const candidateId = deleteChildItemDirectMatch[2].trim();
       const items = extractItemNames(candidateRaw);
       if (items.length > 0 && candidateId) {
         return {
