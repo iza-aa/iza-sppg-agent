@@ -57,14 +57,14 @@ export function renderSppgOrderDraftCard(
   const itemsText = topItems.join("\n") + (remainingCount > 0 ? `\n<i>... dan ${remainingCount} bahan lainnya (klik tombol di bawah untuk lihat semua)</i>` : "");
 
   return [
-    `📋 <b>DRAF NOTA PESANAN SPPG (PAGU ANGGARAN RESMI)</b>`,
+    `📋 <b>DRAF NOTA PESANAN SPPG (PENDAPATAN RESMI)</b>`,
     `Unit: <b>${escapeHtml(order.sppg_unit)}</b>`,
     `No Pesanan: ${orderNoDisplay}`,
     `📅 Tanggal : <b>${order.order_date}</b>`,
     `🕒 Waktu Input : <b>${formatWibDisplay()}</b>`,
     `🍲 Total Ragam : <b>${order.items.length} Komoditas Bahan</b>`,
-    `💰 <b>TOTAL PAGU : ${formatRupiah(order.total_amount)}</b>`,
-    `✍️ Penandatangan: <b>${escapeHtml(order.signed_by || "Kepala SPPG")}</b>`,
+    `💰 <b>TOTAL PENDAPATAN : ${formatRupiah(order.total_amount)}</b>`,
+    `✍️ Penandatangan: <b>${escapeHtml(order.signed_by || "-")}</b>`,
     `------------------------------------------`,
     `<b>Ringkasan Bahan:</b>`,
     itemsText,
@@ -85,7 +85,7 @@ export function renderSppgOrderItemsDetail(order: SppgOrder): string {
     `No Pesanan: <code>${escapeHtml(order.order_no)}</code>`,
     `Unit Dapur: <b>${escapeHtml(order.sppg_unit)}</b>`,
     `Tanggal: <b>${order.order_date}</b>`,
-    `💰 <b>TOTAL PAGU: ${formatRupiah(order.total_amount)}</b>`,
+    `💰 <b>TOTAL PENDAPATAN: ${formatRupiah(order.total_amount)}</b>`,
     `------------------------------------------`,
     itemsList,
     `------------------------------------------`,
@@ -183,8 +183,8 @@ export function renderSupplierExpenseDraftCard(
     statusBadge = `⚠️ <b>STATUS: MENUNGGU ${missingLabels.join(" & ")}</b>\n\n👉 <i>${guideInstruction}</i>`;
   } else if (isSelectionRequired) {
     statusBadge =
-      "⚠️ <b>STATUS: MENUNGGU ALOKASI PAGU</b>\n\n" +
-      "👉 <i>Silakan pilih alokasi belanja ini pada tombol di bawah atau ketik langsung di chat (misal: <code>pagu ii001</code> atau <code>non pagu</code>):</i>";
+      "⚠️ <b>STATUS: MENUNGGU ALOKASI PENDAPATAN</b>\n\n" +
+      "👉 <i>Silakan pilih alokasi belanja ini pada tombol di bawah atau ketik langsung di chat (misal: <code>pendapatan ii001</code> atau <code>non pendapatan</code>):</i>";
   } else {
     statusBadge = "⏳ <b>STATUS: MENUNGGU KONFIRMASI</b>";
   }
@@ -225,10 +225,10 @@ export function renderSupplierExpenseDraftCard(
   let statusPaguLine = "";
 
   if (isSelectionRequired) {
-    allocSection = `📄 <b>Alokasi Anggaran</b>: ❓ <i>Belum ditentukan</i>`;
+    allocSection = `📄 <b>Alokasi Pendapatan</b>: ❓ <i>Belum ditentukan</i>`;
   } else if (ctx && ctx.sppg_ref_no && ctx.sppg_ref_no !== "-") {
     const supplierInfo = ctx.pagu_supplier ? ` (${escapeHtml(ctx.pagu_supplier)})` : "";
-    allocSection = `📄 <b>Alokasi Anggaran</b>: <code>${escapeHtml(ctx.sppg_ref_no)}</code>${supplierInfo}`;
+    allocSection = `📄 <b>Alokasi Pendapatan</b>: <code>${escapeHtml(ctx.sppg_ref_no)}</code>${supplierInfo}`;
     if (ctx.target_qty && ctx.target_qty > 0) {
       const currentQty = ctx.current_qty ?? (expense.items[0]?.qty || 0);
       const totalFulfilled = (ctx.fulfilled_qty || 0) + currentQty;
@@ -242,7 +242,7 @@ export function renderSupplierExpenseDraftCard(
   } else if (expense.sppg_ref_no && expense.sppg_ref_no !== "-") {
     allocSection = `📄 <b>Ref No SPPG</b>: <code>${escapeHtml(expense.sppg_ref_no)}</code>`;
   } else {
-    allocSection = `📄 <b>Alokasi Anggaran</b>: <i>Belanja Tambahan / Tanpa Pagu</i>`;
+    allocSection = `📄 <b>Alokasi Pendapatan</b>: <i>Belanja Tambahan / Tanpa Pendapatan</i>`;
   }
 
   return [

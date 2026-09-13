@@ -721,20 +721,20 @@ export function registerTextRouterHandler(bCtx: BotContext) {
           return;
         }
 
-        // B. Conversational Pagu Correction / Change
-        // e.g. "salah di pagu ii002 harusnya", "harusnya di pagu ii001", "pagu ii001", "ganti pagu ke ii001", "pagu non-pagu"
+        // B. Conversational Pagu/Pendapatan Correction / Change
+        // e.g. "salah di pendapatan ii002", "pendapatan ii004", "ke pendapatan ii005", "non pendapatan"
         const paguCorrectionMatch =
-          text.match(/\b(?:salah\s+(?:di\s+)?pagu|ganti\s+pagu|ubah\s+pagu|pindah\s+pagu|pagu(?:nya)?|ke\s+pagu|di\s+pagu|pada\s+pagu|harusnya\s+(?:di\s+)?pagu)\s*[:=]?\s*([A-Za-z0-9_/-]+)/i) ||
-          text.match(/\b(?:salah|keliru|bukan|harusnya)\b.*?\b(?:pagu|po)\s*[:=]?\s*([A-Za-z0-9_/-]+)/i) ||
-          text.match(/\b(?:pagu|po)\s*[:=]?\s*([A-Za-z0-9_/-]+)\b.*?\b(?:salah|keliru|bukan|harusnya)\b/i) ||
-          text.match(/^(?:di\s+|ke\s+|pada\s+)?pagu\s*[:=]?\s*([A-Za-z0-9_/-]+)\s*(?:saja|aja|ya|deh|dong)?$/i);
+          text.match(/\b(?:salah\s+(?:di\s+)?(?:pagu|pendapatan)|ganti\s+(?:pagu|pendapatan)|ubah\s+(?:pagu|pendapatan)|pindah\s+(?:pagu|pendapatan)|(?:pagu|pendapatan)(?:nya)?|ke\s+(?:pagu|pendapatan)|di\s+(?:pagu|pendapatan)|pada\s+(?:pagu|pendapatan)|harusnya\s+(?:di\s+)?(?:pagu|pendapatan))\s*[:=]?\s*([A-Za-z0-9_/-]+)/i) ||
+          text.match(/\b(?:salah|keliru|bukan|harusnya)\b.*?\b(?:pagu|pendapatan|po)\s*[:=]?\s*([A-Za-z0-9_/-]+)/i) ||
+          text.match(/\b(?:pagu|pendapatan|po)\s*[:=]?\s*([A-Za-z0-9_/-]+)\b.*?\b(?:salah|keliru|bukan|harusnya)\b/i) ||
+          text.match(/^(?:di\s+|ke\s+|pada\s+)?(?:pagu|pendapatan)\s*[:=]?\s*([A-Za-z0-9_/-]+)\s*(?:saja|aja|ya|deh|dong)?$/i);
 
-        const isNonPaguDirect = /\b(?:non[\s-]?pagu|bukan\s+pagu|belanja\s+tambahan)\b/i.test(text);
+        const isNonPaguDirect = /\b(?:non[\s-]?(?:pagu|pendapatan)|bukan\s+(?:pagu|pendapatan)|tanpa\s+(?:pagu|pendapatan)|belanja\s+tambahan)\b/i.test(text);
 
         if (paguCorrectionMatch || isNonPaguDirect) {
           const rawTargetRef = isNonPaguDirect ? "-" : paguCorrectionMatch![1].trim();
 
-          if (rawTargetRef === "-" || /^(?:non|non-pagu|nonpagu)$/i.test(rawTargetRef)) {
+          if (rawTargetRef === "-" || /^(?:non|non-pagu|nonpagu|non-pendapatan|nonpendapatan)$/i.test(rawTargetRef)) {
             draft.payload.sppg_ref_no = "-";
             if (draft.action_type === "SUPPLIER_EXPENSE") {
               await enrichReceiptWithPaguContext(bCtx.unitConfig.spreadsheetId, draft.payload);
@@ -751,7 +751,7 @@ export function registerTextRouterHandler(bCtx: BotContext) {
                 reply_markup: getDraftConfirmationReplyMarkup(draft.id, draft.action_type, draft.payload, itemsCount, false),
               }).catch(() => {});
             }
-            await ctx.reply(`✅ Alokasi transaksi berhasil diubah menjadi <b>Non-Pagu / Belanja Tambahan</b>.`, { parse_mode: "HTML" });
+            await ctx.reply(`✅ Alokasi transaksi berhasil diubah menjadi <b>Non-Pendapatan / Belanja Tambahan</b>.`, { parse_mode: "HTML" });
             return;
           }
 

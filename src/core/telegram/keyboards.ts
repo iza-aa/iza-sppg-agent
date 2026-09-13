@@ -128,20 +128,41 @@ export function buildPaymentMethodPickerKeyboard(draftId: string): InlineKeyboar
     .text("🔙 Kembali ke Draf", `v:sub:back:${draftId}`);
 }
 
+function formatMenuDateLabel(rawDate?: string): string {
+  if (!rawDate) return "Menu";
+  const m = rawDate.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  if (m) {
+    const months = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
+    const monthIdx = parseInt(m[1], 10) - 1;
+    const day = m[2];
+    const monthName = months[monthIdx] || m[1];
+    return `${day} ${monthName}`;
+  }
+  return rawDate.replace(/^\d{4}-/, "");
+}
+
+function extractShortId(trxId?: string): string {
+  if (!trxId) return "";
+  const parts = trxId.split("-");
+  return parts[parts.length - 1] || trxId;
+}
+
 export function buildPaguSelectorKeyboard(
   draftId: string,
-  candidates: Array<{ sppg_ref_no: string; order_date: string; item_name: string; remaining_qty: number; unit: string; supplier_name: string }>
+  candidates: Array<{ sppg_ref_no: string; transaction_id?: string; order_date: string; item_name: string; remaining_qty: number; unit: string; supplier_name: string }>
 ): InlineKeyboard {
   const kb = new InlineKeyboard();
   const seen = new Set<string>();
   candidates.slice(0, 5).forEach((c) => {
     if (seen.has(c.sppg_ref_no)) return;
     seen.add(c.sppg_ref_no);
-    const dateLabel = c.order_date ? c.order_date.replace(/^\d{4}-/, "") : "Menu";
-    const label = `📅 PO ${c.sppg_ref_no} (Menu ${dateLabel})`;
+    const shortId = extractShortId(c.transaction_id);
+    const idPrefix = shortId ? `[${shortId}] ` : "";
+    const dateLabel = formatMenuDateLabel(c.order_date);
+    const label = `${idPrefix}${c.sppg_ref_no} (${dateLabel})`;
     kb.text(label, `v:pagu_set:${draftId}:${c.sppg_ref_no}`).row();
   });
-  kb.text("🚫 Belanja Tambahan (Tanpa Pagu)", `v:pagu_set:${draftId}:-`).row();
+  kb.text("🚫 Belanja Tambahan (Non-Pendapatan)", `v:pagu_set:${draftId}:-`).row();
   kb.text("🔙 Kembali ke Draf", `v:sub:back:${draftId}`);
   return kb;
 }
@@ -150,6 +171,7 @@ export function buildPaguPromptKeyboard(
   draftId: string,
   candidates: Array<{
     sppg_ref_no: string;
+    transaction_id?: string;
     order_date?: string;
     item_name?: string;
     remaining_qty?: number;
@@ -170,14 +192,16 @@ export function buildPaguPromptKeyboard(
   prioritized.forEach((c) => {
     if (seen.has(c.sppg_ref_no)) return;
     seen.add(c.sppg_ref_no);
-    const dateLabel = c.order_date ? c.order_date.replace(/^\d{4}-/, "") : "Menu";
-    const star = (c.match_score || 0) > 0 ? "⭐ " : "📅 ";
-    const label = `${star}Alokasikan ke PO ${c.sppg_ref_no} (Menu ${dateLabel})`;
+    const shortId = extractShortId(c.transaction_id);
+    const idPrefix = shortId ? `[${shortId}] ` : "";
+    const dateLabel = formatMenuDateLabel(c.order_date);
+    const star = (c.match_score || 0) > 0 ? "⭐ " : "";
+    const label = `${star}${idPrefix}${c.sppg_ref_no} (${dateLabel})`;
     kb.text(label, `v:pagu_set:${draftId}:${c.sppg_ref_no}`).row();
   });
 
   kb.text("📋 Bukan Di Atas (Lihat Semua PO)", `v:pagu_browse:${draftId}`).row();
-  kb.text("🚫 Belanja Tambahan (Non-Pagu)", `v:pagu_set:${draftId}:-`).row();
+  kb.text("🚫 Belanja Tambahan (Non-Pendapatan)", `v:pagu_set:${draftId}:-`).row();
   kb.text("❌ Batalkan Draf", `v:cancel:${draftId}`);
   return kb;
 }
@@ -186,6 +210,7 @@ export function buildPaguBrowseKeyboard(
   draftId: string,
   candidates: Array<{
     sppg_ref_no: string;
+    transaction_id?: string;
     order_date?: string;
     item_name?: string;
   }>
@@ -196,13 +221,15 @@ export function buildPaguBrowseKeyboard(
   candidates.forEach((c) => {
     if (seen.has(c.sppg_ref_no)) return;
     seen.add(c.sppg_ref_no);
-    const dateLabel = c.order_date ? c.order_date.replace(/^\d{4}-/, "") : "Menu";
-    const label = `📅 PO ${c.sppg_ref_no} (Menu ${dateLabel})`;
+    const shortId = extractShortId(c.transaction_id);
+    const idPrefix = shortId ? `[${shortId}] ` : "";
+    const dateLabel = formatMenuDateLabel(c.order_date);
+    const label = `${idPrefix}${c.sppg_ref_no} (${dateLabel})`;
     kb.text(label, `v:pagu_set:${draftId}:${c.sppg_ref_no}`).row();
   });
 
   kb.text("🔙 Kembali ke Rekomendasi", `v:pagu_back_rec:${draftId}`).row();
-  kb.text("🚫 Belanja Tambahan (Non-Pagu)", `v:pagu_set:${draftId}:-`).row();
+  kb.text("🚫 Belanja Tambahan (Non-Pendapatan)", `v:pagu_set:${draftId}:-`).row();
   kb.text("❌ Batalkan Draf", `v:cancel:${draftId}`);
   return kb;
 }

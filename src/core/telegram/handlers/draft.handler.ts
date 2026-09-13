@@ -211,6 +211,7 @@ export async function enrichReceiptWithPaguContext(
       const matchScore = poMatchCount.get(o.orderNo) || 0;
       return {
         sppg_ref_no: o.orderNo,
+        transaction_id: o.transactionId,
         order_date: o.orderDate,
         item_name: cand?.item_name || firstItem?.item_name || "Bahan Belanja",
         target_qty: cand?.target_qty || 0,

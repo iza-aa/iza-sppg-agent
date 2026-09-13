@@ -261,10 +261,11 @@ export class PaguSheetsService {
       for (const row of rows) {
         const orderNo = String(row[0] || "").trim();
         if (!orderNo || orderNo.startsWith("#") || orderNo.toLowerCase().includes("total")) continue;
-        const rawDate = String(row[3] || "").trim();
-        const fallbackDate = String(row[2] || "").trim();
-        const dateIsClean = /^\d{4}-\d{2}-\d{2}/.test(rawDate) || /^\d{2}\/\d{2}\/\d{4}/.test(rawDate);
-        const orderDate = dateIsClean ? rawDate : (rawDate || fallbackDate || "-");
+        const colC = String(row[2] || "").trim();
+        const colD = String(row[3] || "").trim();
+        const isColCDate = /^\d{4}-\d{2}-\d{2}/.test(colC) || /^\d{2}\/\d{2}\/\d{4}/.test(colC);
+        const isColDDate = /^\d{4}-\d{2}-\d{2}/.test(colD) || /^\d{2}\/\d{2}\/\d{4}/.test(colD);
+        const orderDate = isColCDate ? colC : (isColDDate ? colD : (colC || "-"));
 
         const amtColG = parseCurrencyNumber(row[6]);
         const amtColF = parseCurrencyNumber(row[5]);
@@ -274,7 +275,7 @@ export class PaguSheetsService {
           orderNo,
           transactionId: String(row[1] || "").trim(),
           orderDate,
-          itemCount: String(row[4] || row[3] || "").trim() || "-",
+          itemCount: isColCDate ? colD : (String(row[4] || row[3] || "").trim() || "-"),
           totalAmount,
           link: String(row[7] || row[6] || "").trim(),
           notes: String(row[9] || row[8] || row[7] || "").trim(),
