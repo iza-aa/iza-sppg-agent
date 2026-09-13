@@ -74,7 +74,7 @@ export async function parsePdfDocument(
         supplier_name: p.items?.find((it: any) => it.supplier_target && it.supplier_target !== "Lainnya")?.supplier_target || "Supplier Rekanan",
         receipt_no: p.order_no || "",
         date: p.order_date || cleanDateString(""),
-        sppg_ref_no: p.order_no || "",
+        sppg_ref_no: "", // Do not auto-fill sppg_ref_no so user is prompted to pick PO
         items: (p.items || []).map((it: any) => ({
           item_name: it.item_name || "Bahan Belanja",
           qty: cleanNumeric(it.qty, 1),
@@ -141,12 +141,16 @@ export async function parsePdfDocument(
       const p = parsed.payload;
       p.date = cleanDateString(p.date);
       p.supplier_name = String(p.supplier_name || "Supplier Rekanan").trim();
+      if (!p.supplier_name || /tidak\s+diketahui|unknown/i.test(p.supplier_name)) {
+        p.supplier_name = "Supplier Rekanan";
+      }
+      p.payment_method = p.payment_method && !/tidak\s+diketahui|unknown/i.test(p.payment_method) ? p.payment_method : "Cash";
       p.receipt_no = p.receipt_no ? String(p.receipt_no).trim() : (p.invoice_no ? String(p.invoice_no).trim() : "");
       p.total_amount = cleanNumeric(p.total_amount);
       p.subtotal = cleanNumeric(p.subtotal, p.total_amount);
       p.discount = cleanNumeric(p.discount, 0);
       p.tax = cleanNumeric(p.tax, 0);
-      p.sppg_ref_no = p.sppg_ref_no ? String(p.sppg_ref_no).trim() : "";
+      p.sppg_ref_no = ""; // Always empty on initial upload so user is prompted to pick PO
 
       if (Array.isArray(p.items) && p.items.length > 0) {
         p.items = p.items.map((it: any) => ({

@@ -78,40 +78,26 @@ export function getDraftConfirmationReplyMarkup(
   }
 
   if (actionType === "SUPPLIER_EXPENSE") {
-    const isMissingPayment = !payload?.payment_method || payload.payment_method.trim() === "" || payload.payment_method === "-";
-    const isMissingSupplier = !payload?.supplier_name || payload.supplier_name.trim() === "" || payload.supplier_name === "Supplier Pasar";
-    const isMissingAmount = !payload?.total_amount || Number(payload.total_amount) <= 0;
-    const isMissingItems =
-      !payload?.items ||
-      payload.items.length === 0 ||
-      payload.items.every((it: any) => {
-        const n = (it.item_name || "").trim().toLowerCase();
-        return (
-          !n ||
-          n === "belanja bahan pangan" ||
-          n === "bahan makanan" ||
-          n === "bahan pangan" ||
-          n === "barang" ||
-          n === "bahan" ||
-          n === "-"
-        );
-      });
-
-    if (isMissingPayment || isMissingSupplier || isMissingAmount || isMissingItems) {
-      return buildMissingExpenseFieldsKeyboard(draftId, {
-        isMissingAmount,
-        isMissingPayment,
-        isMissingSupplier,
-        isMissingItems,
-      });
-    }
-
+    // 1. If Pagu selection is required, prompt user immediately with PO choices
     if (
       payload?.paguSelectionRequired === true &&
       Array.isArray(payload?.paguCandidates) &&
       payload.paguCandidates.length > 0
     ) {
       return buildPaguPromptKeyboard(draftId, payload.paguCandidates);
+    }
+
+    // 2. Critical missing fields (Total Amount <= 0 or empty items)
+    const isMissingAmount = !payload?.total_amount || Number(payload.total_amount) <= 0;
+    const isMissingItems =
+      !payload?.items ||
+      payload.items.length === 0;
+
+    if (isMissingAmount || isMissingItems) {
+      return buildMissingExpenseFieldsKeyboard(draftId, {
+        isMissingAmount,
+        isMissingItems,
+      });
     }
 
     return buildDraftConfirmationKeyboard(draftId, actionType, itemsCount, hasMultiplePagu);
@@ -174,19 +160,23 @@ export async function enrichReceiptWithPaguContext(
 
     const candidates = Array.from(allCandidatesMap.values());
 
-    // 4. If receipt already specifies an explicit PO number (from caption, OCR, or user button tap)
-    if (receipt.sppg_ref_no && receipt.sppg_ref_no !== "-") {
-      const matched = candidates.find((c) => c.sppg_ref_no === receipt.sppg_ref_no) || {
-        sppg_ref_no: receipt.sppg_ref_no,
-        order_date: "-",
-        supplier_name: "-",
+    // 4. If the user explicitly picked and confirmed an existing PO order (paguSelectionRequired is false):
+    const exactOrder = orders.find(
+      (o) => o.orderNo.toLowerCase() === (receipt.sppg_ref_no || "").toLowerCase()
+    );
+
+    if (receipt.paguSelectionRequired === false && exactOrder) {
+      const matched = candidates.find((c) => c.sppg_ref_no === exactOrder.orderNo) || {
+        sppg_ref_no: exactOrder.orderNo,
+        order_date: exactOrder.orderDate,
+        supplier_name: exactOrder.notes || "-",
         item_name: firstItem?.item_name || "-",
         target_qty: 0,
         unit: firstItem?.unit || "",
         fulfilled_qty: 0,
         remaining_qty: 0,
       };
-      receipt.paguSelectionRequired = false;
+      receipt.sppg_ref_no = exactOrder.orderNo;
       receipt.paguContext = {
         sppg_ref_no: matched.sppg_ref_no,
         order_date: matched.order_date,
@@ -197,34 +187,21 @@ export async function enrichReceiptWithPaguContext(
         fulfilled_qty: matched.fulfilled_qty,
         current_qty: firstItem?.qty || 0,
         remaining_qty: matched.remaining_qty,
-        candidates_count: candidates.length,
+        candidates_count: orders.length,
       };
-      return false;
+      return true;
     }
 
-    // 5. User did NOT specify Pagu or Non-Pagu:
-    // Prompt the user to choose! Never silently guess or default to Non-Pagu!
-    receipt.paguSelectionRequired = true;
+    // 5. Fresh upload / unconfirmed PO:
+    // ALWAYS require the user to choose the Pagu from available orders in Tab 02!
     receipt.sppg_ref_no = "";
+    receipt.paguSelectionRequired = true;
+    receipt.paguContext = undefined;
 
-    if (candidates.length > 0) {
-      receipt.paguCandidates = [...candidates];
-      for (const o of orders) {
-        if (!receipt.paguCandidates.some((c: any) => c.sppg_ref_no === o.orderNo)) {
-          receipt.paguCandidates.push({
-            sppg_ref_no: o.orderNo,
-            order_date: o.orderDate,
-            item_name: firstItem?.item_name || "Bahan Belanja",
-            target_qty: 0,
-            unit: firstItem?.unit || "unit",
-            supplier_name: o.notes || "SPPG",
-            remaining_qty: 0,
-            fulfilled_qty: 0,
-          });
-        }
-      }
-    } else {
-      receipt.paguCandidates = orders.map((o) => ({
+    // Populate all active orders so user can choose
+    receipt.paguCandidates = orders.map((o) => {
+      const cand = candidates.find((c) => c.sppg_ref_no === o.orderNo);
+      return cand || {
         sppg_ref_no: o.orderNo,
         order_date: o.orderDate,
         item_name: firstItem?.item_name || "Bahan Belanja",
@@ -233,8 +210,8 @@ export async function enrichReceiptWithPaguContext(
         supplier_name: o.notes || "SPPG",
         remaining_qty: 0,
         fulfilled_qty: 0,
-      }));
-    }
+      };
+    });
 
     return true;
   } catch (err) {
@@ -1097,15 +1074,20 @@ export function registerDraftHandlers(bCtx: BotContext) {
       return handleExpiredOrMissingDraft(bCtx, ctx, draft);
     }
 
-    const firstItem = draft.payload?.items?.[0];
-    const candidates = firstItem?.item_name
-      ? await googleSheetsService.getPaguCandidatesForCommodity(bCtx.unitConfig.spreadsheetId, firstItem.item_name)
-      : [];
-
+    const orders = await googleSheetsService.getPaguOrders(bCtx.unitConfig.spreadsheetId);
     await ctx.answerCallbackQuery();
-    if (candidates.length === 0) {
-      return ctx.reply("ℹ️ Tidak ditemukan anggaran Pagu lain yang aktif untuk bahan ini.", { parse_mode: "HTML" });
+    if (orders.length === 0) {
+      return ctx.reply("ℹ️ Belum ada Nota Pesanan SPPG (Pagu) yang terdaftar di Tab 02.", { parse_mode: "HTML" });
     }
+
+    const candidates = orders.map((o) => ({
+      sppg_ref_no: o.orderNo,
+      order_date: o.orderDate,
+      item_name: "Menu",
+      remaining_qty: 0,
+      unit: "",
+      supplier_name: o.notes || "SPPG",
+    }));
 
     await ctx.editMessageReplyMarkup({
       reply_markup: buildPaguSelectorKeyboard(draftId, candidates),

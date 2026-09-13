@@ -19,9 +19,7 @@ export function buildDraftConfirmationKeyboard(
       .text("✏️ Ubah", `v:edit:${draftId}`)
       .text("❌ Batal", `v:cancel:${draftId}`);
   } else {
-    if (hasMultiplePagu) {
-      kb.text("🔄 Pilih Alokasi Anggaran", `v:pagu_pick:${draftId}`).row();
-    }
+    kb.text("🔄 Pilih Alokasi Anggaran", `v:pagu_pick:${draftId}`).row();
     kb.text("✅ Ya, Simpan", `v:save:${draftId}`)
       .row()
       .text("✏️ Ubah", `v:edit:${draftId}`)
