@@ -30,22 +30,48 @@ export function cleanNumeric(val: any, fallback = 0): number {
   return fallback;
 }
 
+/** Tahun operasional program MBG BGN. Semua dokumen diterbitkan di tahun ini atau sesudahnya. */
+const MBG_PROGRAM_YEAR = 2026;
+
 /**
  * Normalizes any Indonesian date string (DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD) into standard YYYY-MM-DD.
+ *
+ * ⚠️ YEAR SAFETY: If the parsed year < MBG_PROGRAM_YEAR (e.g. AI returns "2024" because no year
+ * was visible in the document), the year is forcefully replaced with the current calendar year.
+ * This prevents ID-collision bugs when OCR guesses an old year like 2024.
  */
 export function cleanDateString(val: any): string {
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const currentYear = now.getFullYear();
+
+  const enforceMinYear = (yearStr: string): string => {
+    const y = parseInt(yearStr, 10);
+    if (isNaN(y) || y < MBG_PROGRAM_YEAR) {
+      return String(currentYear);
+    }
+    return yearStr;
+  };
+
   if (!val || typeof val !== "string") return today;
   const trimmed = val.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const parts = trimmed.split("-");
+    const safeYear = enforceMinYear(parts[0]);
+    return `${safeYear}-${parts[1]}-${parts[2]}`;
+  }
+
   const dmy = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
   if (dmy) {
     const day = dmy[1].padStart(2, "0");
     const month = dmy[2].padStart(2, "0");
     let year = dmy[3];
     if (year.length === 2) year = `20${year}`;
+    year = enforceMinYear(year);
     return `${year}-${month}-${day}`;
   }
+
   return today;
 }
 
@@ -70,6 +96,13 @@ ATURAN MUTLAK KETERANGAN PENGGUNA (USER CAPTION OVERRIDE):
   WAJIB klasifikasikan dokumen sebagai SUPPLIER_EXPENSE dan ekstrak seluruh item belanja serta total belanja aktualnya, MESKIPUN tabel dokumen memiliki judul bertuliskan "PO" atau format Surat Pesanan!
 - JIKA ada instruksi bahwa pengguna menetapkan dokumen sebagai PENDAPATAN (SPPG_ORDER):
   WAJIB klasifikasikan dokumen sebagai SPPG_ORDER.
+
+ATURAN MUTLAK PENULISAN TANGGAL (DATE YEAR SAFETY):
+- Program MBG BGN berjalan mulai tahun 2026. SEMUA dokumen dalam sistem ini diterbitkan pada tahun 2026 atau sesudahnya.
+- JIKA tahun pada dokumen tidak tertera secara eksplisit (hanya tertulis "2 September", "September 2026", dst.) → WAJIB gunakan tahun 2026.
+- JIKA tahun pada dokumen tertera namun hasilnya < 2026 (misalnya: "2024", "25", "24") → ABAIKAN tahun tersebut dan WAJIB gunakan tahun 2026.
+- DILARANG KERAS menghasilkan tanggal dengan tahun 2024, 2025, atau tahun manapun sebelum 2026.
+- Format tanggal output WAJIB: "YYYY-MM-DD" dengan YYYY ≥ 2026.
 
 PANDUAN KLASIFIKASI DOKUMEN:
 
