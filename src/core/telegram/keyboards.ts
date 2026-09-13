@@ -155,17 +155,53 @@ export function buildPaguPromptKeyboard(
     remaining_qty?: number;
     unit?: string;
     supplier_name?: string;
+    match_score?: number;
   }>
 ): InlineKeyboard {
   const kb = new InlineKeyboard();
   const seen = new Set<string>();
-  candidates.slice(0, 5).forEach((c) => {
+
+  // Prioritize candidates with positive match scores (unfulfilled & matching items)
+  const hasMatches = candidates.some((c) => (c.match_score || 0) > 0);
+  const prioritized = hasMatches
+    ? candidates.filter((c) => (c.match_score || 0) > 0).slice(0, 4)
+    : candidates.slice(0, 3);
+
+  prioritized.forEach((c) => {
     if (seen.has(c.sppg_ref_no)) return;
     seen.add(c.sppg_ref_no);
     const dateLabel = c.order_date ? c.order_date.replace(/^\d{4}-/, "") : "Menu";
-    const label = `📅 Alokasikan ke PO ${c.sppg_ref_no} (Menu ${dateLabel})`;
+    const star = (c.match_score || 0) > 0 ? "⭐ " : "📅 ";
+    const label = `${star}Alokasikan ke PO ${c.sppg_ref_no} (Menu ${dateLabel})`;
     kb.text(label, `v:pagu_set:${draftId}:${c.sppg_ref_no}`).row();
   });
+
+  kb.text("📋 Bukan Di Atas (Lihat Semua PO)", `v:pagu_browse:${draftId}`).row();
+  kb.text("🚫 Belanja Tambahan (Non-Pagu)", `v:pagu_set:${draftId}:-`).row();
+  kb.text("❌ Batalkan Draf", `v:cancel:${draftId}`);
+  return kb;
+}
+
+export function buildPaguBrowseKeyboard(
+  draftId: string,
+  candidates: Array<{
+    sppg_ref_no: string;
+    order_date?: string;
+    item_name?: string;
+  }>
+): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  const seen = new Set<string>();
+
+  candidates.forEach((c) => {
+    if (seen.has(c.sppg_ref_no)) return;
+    seen.add(c.sppg_ref_no);
+    const dateLabel = c.order_date ? c.order_date.replace(/^\d{4}-/, "") : "Menu";
+    const label = `📅 PO ${c.sppg_ref_no} (Menu ${dateLabel})`;
+    kb.text(label, `v:pagu_set:${draftId}:${c.sppg_ref_no}`).row();
+  });
+
+  kb.text("🔙 Kembali ke Rekomendasi", `v:pagu_back_rec:${draftId}`).row();
   kb.text("🚫 Belanja Tambahan (Non-Pagu)", `v:pagu_set:${draftId}:-`).row();
   kb.text("❌ Batalkan Draf", `v:cancel:${draftId}`);
   return kb;

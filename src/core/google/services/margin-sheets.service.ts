@@ -58,14 +58,14 @@ export class MarginSheetsService {
         const rowItem = rawItem.toLowerCase().replace(/[^a-z0-9]/g, "");
         if (!rowItem.includes(cleanItem) && !cleanItem.includes(rowItem)) continue;
 
-        const is15Col = row.length >= 15 || row[14] !== undefined;
-        const targetQty = parseCurrencyNumber(is15Col ? row[6] : row[4]);
-        const unit = String((is15Col ? row[7] : row[5]) || "").trim();
-        const paguPrice = parseCurrencyNumber(is15Col ? row[8] : row[6]);
-        const paguTotal = parseCurrencyNumber(is15Col ? row[9] : row[7]);
-        const invoicePrice = parseCurrencyNumber(is15Col ? row[10] : row[8]);
-        const fulfilledTotal = parseCurrencyNumber(is15Col ? row[11] : row[9]);
-        const status = String((is15Col ? row[14] : row[12]) || "").trim();
+        const isNewLayout = row.length >= 14 || (row[1] && String(row[1]).startsWith("SPPG"));
+        const targetQty = parseCurrencyNumber(isNewLayout ? row[6] : row[4]);
+        const unit = String((isNewLayout ? row[7] : row[5]) || "").trim();
+        const paguPrice = parseCurrencyNumber(isNewLayout ? row[8] : row[6]);
+        const paguTotal = parseCurrencyNumber(isNewLayout ? row[9] : row[7]);
+        const invoicePrice = parseCurrencyNumber(isNewLayout ? row[10] : row[8]);
+        const fulfilledTotal = parseCurrencyNumber(isNewLayout ? row[11] : row[9]);
+        const status = String((row.length >= 15 ? row[14] : (isNewLayout ? row[13] : row[12])) || "").trim();
 
         // Extract already fulfilled quantity
         let fulfilledQty = 0;
@@ -89,8 +89,8 @@ export class MarginSheetsService {
           candidates.push({
             rowIndex: rIdx + 2,
             sppg_ref_no: String(row[0] || "").trim(),
-            order_date: String((is15Col ? row[3] : row[1]) || "").trim(),
-            supplier_name: String((is15Col ? row[4] : row[2]) || "").trim(),
+            order_date: String((isNewLayout ? row[3] : row[1]) || "").trim(),
+            supplier_name: String((isNewLayout ? row[4] : row[2]) || "").trim(),
             item_name: rawItem.trim(),
             target_qty: targetQty,
             unit,

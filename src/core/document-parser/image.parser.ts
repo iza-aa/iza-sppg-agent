@@ -104,16 +104,29 @@ ATURAN MUTLAK PENULISAN TANGGAL (DATE YEAR SAFETY):
 - DILARANG KERAS menghasilkan tanggal dengan tahun 2024, 2025, atau tahun manapun sebelum 2026.
 - Format tanggal output WAJIB: "YYYY-MM-DD" dengan YYYY ≥ 2026.
 
+ATURAN EMAS KLASIFIKASI DOKUMEN:
+- DOKUMEN DENGAN KOLOM "HARGA SUPLIER", "HARGA SUPPLIER", "TOTAL SUPLIER", ATAU "SELISIH":
+  WAJIB MUTLAK DIKLASIFIKASIKAN SEBAGAI SUPPLIER_EXPENSE (PENGELUARAN BELANJA)!
+  MESKIPUN JUDUL TABEL MEMUAT KATA "PO" ATAU "PESANAN" (contoh: "PO TANGGAL 1 SEPTEMBER DI PAKAI TANGGAL 2 SEPTEMBER"), dokumen tabel tersebut adalah REKAP REALISASI BELANJA DARI SUPPLIER!
+  Harga dan total yang diekstrak WAJIB dari kolom HARGA SUPLIER dan TOTAL SUPLIER (harga riil pembelian).
+  DILARANG KERAS mengklasifikasikannya sebagai SPPG_ORDER!
+
+- SYARAT MUTLAK SPPG_ORDER (PENDAPATAN / PAGU ANGGARAN RESMI):
+  HANYA boleh diklasifikasikan sebagai SPPG_ORDER jika dokumen tersebut adalah SURAT/NOTA DINAS RESMI PEMERINTAH yang DITANDATANGANI SECARA NYATA OLEH PEJABAT (Pejabat Pembuat Komitmen / Ka. SPPG) atau memiliki KOP SURAT RESMI BADAN GIZI NASIONAL / SPPG, serta TIDAK memiliki kolom harga supplier atau selisih.
+  JIKA TIDAK ADA TANDA TANGAN PEJABAT ASLI PADA DOKUMEN:
+  DILARANG MENGARANG atau membuat asumsi penandatangan seperti "Kepala SPPG".
+  Dokumen tabel bahan tanpa tanda tangan resmi dinas WAJIB diklasifikasikan sebagai SUPPLIER_EXPENSE.
+
 PANDUAN KLASIFIKASI DOKUMEN:
 
 1. [INCOME / PENDAPATAN] NOTA PESANAN BAHAN MAKANAN (SPPG_ORDER):
-   - Karakteristik: DITERBITKAN OLEH BADAN GIZI NASIONAL (BGN) atau SATUAN PELAYANAN PROGRAM GIZI (SPPG).
+   - Karakteristik: DITERBITKAN OLEH BADAN GIZI NASIONAL (BGN) atau SATUAN PELAYANAN PROGRAM GIZI (SPPG) DENGAN KOP RESMI ATAU TANDA TANGAN PEJABAT.
    - Bentuk Dokumen:
      * Kop resmi Badan Gizi Nasional / SPPG.
      * Judul: "NOTA PESANAN BAHAN MAKANAN", "SURAT PESANAN (PO)", atau "REKAPITULASI KEBUTUHAN BAHAN".
      * SPPG bertindak sebagai PIHAK PEMESAN yang mengalokasikan plafon pagu anggaran belanja.
      * Memuat daftar pesanan berbagai bahan makanan harian kepada rekanan vendor.
-     * Ditandatangani pejabat resmi: Kepala SPPG, Pejabat Pembuat Komitmen (PPK), atau PJ Operasional.
+     * DITANDATANGANI pejabat resmi nyata (bukan karangan). Jika tidak ada tanda tangan, jangan gunakan tipe ini!
    - Kembalikan JSON:
    {
      "document_type": "SPPG_ORDER",
@@ -281,13 +294,53 @@ export async function parseImageDocument(
       };
     }
 
+    // Safety auto-correction:
+    // If parsed as SPPG_ORDER without explicit user intent, but content contains supplier keywords
+    // or mentions "DI PAKAI" / "SUPLIER" / "SELISIH":
+    if (parsed.document_type === "SPPG_ORDER" && userIntent !== "INCOME" && parsed.payload) {
+      const p = parsed.payload;
+      const rawText = (String(p.order_no || "") + " " + String(p.notes || "") + " " + JSON.stringify(p.items || [])).toLowerCase();
+      const hasSupplierEvidence =
+        rawText.includes("suplier") ||
+        rawText.includes("supplier") ||
+        rawText.includes("di pakai") ||
+        rawText.includes("dipakai") ||
+        rawText.includes("selisih");
+      const isUnsigned = !p.signed_by || p.signed_by === "-" || p.signed_by === "Kepala SPPG";
+
+      if (hasSupplierEvidence && isUnsigned) {
+        logger.info({ order_no: p.order_no }, "Auto-correcting falsely classified SPPG_ORDER to SUPPLIER_EXPENSE (supplier evidence + no official signature)");
+        parsed.document_type = "SUPPLIER_EXPENSE";
+        parsed.payload = {
+          type: "expense",
+          supplier_name: "Supplier SPPG Patila",
+          receipt_no: "",
+          date: p.order_date || cleanDateString(""),
+          sppg_ref_no: "",
+          items: (p.items || []).map((it: any) => ({
+            item_name: it.item_name || "Bahan Belanja",
+            qty: cleanNumeric(it.qty, 1),
+            unit: it.unit || "unit",
+            price: cleanNumeric(it.price, 0),
+            total_price: cleanNumeric(it.total_price) || (cleanNumeric(it.qty, 1) * cleanNumeric(it.price, 0)),
+            supplier_name: "Supplier SPPG Patila",
+          })),
+          subtotal: cleanNumeric(p.total_amount),
+          discount: 0,
+          tax: 0,
+          total_amount: cleanNumeric(p.total_amount),
+          payment_method: "Cash",
+        };
+      }
+    }
+
     // CASE 1: SPPG ORDER (INCOME)
     if (parsed.document_type === "SPPG_ORDER" && parsed.payload) {
       const p = parsed.payload;
       p.order_date = cleanDateString(p.order_date);
       p.arrival_date = p.order_date;
       p.total_amount = cleanNumeric(p.total_amount);
-      p.signed_by = (p.signed_by || "").trim() || "Kepala SPPG";
+      p.signed_by = (p.signed_by || "").trim() || "-";
 
       if (Array.isArray(p.items)) {
         p.items = p.items.map((it: any, idx: number) => ({

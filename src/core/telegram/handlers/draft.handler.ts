@@ -15,6 +15,7 @@ import {
   buildEditSubmenuKeyboard,
   buildPaguSelectorKeyboard,
   buildPaguPromptKeyboard,
+  buildPaguBrowseKeyboard,
   buildCancelInputKeyboard,
   buildMissingExpenseFieldsKeyboard,
   buildPaymentMethodPromptKeyboard,
@@ -148,6 +149,7 @@ export async function enrichReceiptWithPaguContext(
     // 3. Gather candidates across ALL items in the receipt (not just firstItem)
     const items: Array<{ item_name: string; qty: number; unit?: string }> = receipt?.items || [];
     const allCandidatesMap = new Map<string, any>();
+    const poMatchCount = new Map<string, number>();
 
     for (const it of items) {
       if (!it.item_name) continue;
@@ -156,6 +158,7 @@ export async function enrichReceiptWithPaguContext(
         it.item_name
       );
       for (const c of cands) {
+        poMatchCount.set(c.sppg_ref_no, (poMatchCount.get(c.sppg_ref_no) || 0) + 1);
         if (!allCandidatesMap.has(c.sppg_ref_no)) {
           allCandidatesMap.set(c.sppg_ref_no, c);
         }
@@ -202,21 +205,32 @@ export async function enrichReceiptWithPaguContext(
     receipt.paguSelectionRequired = true;
     receipt.paguContext = undefined;
 
-    // Populate all active orders so user can choose
-    receipt.paguCandidates = orders.map((o) => {
+    // Populate all active orders sorted by match score priority
+    const mappedOrders = orders.map((o) => {
       const cand = candidates.find((c) => c.sppg_ref_no === o.orderNo);
-      return cand || {
+      const matchScore = poMatchCount.get(o.orderNo) || 0;
+      return {
         sppg_ref_no: o.orderNo,
         order_date: o.orderDate,
-        item_name: firstItem?.item_name || "Bahan Belanja",
-        target_qty: 0,
-        unit: firstItem?.unit || "unit",
+        item_name: cand?.item_name || firstItem?.item_name || "Bahan Belanja",
+        target_qty: cand?.target_qty || 0,
+        unit: cand?.unit || firstItem?.unit || "unit",
         supplier_name: o.notes || "SPPG",
-        remaining_qty: 0,
-        fulfilled_qty: 0,
+        remaining_qty: cand?.remaining_qty || 0,
+        fulfilled_qty: cand?.fulfilled_qty || 0,
+        match_score: matchScore,
       };
     });
 
+    // Sort: highest match score first, then newest order date
+    mappedOrders.sort((a, b) => {
+      if ((b.match_score || 0) !== (a.match_score || 0)) {
+        return (b.match_score || 0) - (a.match_score || 0);
+      }
+      return String(b.order_date || "").localeCompare(String(a.order_date || ""));
+    });
+
+    receipt.paguCandidates = mappedOrders;
     return true;
   } catch (err) {
     logger.warn({ err }, "Could not enrich receipt with Pagu context");
@@ -1130,6 +1144,34 @@ export function registerDraftHandlers(bCtx: BotContext) {
     await safeEditMessageText(ctx, cardText, {
       parse_mode: "HTML",
       reply_markup: getDraftConfirmationReplyMarkup(draftId, draft.action_type, draft.payload, undefined, hasMultiple),
+    });
+  });
+
+  // [📋 Bukan Di Atas - Tampilkan Semua PO]
+  bCtx.bot.callbackQuery(/^v:pagu_browse:(.+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const draft = await bCtx.pendingRepo.getById(draftId);
+    if (!draft || draft.status !== "PENDING") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
+    }
+    await ctx.answerCallbackQuery();
+    const allOrders = draft.payload?.paguCandidates || [];
+    await ctx.editMessageReplyMarkup({
+      reply_markup: buildPaguBrowseKeyboard(draftId, allOrders),
+    });
+  });
+
+  // [🔙 Kembali ke Rekomendasi Prioritas]
+  bCtx.bot.callbackQuery(/^v:pagu_back_rec:(.+)$/, async (ctx) => {
+    const draftId = ctx.match[1];
+    const draft = await bCtx.pendingRepo.getById(draftId);
+    if (!draft || draft.status !== "PENDING") {
+      return handleExpiredOrMissingDraft(bCtx, ctx, draft);
+    }
+    await ctx.answerCallbackQuery();
+    const candidates = draft.payload?.paguCandidates || [];
+    await ctx.editMessageReplyMarkup({
+      reply_markup: buildPaguPromptKeyboard(draftId, candidates),
     });
   });
 
